@@ -46,6 +46,8 @@ export async function POST(req: NextRequest) {
   const programType = normalizeUpper(body.programType || "");
   const studyShift = normalizeUpper(body.studyShift || "");
   const curriculumVersion = normalizeUpper(body.curriculumVersion || "");
+  const curriculumKeyRaw = normalizeUpper(body.curriculumKey || "");
+  const curriculumKey = curriculumKeyRaw || null;
   const studentIdSuffixRaw = (body.studentIdSuffix || "").trim();
   const studentIdSuffix = studentIdSuffixRaw ? normalizeUpper(studentIdSuffixRaw) : null;
   const isActive = Boolean(body.isActive ?? true);
@@ -88,6 +90,7 @@ export async function POST(req: NextRequest) {
       program_type: programType,
       study_shift: studyShift,
       curriculum_version: curriculumVersion,
+      curriculum_key: curriculumKey,
       student_id_suffix: studentIdSuffix,
       display_label: displayLabel,
       is_active: isActive,
@@ -100,6 +103,7 @@ export async function POST(req: NextRequest) {
       program_type: programType,
       study_shift: studyShift,
       curriculum_version: curriculumVersion,
+      curriculum_key: curriculumKey,
       student_id_suffix: studentIdSuffix,
       display_label: displayLabel,
       is_active: isActive,

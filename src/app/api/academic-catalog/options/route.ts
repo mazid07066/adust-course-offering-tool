@@ -21,6 +21,7 @@ export async function GET() {
     programType: item.program_type,
     studyShift: item.study_shift,
     curriculumVersion: item.curriculum_version,
+    curriculumKey: item.curriculum_key,
     studentIdSuffix: item.student_id_suffix,
     displayLabel: item.display_label,
     active: item.is_active,

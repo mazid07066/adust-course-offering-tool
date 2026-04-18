@@ -1,0 +1,322 @@
+import pdfParse from "pdf-parse";
+
+export type ParsedTranscriptCourse = {
+  semester: string;
+  code: string;
+  comparableCode: string;
+  title: string;
+  credits: number;
+  grade: string;
+};
+
+export type ParsedRegistrationCourse = {
+  code: string;
+  comparableCode: string;
+  title: string;
+  credits: number;
+  section: string | null;
+};
+
+export type ParsedStudentIdentity = {
+  studentId: string | null;
+  batchCode: string | null;
+  suffix: string | null;
+};
+
+function normalizeInline(value: string) {
+  return String(value || "")
+    .replace(/[￾�]/g, " ")
+    .replace(/\u00A0/g, " ")
+    .replace(/[^\S\r\n]+/g, " ")
+    .trim();
+}
+
+function normalizeMultiline(value: string) {
+  return String(value || "")
+    .replace(/[￾�]/g, " ")
+    .replace(/\u00A0/g, " ")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => normalizeInline(line))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function safeDecodeURIComponent(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function collapseText(value: string) {
+  return normalizeMultiline(value).replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+export function normalizeComparableCourseCode(value: string) {
+  const raw = normalizeInline(value).toUpperCase();
+  if (!raw) return "";
+
+  const compact = raw.replace(/\s+/g, "");
+
+  const directMatch = compact.match(/^([A-Z]{2,6})(\d{4})$/);
+  if (directMatch) return `${directMatch[1]}${directMatch[2]}`;
+
+  const spacedTailMatch = raw.match(/^([A-Z]{2,6})(?:\s+\d{2,4})?\s+(\d{4})$/);
+  if (spacedTailMatch) return `${spacedTailMatch[1]}${spacedTailMatch[2]}`;
+
+  const genericMatch = compact.match(/^([A-Z]{2,6}).*?(\d{4})$/);
+  if (genericMatch) return `${genericMatch[1]}${genericMatch[2]}`;
+
+  return compact;
+}
+
+export async function extractPdfText(buffer: Buffer): Promise<string> {
+  try {
+    const parsed = await pdfParse(buffer, { version: "v1.10.100" });
+    return normalizeMultiline(parsed?.text || "");
+  } catch {
+    const PDFParserModule = await import("pdf2json");
+    const PDFParser = PDFParserModule.default;
+
+    const text = await new Promise<string>((resolve, reject) => {
+      const parser = new PDFParser(undefined, true);
+
+      parser.on("pdfParser_dataError", (errMsg: Error | { parserError: Error }) => {
+        const actualError = errMsg instanceof Error ? errMsg : errMsg.parserError;
+        reject(actualError);
+      });
+
+      parser.on("pdfParser_dataReady", (pdfData: any) => {
+        try {
+          const pages = pdfData?.Pages || [];
+          const pageLines: string[] = [];
+
+          for (const page of pages) {
+            const lines: string[] = [];
+
+            for (const textItem of page.Texts || []) {
+              const line = (textItem.R || [])
+                .map((run: { T?: string }) => safeDecodeURIComponent(run.T || ""))
+                .join(" ");
+
+              const cleaned = normalizeInline(line);
+              if (cleaned) lines.push(cleaned);
+            }
+
+            pageLines.push(lines.join("\n"));
+          }
+
+          resolve(normalizeMultiline(pageLines.join("\n")));
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      parser.parseBuffer(buffer);
+    });
+
+    return normalizeMultiline(text);
+  }
+}
+
+export function parseStudentIdentity(text: string): ParsedStudentIdentity {
+  const match = text.match(/\b(\d{2,3}-\d{4}-\d{3})\b/);
+
+  if (!match) {
+    return {
+      studentId: null,
+      batchCode: null,
+      suffix: null,
+    };
+  }
+
+  const studentId = match[1];
+  const [batchCode, , suffix] = studentId.split("-");
+
+  return {
+    studentId,
+    batchCode: batchCode || null,
+    suffix: suffix || null,
+  };
+}
+
+export function parseTranscriptCourses(text: string): ParsedTranscriptCourse[] {
+  let clean = collapseText(text);
+
+  clean = clean
+    .replace(/SemesterCodeDescriptionCreditsGrade/gi, " ")
+    .replace(/CreditsEarned/gi, " Credits Earned ")
+    .replace(/TransferedCredits/gi, " Transfered Credits ")
+    .replace(/Printedon:/gi, " Printed on: ")
+    .replace(/StudentID:/gi, " Student ID: ")
+    .replace(/SemesterCodeDescriptionCreditsGrade/gi, " ");
+
+  const regex =
+    /(SPRING|SUMMER|FALL)\s*(\d{4})\s*([A-Z]{2,6}\d{4})\s*(.*?)\s*(\d+(?:\.\d+)?)\s*([A-F][+-]?|I|W)(?=(?:\s*(?:SPRING|SUMMER|FALL)\s*\d{4}\s*[A-Z]{2,6}\d{4})|\s*Credits\s*Earned|\s*Transfered\s*Credits|\s*GPA\s*:|\s*\*\*\s*Printed:|$)/gi;
+
+  const rows: ParsedTranscriptCourse[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(clean)) !== null) {
+    const semester = `${String(match[1]).toUpperCase()} ${match[2]}`;
+    const code = normalizeInline(match[3]).toUpperCase();
+    const title = normalizeInline(match[4])
+      .replace(/\s+/g, " ")
+      .trim();
+    const credits = Number(match[5]);
+    const grade = normalizeInline(match[6]).toUpperCase();
+
+    if (!code || !title || Number.isNaN(credits) || !grade) continue;
+
+    rows.push({
+      semester,
+      code,
+      comparableCode: normalizeComparableCourseCode(code),
+      title,
+      credits,
+      grade,
+    });
+  }
+
+  return rows;
+}
+
+export function parseRegistrationSemester(text: string): string | null {
+  const match = text.match(/Registration\s+(Spring|Summer|Fall),?\s+(\d{4})/i);
+  if (!match) return null;
+  return `${match[1].toUpperCase()} ${match[2]}`;
+}
+
+export function parseRegistrationCourses(text: string): ParsedRegistrationCourse[] {
+  const clean = collapseText(text);
+
+  const segments =
+    clean.match(
+      /A-[A-Z]{2,6}\d{4}CR:\d+(?:\.\d+)?Sec:\d+\s+.*?(?=A-[A-Z]{2,6}\d{4}CR:|Developed by:|Office Copy|Bank Copy|University Management Information System|$)/gi
+    ) || [];
+
+  const rows: ParsedRegistrationCourse[] = [];
+
+  for (const segment of segments) {
+    const match = normalizeInline(segment).match(
+      /^A-([A-Z]{2,6}\d{4})CR:(\d+(?:\.\d+)?)Sec:(\d+)\s+(.+?)(?=\s+(?:SU|SA|TH|MO|FR)-|$)/i
+    );
+
+    if (!match) continue;
+
+    const code = normalizeInline(match[1]).toUpperCase();
+
+    rows.push({
+      code,
+      comparableCode: normalizeComparableCourseCode(code),
+      credits: Number(match[2]),
+      section: normalizeInline(match[3]) || null,
+      title: normalizeInline(match[4]),
+    });
+  }
+
+  return rows;
+}
+
+const TERM_ORDER = ["SPRING", "SUMMER", "FALL"];
+
+export function compareTerms(a: string, b: string) {
+  const [aTerm, aYearText] = a.split(" ");
+  const [bTerm, bYearText] = b.split(" ");
+
+  const aYear = Number(aYearText);
+  const bYear = Number(bYearText);
+
+  if (aYear !== bYear) return aYear - bYear;
+  return TERM_ORDER.indexOf(aTerm) - TERM_ORDER.indexOf(bTerm);
+}
+
+export function getLatestTerm(terms: string[]): string | null {
+  if (!terms.length) return null;
+  return [...terms].sort(compareTerms).at(-1) || null;
+}
+
+export function getNextTerm(term: string | null): string | null {
+  if (!term) return null;
+
+  const [season, yearText] = term.split(" ");
+  const year = Number(yearText);
+
+  if (season === "SPRING") return `SUMMER ${year}`;
+  if (season === "SUMMER") return `FALL ${year}`;
+  if (season === "FALL") return `SPRING ${year + 1}`;
+
+  return null;
+}
+
+export function getCompletedCourseMap(courses: ParsedTranscriptCourse[]) {
+  const map = new Map<
+    string,
+    {
+      code: string;
+      comparableCode: string;
+      title: string;
+      semester: string;
+      credits: number;
+      grade: string;
+    }
+  >();
+
+  for (const row of courses) {
+    const isPassing =
+      row.grade !== "F" &&
+      row.grade !== "I" &&
+      row.grade !== "W" &&
+      row.credits > 0;
+
+    if (!isPassing) continue;
+
+    const existing = map.get(row.comparableCode);
+    if (!existing || compareTerms(existing.semester, row.semester) < 0) {
+      map.set(row.comparableCode, {
+        code: row.code,
+        comparableCode: row.comparableCode,
+        title: row.title,
+        semester: row.semester,
+        credits: row.credits,
+        grade: row.grade,
+      });
+    }
+  }
+
+  return map;
+}
+
+export function getFailedOnlyCodes(courses: ParsedTranscriptCourse[]) {
+  const passed = new Set(
+    courses
+      .filter(
+        (row) =>
+          row.grade !== "F" &&
+          row.grade !== "I" &&
+          row.grade !== "W" &&
+          row.credits > 0
+      )
+      .map((row) => row.comparableCode)
+  );
+
+  const failed = new Set(
+    courses
+      .filter(
+        (row) =>
+          row.grade === "F" ||
+          row.grade === "I" ||
+          row.grade === "W" ||
+          row.credits <= 0
+      )
+      .map((row) => row.comparableCode)
+  );
+
+  return [...failed].filter((code) => !passed.has(code));
+}
+
+export function makeDebugTextSample(text: string, maxLength = 1500) {
+  return collapseText(text).slice(0, maxLength);
+}

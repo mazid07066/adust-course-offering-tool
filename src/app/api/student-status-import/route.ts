@@ -1,290 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
-import PDFParser from "pdf2json";
-import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import {
-  inferProgramFromStudentId,
-  matchSelectedProgramToInference,
-} from "@/lib/student-id-profile";
+  compareTerms,
+  extractPdfText,
+  getCompletedCourseMap,
+  getFailedOnlyCodes,
+  getLatestTerm,
+  getNextTerm,
+  makeDebugTextSample,
+  normalizeComparableCourseCode,
+  parseRegistrationCourses,
+  parseRegistrationSemester,
+  parseStudentIdentity,
+  parseTranscriptCourses,
+} from "@/lib/student-status-parser";
 
-type PdfParseResult = {
-  text?: string;
+export const runtime = "nodejs";
+
+type CatalogProgramRow = {
+  id: number;
+  department_code: string;
+  department_name: string;
+  program_code: string;
+  program_title: string;
+  program_type: string;
+  study_shift: string;
+  curriculum_version: string;
+  curriculum_key: string | null;
+  student_id_suffix: string | null;
+  display_label: string;
+  is_active: boolean;
 };
-
-function safeDecodePdfText(value: string) {
-  if (!value) return "";
-
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    try {
-      return decodeURIComponent(value.replace(/%(?![0-9A-Fa-f]{2})/g, "%25"));
-    } catch {
-      return value;
-    }
-  }
-}
-
-async function extractPdfTextWithPdfParse(buffer: Buffer): Promise<string> {
-  const result = (await pdfParse(buffer)) as PdfParseResult;
-  return String(result?.text || "");
-}
-
-async function extractPdfTextWithPdf2Json(buffer: Buffer): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const parser = new PDFParser();
-
-    parser.on("pdfParser_dataError", (errData: any) => {
-      reject(new Error(errData?.parserError || "pdf2json failed"));
-    });
-
-    parser.on("pdfParser_dataReady", (pdfData: any) => {
-      try {
-        const pages = pdfData?.Pages || [];
-        const texts: string[] = [];
-
-        for (const page of pages) {
-          const pageTexts = page?.Texts || [];
-
-          for (const item of pageTexts) {
-            const runs = item?.R || [];
-
-            for (const run of runs) {
-              const raw = safeDecodePdfText(String(run?.T || ""));
-              if (raw) texts.push(raw);
-            }
-
-            texts.push("\n");
-          }
-
-          texts.push("\n\n");
-        }
-
-        resolve(texts.join(" "));
-      } catch (error) {
-        reject(error);
-      }
-    });
-
-    parser.parseBuffer(buffer);
-  });
-}
-
-async function extractPdfText(buffer: Buffer): Promise<string> {
-  try {
-    return await extractPdfTextWithPdfParse(buffer);
-  } catch (error) {
-    console.warn("pdf-parse failed, trying pdf2json fallback:", error);
-    return await extractPdfTextWithPdf2Json(buffer);
-  }
-}
-
-function normalizeText(text: string) {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-function normalizeCourseCode(text: string) {
-  return String(text || "").replace(/\s+/g, "").trim().toUpperCase();
-}
-
-function extractStudentId(text: string) {
-  const match = text.match(/\b(\d{2,3}-\d{3,4}-\d{3})\b/);
-  return match ? match[1] : null;
-}
-
-function extractBatchCode(text: string) {
-  const studentId = extractStudentId(text);
-  if (studentId) {
-    return studentId.split("-")[0];
-  }
-
-  const batchMatch = text.match(/\bBatch\s*[:\-]?\s*(\d{2,3})\b/i);
-  return batchMatch ? batchMatch[1] : null;
-}
-
-function normalizeSemesterLabel(season: string, year: string | number) {
-  return `${String(season).toUpperCase()} ${String(year)}`;
-}
-
-function compareSemester(a: string, b: string) {
-  const seasonOrder: Record<string, number> = {
-    SPRING: 1,
-    SUMMER: 2,
-    FALL: 3,
-  };
-
-  const ma = a.toUpperCase().match(/^(SPRING|SUMMER|FALL)\s+(\d{4})$/);
-  const mb = b.toUpperCase().match(/^(SPRING|SUMMER|FALL)\s+(\d{4})$/);
-
-  if (!ma || !mb) return 0;
-
-  const yearA = Number(ma[2]);
-  const yearB = Number(mb[2]);
-
-  if (yearA !== yearB) return yearA - yearB;
-  return seasonOrder[ma[1]] - seasonOrder[mb[1]];
-}
-
-function extractSemesterTokens(text: string) {
-  const normalized = text.toUpperCase();
-
-  const matches = Array.from(
-    normalized.matchAll(/\b(SPRING|SUMMER|FALL)\s*,?\s*(\d{4})\b/g)
-  );
-
-  return matches.map((m) => ({
-    season: m[1],
-    year: Number(m[2]),
-    label: normalizeSemesterLabel(m[1], m[2]),
-  }));
-}
-
-function getLatestSemester(text: string) {
-  const semesters = extractSemesterTokens(text);
-  if (!semesters.length) return null;
-
-  semesters.sort((a, b) => compareSemester(a.label, b.label));
-  return semesters[semesters.length - 1].label;
-}
-
-function extractRegistrationSemester(text: string) {
-  const normalized = text.toUpperCase();
-
-  const strongPatterns = [
-    /COURSE\s+REGISTRATION\s+BILLING\s+STATEMENT\s*\/\s*REGISTRATION\s+(SPRING|SUMMER|FALL)\s*,?\s*(\d{4})/i,
-    /\bREGISTRATION\s+(SPRING|SUMMER|FALL)\s*,?\s*(\d{4})\b/i,
-    /\bSEMESTER\s*[:\-]?\s*(SPRING|SUMMER|FALL)\s*,?\s*(\d{4})\b/i,
-  ];
-
-  for (const pattern of strongPatterns) {
-    const match = normalized.match(pattern);
-    if (match) {
-      return normalizeSemesterLabel(match[1], match[2]);
-    }
-  }
-
-  return getLatestSemester(text);
-}
-
-function getPreviousSemester(term: string | null) {
-  if (!term) return null;
-
-  const match = term.toUpperCase().match(/^(SPRING|SUMMER|FALL)\s+(\d{4})$/);
-  if (!match) return null;
-
-  const season = match[1];
-  const year = Number(match[2]);
-
-  if (season === "SPRING") return `FALL ${year - 1}`;
-  if (season === "SUMMER") return `SPRING ${year}`;
-  return `SUMMER ${year}`;
-}
-
-function extractLatestCompletedSemesterFromTranscript(rawTranscriptText: string) {
-  const semesters = extractSemesterTokens(rawTranscriptText);
-  if (!semesters.length) return null;
-
-  semesters.sort((a, b) => compareSemester(a.label, b.label));
-  return semesters[semesters.length - 1].label;
-}
-
-function detectGradeNearLine(line: string) {
-  const gradeMatch = line.match(/\b(A\+|A|A-|B\+|B|B-|C\+|C|D|F)\b/);
-  return gradeMatch ? gradeMatch[1] : null;
-}
-
-function parseTranscriptMatches(
-  transcriptText: string,
-  masterCourses: Array<{
-    course_code: string;
-    course_title: string;
-    normalized_title: string;
-    credit: number;
-  }>
-) {
-  const lines = transcriptText
-    .split(/\r?\n/)
-    .map((line) => normalizeText(line))
-    .filter(Boolean);
-
-  const found: Array<{
-    course_code: string;
-    course_title: string;
-    normalized_title: string;
-    credit: number;
-    grade: string | null;
-    completed: boolean;
-  }> = [];
-
-  for (const course of masterCourses) {
-    const code = normalizeCourseCode(course.course_code);
-
-    let matchedLine = "";
-    let grade: string | null = null;
-
-    for (let i = 0; i < lines.length; i++) {
-      const current = lines[i];
-      const combined = `${current} ${lines[i + 1] || ""}`;
-
-      if (
-        current.toUpperCase().includes(code) ||
-        combined.toUpperCase().includes(code)
-      ) {
-        matchedLine = combined;
-        grade = detectGradeNearLine(combined);
-        break;
-      }
-    }
-
-    if (matchedLine) {
-      found.push({
-        course_code: course.course_code,
-        course_title: course.course_title,
-        normalized_title: course.normalized_title || course.course_title,
-        credit: Number(course.credit || 0),
-        grade,
-        completed: grade !== "F",
-      });
-    }
-  }
-
-  return found;
-}
-
-function parseRegistrationMatches(
-  registrationText: string,
-  masterCourses: Array<{
-    course_code: string;
-    course_title: string;
-    normalized_title: string;
-    credit: number;
-  }>
-) {
-  const upperText = registrationText.toUpperCase();
-
-  const found: Array<{
-    course_code: string;
-    course_title: string;
-    normalized_title: string;
-    credit: number;
-  }> = [];
-
-  for (const course of masterCourses) {
-    const code = normalizeCourseCode(course.course_code);
-
-    if (upperText.includes(code)) {
-      found.push({
-        course_code: course.course_code,
-        course_title: course.course_title,
-        normalized_title: course.normalized_title || course.course_title,
-        credit: Number(course.credit || 0),
-      });
-    }
-  }
-
-  return found;
-}
 
 export async function POST(request: NextRequest) {
   await requireCoordinatorOrAdminApi();
@@ -292,277 +39,218 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
 
-    const programCode = String(formData.get("programCode") || "")
+    const selectedProgramCode = String(formData.get("programCode") || "")
       .trim()
       .toUpperCase();
 
-    const replaceExisting =
-      String(formData.get("replaceExisting") || "false") === "true";
+    const transcriptFile = formData.get("transcriptFile") as File | null;
+    const registrationFile = formData.get("registrationFile") as File | null;
 
-    const transcriptPdf = formData.get("transcriptPdf") as File | null;
-    const registrationPdf = formData.get("registrationPdf") as File | null;
-
-    if (!programCode) {
+    if (!selectedProgramCode) {
       return NextResponse.json(
-        { error: "Program is required." },
+        { error: "Program / curriculum selection is required." },
         { status: 400 }
       );
     }
 
-    if (!registrationPdf) {
+    if (!transcriptFile && !registrationFile) {
       return NextResponse.json(
-        { error: "Registration PDF is required." },
+        { error: "Upload at least one transcript or registration PDF." },
         { status: 400 }
       );
     }
 
-    const program = await prisma.programs.findFirst({
+    const selectedProgram = (await prisma.academic_catalog_entries.findFirst({
       where: {
-        short_name: programCode,
+        program_code: selectedProgramCode,
+        is_active: true,
       },
-      include: {
-        departments: true,
-        master_courses: {
+    })) as CatalogProgramRow | null;
+
+    if (!selectedProgram) {
+      return NextResponse.json(
+        { error: "Selected academic identity was not found in Academic Setup." },
+        { status: 400 }
+      );
+    }
+
+    const transcriptText = transcriptFile
+      ? await extractPdfText(Buffer.from(await transcriptFile.arrayBuffer()))
+      : "";
+
+    const registrationText = registrationFile
+      ? await extractPdfText(Buffer.from(await registrationFile.arrayBuffer()))
+      : "";
+
+    const identitySourceText = [transcriptText, registrationText].filter(Boolean).join(" ");
+    const identity = parseStudentIdentity(identitySourceText);
+
+    const inferredProgram = identity.suffix
+      ? ((await prisma.academic_catalog_entries.findFirst({
           where: {
+            student_id_suffix: identity.suffix,
             is_active: true,
           },
-          orderBy: {
-            course_code: "asc",
-          },
-        },
-      },
-    });
-
-    if (!program) {
-      return NextResponse.json(
-        { error: "Selected program was not found." },
-        { status: 404 }
-      );
-    }
-
-    if (!program.master_courses.length) {
-      return NextResponse.json(
-        { error: "No master course list exists for the selected program." },
-        { status: 400 }
-      );
-    }
-
-    const registrationBuffer = Buffer.from(await registrationPdf.arrayBuffer());
-    const registrationTextRaw = await extractPdfText(registrationBuffer);
-
-    let transcriptTextRaw = "";
-    if (transcriptPdf) {
-      const transcriptBuffer = Buffer.from(await transcriptPdf.arrayBuffer());
-      transcriptTextRaw = await extractPdfText(transcriptBuffer);
-    }
-
-    const detectedStudentId =
-      extractStudentId(registrationTextRaw) ||
-      extractStudentId(transcriptTextRaw) ||
-      null;
-
-    const batchCode =
-      extractBatchCode(registrationTextRaw) ||
-      extractBatchCode(transcriptTextRaw) ||
-      null;
-
-    if (!batchCode) {
-      return NextResponse.json(
-        { error: "Could not detect batch code from uploaded PDF files." },
-        { status: 400 }
-      );
-    }
-
-    const registrationSemester = extractRegistrationSemester(registrationTextRaw);
-    if (!registrationSemester) {
-      return NextResponse.json(
-        {
-          error:
-            "Could not detect current registration semester from registration PDF.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const transcriptMatches = transcriptTextRaw
-      ? parseTranscriptMatches(transcriptTextRaw, program.master_courses)
-      : [];
-
-    let latestCompletedSemester = transcriptTextRaw
-      ? extractLatestCompletedSemesterFromTranscript(transcriptTextRaw)
+        })) as CatalogProgramRow | null)
       : null;
 
-    if (!latestCompletedSemester && transcriptMatches.length > 0) {
-      latestCompletedSemester = getPreviousSemester(registrationSemester);
-    }
+    const transcriptCourses = transcriptText ? parseTranscriptCourses(transcriptText) : [];
+    const registrationCourses = registrationText ? parseRegistrationCourses(registrationText) : [];
 
-    const registrationMatches = parseRegistrationMatches(
-      registrationTextRaw,
-      program.master_courses
-    );
+    const completedMap = getCompletedCourseMap(transcriptCourses);
 
-    if (!registrationMatches.length) {
-      return NextResponse.json(
+    const ongoingMap = new Map(
+      registrationCourses.map((course) => [
+        course.comparableCode,
         {
-          error:
-            "No registration course rows could be matched from the uploaded PDF.",
+          code: course.code,
+          comparableCode: course.comparableCode,
+          title: course.title,
+          credits: course.credits,
+          section: course.section,
         },
-        { status: 400 }
-      );
-    }
-
-    const inferred = inferProgramFromStudentId(detectedStudentId);
-    const selectedMatchesInference = matchSelectedProgramToInference(
-      program.short_name,
-      inferred.inferredProgramCode,
-      inferred.inferredVariant
+      ])
     );
 
-    const inferenceWarning =
-      detectedStudentId &&
-      inferred.inferredProgramCode &&
-      !selectedMatchesInference
-        ? `Selected program ${program.short_name} does not match student-id inference (${inferred.inferredProgramCode}${inferred.inferredVariant ? `-${inferred.inferredVariant}` : ""}). Import was still allowed because migrated/external exceptions can exist.`
-        : null;
+    const failedOnlyCodes = getFailedOnlyCodes(transcriptCourses);
 
-    let batch = await prisma.batches.findFirst({
-      where: {
-        program_id: program.id,
-        batch_code: batchCode,
-      },
-    });
+    const latestCompletedTerm = getLatestTerm(
+      Array.from(completedMap.values()).map((row) => row.semester)
+    );
 
-    const alreadyExisted = !!batch;
+    const currentRegistrationTerm = registrationText
+      ? parseRegistrationSemester(registrationText)
+      : null;
 
-    if (!batch) {
-      batch = await prisma.batches.create({
-        data: {
-          program_id: program.id,
-          batch_code: batchCode,
-          admission_term: registrationSemester,
-          is_active: true,
+    const suggestedNextOfferingTerm =
+      getNextTerm(currentRegistrationTerm || latestCompletedTerm || null);
+
+    let masterCourses = [];
+
+    if (selectedProgram.curriculum_key) {
+      masterCourses = await prisma.master_courses.findMany({
+        where: {
+          curriculum_key: selectedProgram.curriculum_key,
+        },
+        orderBy: [{ course_code: "asc" }],
+      });
+    } else {
+      const program = await prisma.programs.findFirst({
+        where: {
+          short_name: selectedProgram.program_code,
         },
       });
+
+      masterCourses = program
+        ? await prisma.master_courses.findMany({
+            where: {
+              program_id: program.id,
+            },
+            orderBy: [{ course_code: "asc" }],
+          })
+        : [];
     }
 
-    let academicTerm = await prisma.academic_terms.findFirst({
-      where: {
-        name: registrationSemester,
-      },
-    });
+    const completedComparableCodes = new Set(
+      Array.from(completedMap.values()).map((row) => row.comparableCode)
+    );
 
-    if (!academicTerm) {
-      const match = registrationSemester.match(
-        /^(SPRING|SUMMER|FALL)\s+(\d{4})$/i
+    const ongoingComparableCodes = new Set(
+      Array.from(ongoingMap.values()).map((row) => row.comparableCode)
+    );
+
+    const remainingCourses = masterCourses.filter((course) => {
+      const comparableCode = normalizeComparableCourseCode(course.course_code);
+      return (
+        !completedComparableCodes.has(comparableCode) &&
+        !ongoingComparableCodes.has(comparableCode)
       );
-      if (!match) {
-        return NextResponse.json(
-          { error: "Invalid registration semester format." },
-          { status: 400 }
-        );
-      }
-
-      academicTerm = await prisma.academic_terms.create({
-        data: {
-          name: registrationSemester.toUpperCase(),
-          year: Number(match[2]),
-          term_type: match[1].toUpperCase(),
-          is_active: true,
-        },
-      });
-    }
-
-    if (replaceExisting) {
-      await prisma.batch_completed_courses.deleteMany({
-        where: {
-          batch_id: batch.id,
-        },
-      });
-
-      await prisma.batch_current_registrations.deleteMany({
-        where: {
-          batch_id: batch.id,
-        },
-      });
-    }
-
-    let completedImported = 0;
-    for (const row of transcriptMatches) {
-      if (!row.completed) continue;
-
-      await prisma.batch_completed_courses.create({
-        data: {
-          batch_id: batch.id,
-          academic_term_id: null,
-          course_code: row.course_code,
-          course_title: row.course_title,
-          normalized_title: row.normalized_title,
-          credit: row.credit,
-          grade: row.grade,
-          source_student_id: detectedStudentId,
-          source_file_name: transcriptPdf?.name || null,
-        },
-      });
-
-      completedImported += 1;
-    }
-
-    let ongoingImported = 0;
-    for (const row of registrationMatches) {
-      await prisma.batch_current_registrations.create({
-        data: {
-          batch_id: batch.id,
-          academic_term_id: academicTerm.id,
-          course_code: row.course_code,
-          course_title: row.course_title,
-          normalized_title: row.normalized_title,
-          credit: row.credit,
-          source_student_id: detectedStudentId,
-          source_file_name: registrationPdf.name,
-        },
-      });
-
-      ongoingImported += 1;
-    }
-
-    await prisma.student_report_logs.create({
-      data: {
-        student_id: detectedStudentId || `${program.short_name}-${batch.batch_code}`,
-        student_name: `${program.short_name} Batch ${batch.batch_code}`,
-        uploaded_by_user_id: 1,
-        transcript_filename: transcriptPdf?.name || null,
-        registration_filename: registrationPdf.name,
-        latest_completed_semester: latestCompletedSemester,
-        registration_semester: registrationSemester,
-        total_earned_credits: null,
-        gpa: null,
-        generated_excel_path: null,
-      },
     });
+
+    const warningMessages: string[] = [];
+
+    if (
+      identity.studentId &&
+      inferredProgram &&
+      inferredProgram.program_code !== selectedProgram.program_code
+    ) {
+      warningMessages.push(
+        `Selected academic identity (${selectedProgram.program_code}) does not match the student ID suffix inference (${inferredProgram.program_code}).`
+      );
+    }
+
+    if (!identity.studentId) {
+      warningMessages.push("Student ID could not be detected from the uploaded PDF text.");
+    }
+
+    if (!masterCourses.length) {
+      warningMessages.push(
+        selectedProgram.curriculum_key
+          ? `No master course list was found yet for curriculum key ${selectedProgram.curriculum_key}.`
+          : `No master course list was found yet for ${selectedProgram.program_code}.`
+      );
+    }
+
+    if (!currentRegistrationTerm && !latestCompletedTerm) {
+      warningMessages.push(
+        "Neither current registration term nor latest completed term could be determined."
+      );
+    }
 
     return NextResponse.json({
       success: true,
-      message: "Student status imported successfully.",
-      batchCode: batch.batch_code,
-      detectedStudentId,
-      registrationSemester,
-      latestCompletedSemester,
-      transcriptRowsParsed: transcriptMatches.length,
-      registrationRowsParsed: registrationMatches.length,
-      transcriptRowsMatched: transcriptMatches.length,
-      registrationRowsMatched: registrationMatches.length,
-      completedImported,
-      ongoingImported,
-      inferredProgram: inferred,
-      inferenceWarning,
-      importTarget: {
-        departmentCode: program.departments?.short_name || null,
-        departmentName: program.departments?.name || null,
-        programCode: program.short_name,
-        programName: program.name,
-        batchId: batch.id,
-        batchCode: batch.batch_code,
-        alreadyExisted,
+      selectedProgram: {
+        programCode: selectedProgram.program_code,
+        displayLabel: selectedProgram.display_label,
+        curriculumKey: selectedProgram.curriculum_key,
+      },
+      inferredProgram: inferredProgram
+        ? {
+            programCode: inferredProgram.program_code,
+            displayLabel: inferredProgram.display_label,
+            curriculumKey: inferredProgram.curriculum_key,
+          }
+        : null,
+      studentIdentity: identity,
+      warningMessages,
+      transcriptSummary: {
+        parsedCount: transcriptCourses.length,
+        latestCompletedTerm,
+        failedOnlyCodes,
+      },
+      registrationSummary: {
+        parsedCount: registrationCourses.length,
+        currentRegistrationTerm,
+      },
+      offeringContext: {
+        suggestedNextOfferingTerm,
+      },
+      counts: {
+        completed: completedMap.size,
+        ongoing: ongoingMap.size,
+        remaining: remainingCourses.length,
+        masterCourses: masterCourses.length,
+      },
+      completedCourses: Array.from(completedMap.values()).sort((a, b) => {
+        const termCompare = compareTerms(a.semester, b.semester);
+        if (termCompare !== 0) return termCompare;
+        return a.code.localeCompare(b.code);
+      }),
+      ongoingCourses: Array.from(ongoingMap.values()).sort((a, b) =>
+        a.code.localeCompare(b.code)
+      ),
+      remainingCourses: remainingCourses.map((course) => ({
+        code: course.course_code,
+        title: course.course_title,
+        credits: course.credit,
+        type: course.course_type,
+        group: course.group_name,
+        levelTerm: course.level_term,
+        curriculumKey: course.curriculum_key,
+      })),
+      debug: {
+        transcriptTextSample: makeDebugTextSample(transcriptText),
+        registrationTextSample: makeDebugTextSample(registrationText),
       },
     });
   } catch (error) {
@@ -573,7 +261,7 @@ export async function POST(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "Failed to import student status.",
+            : "Transcript and registration parsing failed.",
       },
       { status: 500 }
     );

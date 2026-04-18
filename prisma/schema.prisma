@@ -72,24 +72,26 @@ model departments {
 }
 
 model master_courses {
-  id                    Int               @id @default(autoincrement())
-  program_id            Int
-  course_code           String            @db.VarChar(100)
-  course_title          String            @db.VarChar(300)
-  normalized_title      String            @db.VarChar(300)
-  credit                Float
-  course_type           String            @db.VarChar(30)
-  level_term            String?           @db.VarChar(50)
-  group_name            String?           @db.VarChar(100)
-  is_active             Boolean?
-  course_category       String?           @db.VarChar(100)
-  course_classification String?           @db.VarChar(100)
-  programs              programs          @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  offered_courses       offered_courses[]
+  id               Int      @id @default(autoincrement())
+  program_id       Int
+  curriculum_key   String?
+  course_code      String
+  course_title     String
+  normalized_title String
+  credit           Float
+  course_type      String
+  level_term       String?
+  group_name       String?
+  is_active        Boolean  @default(true)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @default(now()) @updatedAt
 
-  @@unique([program_id, course_code], map: "uq_program_course_code")
-  @@index([course_code], map: "ix_master_courses_course_code")
-  @@index([normalized_title], map: "ix_master_courses_normalized_title")
+  program         programs          @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  offered_courses offered_courses[]
+
+  @@unique([program_id, course_code])
+  @@unique([curriculum_key, course_code])
+  @@index([curriculum_key])
 }
 
 model offered_course_batches {
@@ -237,23 +239,26 @@ model users {
 
   @@index([id], map: "ix_users_id")
 }
+
 model academic_catalog_entries {
-  id                Int      @id @default(autoincrement())
-  department_code   String
-  department_name   String
-  program_code      String   @unique
-  program_title     String
-  program_type      String
-  study_shift       String
+  id                 Int      @id @default(autoincrement())
+  department_code    String
+  department_name    String
+  program_code       String   @unique
+  program_title      String
+  program_type       String
+  study_shift        String
   curriculum_version String
-  student_id_suffix String?  @unique
-  display_label     String
-  is_active         Boolean  @default(true)
-  created_at        DateTime @default(now())
-  updated_at        DateTime @updatedAt
+  curriculum_key     String?
+  student_id_suffix  String?  @unique
+  display_label      String
+  is_active          Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @default(now()) @updatedAt
 
   @@index([department_code])
   @@index([program_type])
   @@index([study_shift])
   @@index([curriculum_version])
+  @@index([curriculum_key])
 }

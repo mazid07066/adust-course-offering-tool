@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-type CatalogProgram = {
+type ProgramOption = {
   id: number;
   departmentCode: string;
   departmentName: string;
@@ -16,103 +16,108 @@ type CatalogProgram = {
   active: boolean;
 };
 
-type ImportResult = {
-  success?: boolean;
-  message?: string;
-  error?: string;
-  studentId?: string;
-  batchCode?: string;
-  inferredProgramCode?: string | null;
-  inferredSuffix?: string | null;
-  transcriptSemester?: string | null;
-  registrationSemester?: string | null;
-  completedCount?: number;
-  ongoingCount?: number;
-  remainingCount?: number;
+type PreviewResponse = {
+  success: boolean;
+  selectedProgram: {
+    programCode: string;
+    displayLabel: string;
+  };
+  inferredProgram: {
+    programCode: string;
+    displayLabel: string;
+  } | null;
+  studentIdentity: {
+    studentId: string | null;
+    batchCode: string | null;
+    suffix: string | null;
+  };
+  warningMessages: string[];
+  transcriptSummary: {
+    parsedCount: number;
+    latestCompletedTerm: string | null;
+    failedOnlyCodes: string[];
+  };
+  registrationSummary: {
+    parsedCount: number;
+    currentRegistrationTerm: string | null;
+  };
+  offeringContext: {
+    suggestedNextOfferingTerm: string | null;
+  };
+  counts: {
+    completed: number;
+    ongoing: number;
+    remaining: number;
+    masterCourses: number;
+  };
+  completedCourses: Array<{
+    code: string;
+    title: string;
+    semester: string;
+    credits: number;
+    grade: string;
+  }>;
+  ongoingCourses: Array<{
+    code: string;
+    title: string;
+    credits: number;
+    section: string | null;
+  }>;
+  remainingCourses: Array<{
+    code: string;
+    title: string;
+    credits: number;
+    type: string;
+    group: string | null;
+    levelTerm: string | null;
+  }>;
+  debug?: {
+    transcriptTextSample: string;
+    registrationTextSample: string;
+  };
 };
 
 export default function ImportsPageClient() {
-  const [programs, setPrograms] = useState<CatalogProgram[]>([]);
-  const [loadingPrograms, setLoadingPrograms] = useState(true);
-
+  const [programs, setPrograms] = useState<ProgramOption[]>([]);
   const [programCode, setProgramCode] = useState("");
   const [transcriptFile, setTranscriptFile] = useState<File | null>(null);
   const [registrationFile, setRegistrationFile] = useState<File | null>(null);
-
-  const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<ImportResult | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [result, setResult] = useState<PreviewResponse | null>(null);
 
   useEffect(() => {
-    let mounted = true;
-
     async function loadPrograms() {
-      setLoadingPrograms(true);
-      setError("");
-
       try {
         const res = await fetch("/api/academic-catalog/options", {
           cache: "no-store",
         });
-
         const data = await res.json();
-
-        if (!res.ok) {
-          throw new Error(data.error || "Failed to load academic identities.");
-        }
-
-        if (!mounted) return;
-
-        const rows: CatalogProgram[] = data.programs || [];
-        setPrograms(rows);
-
-        if (rows.length > 0) {
-          setProgramCode((prev) => prev || rows[0].programCode);
-        }
-      } catch (err) {
-        if (!mounted) return;
-        setError(err instanceof Error ? err.message : "Failed to load academic identities.");
-      } finally {
-        if (mounted) setLoadingPrograms(false);
+        setPrograms(data.programs || []);
+      } catch {
+        setPrograms([]);
       }
     }
 
     loadPrograms();
-
-    return () => {
-      mounted = false;
-    };
   }, []);
 
-  const selectedProgram = useMemo(
-    () => programs.find((p) => p.programCode === programCode) || null,
-    [programs, programCode]
-  );
-
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
+    setLoading(true);
     setError("");
     setResult(null);
 
     try {
-      if (!programCode) {
-        throw new Error("Please select an academic identity.");
-      }
-
-      if (!transcriptFile && !registrationFile) {
-        throw new Error("Please upload at least one PDF file.");
-      }
-
       const formData = new FormData();
       formData.append("programCode", programCode);
 
       if (transcriptFile) {
-        formData.append("transcript", transcriptFile);
+        formData.append("transcriptFile", transcriptFile);
       }
 
       if (registrationFile) {
-        formData.append("registration", registrationFile);
+        formData.append("registrationFile", registrationFile);
       }
 
       const res = await fetch("/api/student-status-import", {
@@ -123,56 +128,61 @@ export default function ImportsPageClient() {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Student status import failed.");
+        throw new Error(data.error || "Parsing failed.");
       }
 
       setResult(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Student status import failed.");
+      setError(err instanceof Error ? err.message : "Parsing failed.");
     } finally {
-      setSubmitting(false);
+      setLoading(false);
     }
   }
 
   return (
     <div className="space-y-6">
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-xl font-bold text-slate-900">Transcript & Registration Import</h2>
-        <p className="mt-2 text-sm leading-6 text-slate-600">
-          Import transcript PDF and registration PDF to derive completed, ongoing, and remaining
-          courses batch-wise for the selected academic identity.
-        </p>
+        <h2 className="text-xl font-bold text-slate-900">
+          Transcript and Registration Parsing Preview
+        </h2>
 
-        <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-slate-700">
+        <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-5 text-sm leading-7 text-slate-700">
           <p className="font-semibold text-slate-900">Structured import rule</p>
           <p className="mt-2">
-            Select the exact academic identity from the dropdown first. Student IDs follow the
-            pattern{" "}
-            <span className="rounded bg-white px-2 py-1 font-mono">XXX-YYYY-ZZZ</span> where{" "}
-            <span className="font-semibold">XXX</span> is the batch code and{" "}
-            <span className="font-semibold">ZZZ</span> is the configured program suffix. The
-            selected academic identity and the student ID suffix should agree unless the student is
-            a migrated case.
+            Select the exact academic identity first. Student IDs follow the pattern{" "}
+            <span className="rounded bg-white px-2 py-1 font-semibold">
+              XXX-YYYY-ZZZ
+            </span>{" "}
+            where <span className="font-semibold">XXX</span> is the batch code and{" "}
+            <span className="font-semibold">ZZZ</span> is the configured academic
+            suffix.
           </p>
           <p className="mt-2">
-            Transcript PDF provides completed-course history. Courses with grade{" "}
-            <span className="rounded bg-white px-2 py-1 font-mono">F</span> are treated as not
-            completed. Registration PDF provides the currently ongoing courses for the current
-            semester.
+            Transcript logic: passed courses with positive earned credit are treated
+            as completed. Failed or zero-credit attempts are not completed.
+            Registration courses are treated as ongoing.
+          </p>
+          <p className="mt-2">
+            This screen is the safe parsing and validation preview step before final
+            persistence wiring.
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-          <div>
-            <label className="mb-2 block text-sm font-medium text-slate-800">
-              Academic Identity
+        <form
+          onSubmit={handleSubmit}
+          className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2"
+        >
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium">
+              Program / Curriculum
             </label>
             <select
               value={programCode}
               onChange={(e) => setProgramCode(e.target.value)}
-              disabled={loadingPrograms || submitting}
-              className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm"
+              className="w-full rounded-2xl border px-3 py-2"
+              required
             >
+              <option value="">Select exact academic identity</option>
               {programs.map((program) => (
                 <option key={program.programCode} value={program.programCode}>
                   {program.displayLabel}
@@ -181,177 +191,326 @@ export default function ImportsPageClient() {
             </select>
           </div>
 
-          {selectedProgram ? (
-            <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm md:grid-cols-2 xl:grid-cols-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Department
-                </p>
-                <p className="mt-1 font-medium text-slate-900">{selectedProgram.departmentName}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Program Code
-                </p>
-                <p className="mt-1 font-medium text-slate-900">{selectedProgram.programCode}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Shift / Curriculum
-                </p>
-                <p className="mt-1 font-medium text-slate-900">
-                  {selectedProgram.studyShift} / {selectedProgram.curriculumVersion}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Student ID Suffix
-                </p>
-                <p className="mt-1 font-medium text-slate-900">
-                  {selectedProgram.studentIdSuffix || "-"}
-                </p>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 p-4">
-              <label className="mb-2 block text-sm font-medium text-slate-800">
-                Transcript PDF
-              </label>
-              <input
-                type="file"
-                accept=".pdf,application/pdf"
-                onChange={(e) => setTranscriptFile(e.target.files?.[0] || null)}
-                disabled={submitting}
-                className="block w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
-              />
-              <p className="mt-2 text-xs text-slate-500">
-                Upload transcript PDF to detect passed and failed course history.
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 p-4">
-              <label className="mb-2 block text-sm font-medium text-slate-800">
-                Registration PDF
-              </label>
-              <input
-                type="file"
-                accept=".pdf,application/pdf"
-                onChange={(e) => setRegistrationFile(e.target.files?.[0] || null)}
-                disabled={submitting}
-                className="block w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
-              />
-              <p className="mt-2 text-xs text-slate-500">
-                Upload registration PDF to detect currently ongoing courses and current semester.
-              </p>
-            </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Transcript PDF</label>
+            <input
+              type="file"
+              accept=".pdf"
+              onChange={(e) => setTranscriptFile(e.target.files?.[0] || null)}
+              className="w-full rounded-2xl border px-3 py-2"
+            />
           </div>
 
-          <div className="flex flex-wrap gap-3">
+          <div>
+            <label className="mb-1 block text-sm font-medium">
+              Registration PDF
+            </label>
+            <input
+              type="file"
+              accept=".pdf"
+              onChange={(e) => setRegistrationFile(e.target.files?.[0] || null)}
+              className="w-full rounded-2xl border px-3 py-2"
+            />
+          </div>
+
+          <div className="md:col-span-2">
             <button
               type="submit"
-              disabled={submitting || loadingPrograms}
-              className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+              disabled={loading}
+              className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
             >
-              {submitting ? "Importing..." : "Import Student Status"}
+              {loading ? "Parsing..." : "Parse and Preview Status"}
             </button>
           </div>
         </form>
 
         {error ? (
-          <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
-          </div>
-        ) : null}
-
-        {result ? (
-          <div className="mt-6 rounded-3xl border border-green-200 bg-green-50 p-5">
-            <h3 className="text-lg font-bold text-slate-900">Import Result</h3>
-
-            {result.message ? (
-              <p className="mt-2 text-sm leading-6 text-slate-700">{result.message}</p>
-            ) : null}
-
-            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Student ID
-                </p>
-                <p className="mt-1 font-semibold text-slate-900">{result.studentId || "-"}</p>
-              </div>
-
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Batch Code
-                </p>
-                <p className="mt-1 font-semibold text-slate-900">{result.batchCode || "-"}</p>
-              </div>
-
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Inferred Program
-                </p>
-                <p className="mt-1 font-semibold text-slate-900">
-                  {result.inferredProgramCode || "-"}
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Inferred Suffix
-                </p>
-                <p className="mt-1 font-semibold text-slate-900">{result.inferredSuffix || "-"}</p>
-              </div>
-
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Transcript Semester
-                </p>
-                <p className="mt-1 font-semibold text-slate-900">
-                  {result.transcriptSemester || "-"}
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Registration Semester
-                </p>
-                <p className="mt-1 font-semibold text-slate-900">
-                  {result.registrationSemester || "-"}
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Completed Courses
-                </p>
-                <p className="mt-1 font-semibold text-slate-900">
-                  {result.completedCount ?? "-"}
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Ongoing Courses
-                </p>
-                <p className="mt-1 font-semibold text-slate-900">
-                  {result.ongoingCount ?? "-"}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-2xl bg-white p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Remaining Courses
-              </p>
-              <p className="mt-1 text-lg font-semibold text-slate-900">
-                {result.remainingCount ?? "-"}
-              </p>
-            </div>
-          </div>
+          </p>
         ) : null}
       </div>
+
+      {result ? (
+        <>
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-xl font-bold text-slate-900">
+              Identity and Offering Context
+            </h3>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-2xl border bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Student ID
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.studentIdentity.studentId || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Batch Code
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.studentIdentity.batchCode || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Suffix
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.studentIdentity.suffix || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Suggested Next Term
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.offeringContext.suggestedNextOfferingTerm || "-"}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border bg-white p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  Selected Academic Identity
+                </p>
+                <p className="mt-2 text-sm text-slate-700">
+                  {result.selectedProgram.displayLabel}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border bg-white p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  Inferred From Student ID Suffix
+                </p>
+                <p className="mt-2 text-sm text-slate-700">
+                  {result.inferredProgram?.displayLabel || "No inferred match found"}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border bg-white p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  Transcript Parsed Rows
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.transcriptSummary.parsedCount}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border bg-white p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  Registration Parsed Rows
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.registrationSummary.parsedCount}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border bg-white p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  Latest Completed Term
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.transcriptSummary.latestCompletedTerm || "-"}
+                </p>
+              </div>
+            </div>
+
+            {result.warningMessages.length ? (
+              <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <p className="text-sm font-semibold text-amber-800">Warnings</p>
+                <ul className="mt-2 space-y-2 text-sm text-amber-900">
+                  {result.warningMessages.map((item, idx) => (
+                    <li key={idx}>• {item}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Completed
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-green-700">
+                {result.counts.completed}
+              </h4>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Ongoing
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-blue-700">
+                {result.counts.ongoing}
+              </h4>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Remaining
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-amber-700">
+                {result.counts.remaining}
+              </h4>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Curriculum Rows
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-slate-900">
+                {result.counts.masterCourses}
+              </h4>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-xl font-bold text-slate-900">Completed Courses</h3>
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left">
+                    <th className="px-3 py-2">Semester</th>
+                    <th className="px-3 py-2">Code</th>
+                    <th className="px-3 py-2">Title</th>
+                    <th className="px-3 py-2">Credits</th>
+                    <th className="px-3 py-2">Grade</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.completedCourses.map((row) => (
+                    <tr key={`${row.semester}-${row.code}`} className="border-b">
+                      <td className="px-3 py-2">{row.semester}</td>
+                      <td className="px-3 py-2">{row.code}</td>
+                      <td className="px-3 py-2">{row.title}</td>
+                      <td className="px-3 py-2">{row.credits}</td>
+                      <td className="px-3 py-2">{row.grade}</td>
+                    </tr>
+                  ))}
+                  {!result.completedCourses.length ? (
+                    <tr>
+                      <td className="px-3 py-4 text-slate-500" colSpan={5}>
+                        No completed courses parsed.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-xl font-bold text-slate-900">
+              Ongoing Courses From Registration
+            </h3>
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left">
+                    <th className="px-3 py-2">Code</th>
+                    <th className="px-3 py-2">Title</th>
+                    <th className="px-3 py-2">Credits</th>
+                    <th className="px-3 py-2">Section</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.ongoingCourses.map((row) => (
+                    <tr key={row.code} className="border-b">
+                      <td className="px-3 py-2">{row.code}</td>
+                      <td className="px-3 py-2">{row.title}</td>
+                      <td className="px-3 py-2">{row.credits}</td>
+                      <td className="px-3 py-2">{row.section || "-"}</td>
+                    </tr>
+                  ))}
+                  {!result.ongoingCourses.length ? (
+                    <tr>
+                      <td className="px-3 py-4 text-slate-500" colSpan={4}>
+                        No ongoing courses parsed.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-xl font-bold text-slate-900">
+              Remaining Courses From Imported Curriculum
+            </h3>
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left">
+                    <th className="px-3 py-2">Code</th>
+                    <th className="px-3 py-2">Title</th>
+                    <th className="px-3 py-2">Credits</th>
+                    <th className="px-3 py-2">Type</th>
+                    <th className="px-3 py-2">Group</th>
+                    <th className="px-3 py-2">Level / Term</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.remainingCourses.map((row) => (
+                    <tr key={row.code} className="border-b">
+                      <td className="px-3 py-2">{row.code}</td>
+                      <td className="px-3 py-2">{row.title}</td>
+                      <td className="px-3 py-2">{row.credits}</td>
+                      <td className="px-3 py-2">{row.type}</td>
+                      <td className="px-3 py-2">{row.group || "-"}</td>
+                      <td className="px-3 py-2">{row.levelTerm || "-"}</td>
+                    </tr>
+                  ))}
+                  {!result.remainingCourses.length ? (
+                    <tr>
+                      <td className="px-3 py-4 text-slate-500" colSpan={6}>
+                        No remaining courses available yet. Import curriculum first, or check selected identity.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {result.debug ? (
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h3 className="text-xl font-bold text-slate-900">Debug Text Samples</h3>
+
+              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div className="rounded-2xl border bg-slate-50 p-4">
+                  <p className="text-sm font-semibold text-slate-900">
+                    Transcript Extract Sample
+                  </p>
+                  <pre className="mt-3 whitespace-pre-wrap break-words text-xs leading-6 text-slate-700">
+                    {result.debug.transcriptTextSample || "-"}
+                  </pre>
+                </div>
+
+                <div className="rounded-2xl border bg-slate-50 p-4">
+                  <p className="text-sm font-semibold text-slate-900">
+                    Registration Extract Sample
+                  </p>
+                  <pre className="mt-3 whitespace-pre-wrap break-words text-xs leading-6 text-slate-700">
+                    {result.debug.registrationTextSample || "-"}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </div>
   );
 }

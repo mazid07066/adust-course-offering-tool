@@ -11,6 +11,7 @@ type SetupRow = {
   program_type: string;
   study_shift: string;
   curriculum_version: string;
+  curriculum_key: string | null;
   student_id_suffix: string | null;
   display_label: string;
   is_active: boolean;
@@ -33,6 +34,7 @@ export default function AcademicSetupPageClient() {
   const [programType, setProgramType] = useState("REG");
   const [studyShift, setStudyShift] = useState("REG");
   const [curriculumVersion, setCurriculumVersion] = useState("NEW");
+  const [curriculumKey, setCurriculumKey] = useState("");
   const [studentIdSuffix, setStudentIdSuffix] = useState("");
   const [isActive, setIsActive] = useState(true);
 
@@ -75,6 +77,7 @@ export default function AcademicSetupPageClient() {
           programType,
           studyShift,
           curriculumVersion,
+          curriculumKey,
           studentIdSuffix,
           isActive,
         }),
@@ -93,6 +96,7 @@ export default function AcademicSetupPageClient() {
       setProgramType("REG");
       setStudyShift("REG");
       setCurriculumVersion("NEW");
+      setCurriculumKey("");
       setStudentIdSuffix("");
       setIsActive(true);
       await loadData();
@@ -109,8 +113,7 @@ export default function AcademicSetupPageClient() {
         <div>
           <h2 className="text-xl font-bold text-slate-900">Primary Academic Identity Setup</h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            Define the exact academic identities manually. No automatic seeded values are used.
-            Every dropdown in the rest of the system will come from the rows saved here.
+            Define exact academic identities manually. Multiple identities may share one curriculum key.
           </p>
         </div>
 
@@ -119,59 +122,21 @@ export default function AcademicSetupPageClient() {
 
           <div className="mt-3 space-y-2">
             <p>
-              <span className="font-semibold">Department Code:</span> short department code such as
-              <span className="mx-1 rounded bg-white px-2 py-1 font-mono">EEE</span> or
-              <span className="mx-1 rounded bg-white px-2 py-1 font-mono">RAE</span>.
+              <span className="font-semibold">Program Code:</span> unique identity such as{" "}
+              <span className="rounded bg-white px-2 py-1 font-mono">BSC-RAE-REG-OLD</span> or{" "}
+              <span className="rounded bg-white px-2 py-1 font-mono">BSC-RAE-REG-NEW</span>.
             </p>
 
             <p>
-              <span className="font-semibold">Department Name:</span> full department name such as
-              <span className="mx-1 rounded bg-white px-2 py-1 font-mono">
-                Electrical and Electronic Engineering
-              </span>.
+              <span className="font-semibold">Curriculum Key:</span> shared curriculum source key.
+              If two identities have the same course list, use the same curriculum key for both, such as{" "}
+              <span className="rounded bg-white px-2 py-1 font-mono">RAE-REG-SHARED</span>.
             </p>
 
             <p>
-              <span className="font-semibold">Program Code:</span> one exact internal code for the final academic identity.
-              Recommended structure:
-              <span className="mx-1 rounded bg-white px-2 py-1 font-mono">BSC-EEE-REG-NEW</span>
-              or
-              <span className="mx-1 rounded bg-white px-2 py-1 font-mono">BSC-RAE-REG-OLD</span>.
-            </p>
-
-            <p>
-              <span className="font-semibold">Program Title:</span> human-readable title such as
-              <span className="mx-1 rounded bg-white px-2 py-1 font-mono">BSc EEE</span>.
-            </p>
-
-            <p>
-              <span className="font-semibold">Program Type:</span> choose the general type such as
-              REG, EVE, ACCELERATED, or OTHER.
-            </p>
-
-            <p>
-              <span className="font-semibold">Study Shift:</span> choose REG, EVE, ACCELERATED, or OTHER
-              according to the actual academic identity.
-            </p>
-
-            <p>
-              <span className="font-semibold">Curriculum Version:</span> choose NEW, OLD, or OTHER.
-            </p>
-
-            <p>
-              <span className="font-semibold">Student ID Suffix (ZZZ):</span> enter only the final 3-digit program identifier
-              from student IDs of the structure
-              <span className="mx-1 rounded bg-white px-2 py-1 font-mono">XXX-YYYY-ZZZ</span>.
-              Example: in
-              <span className="mx-1 rounded bg-white px-2 py-1 font-mono">232-0274-218</span>,
-              the batch code is
-              <span className="mx-1 rounded bg-white px-2 py-1 font-mono">232</span>
-              and the suffix is
-              <span className="mx-1 rounded bg-white px-2 py-1 font-mono">218</span>.
-            </p>
-
-            <p>
-              <span className="font-semibold">Active:</span> keep checked for identities that should appear in dropdowns.
+              <span className="font-semibold">Student ID Suffix (ZZZ):</span> final 3-digit student ID block,
+              such as <span className="rounded bg-white px-2 py-1 font-mono">218</span> or{" "}
+              <span className="rounded bg-white px-2 py-1 font-mono">228</span>.
             </p>
           </div>
         </div>
@@ -183,7 +148,7 @@ export default function AcademicSetupPageClient() {
               value={departmentCode}
               onChange={(e) => setDepartmentCode(e.target.value.toUpperCase())}
               className="w-full rounded-2xl border px-3 py-2"
-              placeholder="EEE"
+              placeholder="RAE"
               required
             />
           </div>
@@ -194,7 +159,7 @@ export default function AcademicSetupPageClient() {
               value={departmentName}
               onChange={(e) => setDepartmentName(e.target.value)}
               className="w-full rounded-2xl border px-3 py-2"
-              placeholder="Electrical and Electronic Engineering"
+              placeholder="Robotics and Automation Engineering"
               required
             />
           </div>
@@ -205,7 +170,7 @@ export default function AcademicSetupPageClient() {
               value={programCode}
               onChange={(e) => setProgramCode(e.target.value.toUpperCase())}
               className="w-full rounded-2xl border px-3 py-2"
-              placeholder="BSC-EEE-REG-NEW"
+              placeholder="BSC-RAE-REG-OLD"
               required
             />
           </div>
@@ -216,7 +181,7 @@ export default function AcademicSetupPageClient() {
               value={programTitle}
               onChange={(e) => setProgramTitle(e.target.value)}
               className="w-full rounded-2xl border px-3 py-2"
-              placeholder="BSc EEE"
+              placeholder="BSc RAE"
               required
             />
           </div>
@@ -264,6 +229,16 @@ export default function AcademicSetupPageClient() {
                 </option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Curriculum Key</label>
+            <input
+              value={curriculumKey}
+              onChange={(e) => setCurriculumKey(e.target.value.toUpperCase())}
+              className="w-full rounded-2xl border px-3 py-2"
+              placeholder="RAE-REG-SHARED"
+            />
           </div>
 
           <div>
@@ -317,6 +292,7 @@ export default function AcademicSetupPageClient() {
                 <th className="px-3 py-2">Department</th>
                 <th className="px-3 py-2">Program Code</th>
                 <th className="px-3 py-2">Program Title</th>
+                <th className="px-3 py-2">Curriculum Key</th>
                 <th className="px-3 py-2">Type</th>
                 <th className="px-3 py-2">Shift</th>
                 <th className="px-3 py-2">Curriculum</th>
@@ -330,6 +306,7 @@ export default function AcademicSetupPageClient() {
                   <td className="px-3 py-2">{item.department_code}</td>
                   <td className="px-3 py-2">{item.program_code}</td>
                   <td className="px-3 py-2">{item.program_title}</td>
+                  <td className="px-3 py-2">{item.curriculum_key || "-"}</td>
                   <td className="px-3 py-2">{item.program_type}</td>
                   <td className="px-3 py-2">{item.study_shift}</td>
                   <td className="px-3 py-2">{item.curriculum_version}</td>
@@ -339,7 +316,7 @@ export default function AcademicSetupPageClient() {
               ))}
               {!items.length ? (
                 <tr>
-                  <td className="px-3 py-4 text-slate-500" colSpan={8}>
+                  <td className="px-3 py-4 text-slate-500" colSpan={9}>
                     No academic setup rows found yet.
                   </td>
                 </tr>
