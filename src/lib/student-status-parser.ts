@@ -142,7 +142,25 @@ export function parseStudentIdentity(text: string): ParsedStudentIdentity {
   };
 }
 
-export function parseTranscriptCourses(text: string): ParsedTranscriptCourse[] {
+function stripTranscriptFooter(segment: string) {
+  let cleaned = segment;
+
+  const footerPatterns = [
+    /\bCredits\s*Earned\b[\s\S]*$/i,
+    /\bTransfered\s*Credits\b[\s\S]*$/i,
+    /\bGPA\s*:\s*[\s\S]*$/i,
+    /\bPrinted\s*(?:on)?\s*:\s*[\s\S]*$/i,
+    /\bPage\s+\d+\s+of\s+\d+\b[\s\S]*$/i,
+  ];
+
+  for (const pattern of footerPatterns) {
+    cleaned = cleaned.replace(pattern, "").trim();
+  }
+
+  return cleaned;
+}
+
+function splitTranscriptIntoSegments(text: string) {
   let clean = collapseText(text);
 
   clean = clean
@@ -150,34 +168,73 @@ export function parseTranscriptCourses(text: string): ParsedTranscriptCourse[] {
     .replace(/CreditsEarned/gi, " Credits Earned ")
     .replace(/TransferedCredits/gi, " Transfered Credits ")
     .replace(/Printedon:/gi, " Printed on: ")
-    .replace(/StudentID:/gi, " Student ID: ")
-    .replace(/SemesterCodeDescriptionCreditsGrade/gi, " ");
+    .replace(/StudentID:/gi, " Student ID: ");
 
-  const regex =
-    /(SPRING|SUMMER|FALL)\s*(\d{4})\s*([A-Z]{2,6}\d{4})\s*(.*?)\s*(\d+(?:\.\d+)?)\s*([A-F][+-]?|I|W)(?=(?:\s*(?:SPRING|SUMMER|FALL)\s*\d{4}\s*[A-Z]{2,6}\d{4})|\s*Credits\s*Earned|\s*Transfered\s*Credits|\s*GPA\s*:|\s*\*\*\s*Printed:|$)/gi;
+  clean = clean.replace(
+    /(?=(SPRING|SUMMER|FALL)\s*\d{4}\s*[A-Z]{2,6}\d{4})/gi,
+    " ||ROW|| "
+  );
 
+  return clean
+    .split("||ROW||")
+    .map((part) => stripTranscriptFooter(normalizeInline(part)))
+    .filter(Boolean);
+}
+
+export function parseTranscriptCourses(text: string): ParsedTranscriptCourse[] {
+  const segments = splitTranscriptIntoSegments(text);
   const rows: ParsedTranscriptCourse[] = [];
-  let match: RegExpExecArray | null;
 
-  while ((match = regex.exec(clean)) !== null) {
-    const semester = `${String(match[1]).toUpperCase()} ${match[2]}`;
-    const code = normalizeInline(match[3]).toUpperCase();
-    const title = normalizeInline(match[4])
-      .replace(/\s+/g, " ")
-      .trim();
-    const credits = Number(match[5]);
-    const grade = normalizeInline(match[6]).toUpperCase();
+  for (const segment of segments) {
+    if (!/^(SPRING|SUMMER|FALL)\s*\d{4}\s*[A-Z]{2,6}\d{4}/i.test(segment)) {
+      continue;
+    }
 
-    if (!code || !title || Number.isNaN(credits) || !grade) continue;
+    const fullMatch = segment.match(
+      /^(SPRING|SUMMER|FALL)\s*(\d{4})\s*([A-Z]{2,6}\d{4})\s*(.*?)\s*(\d+(?:\.\d+)?)\s*([A-F][+-]?|I|W)$/i
+    );
 
-    rows.push({
-      semester,
-      code,
-      comparableCode: normalizeComparableCourseCode(code),
-      title,
-      credits,
-      grade,
-    });
+    if (fullMatch) {
+      const semester = `${String(fullMatch[1]).toUpperCase()} ${fullMatch[2]}`;
+      const code = normalizeInline(fullMatch[3]).toUpperCase();
+      const title = normalizeInline(fullMatch[4]);
+      const credits = Number(fullMatch[5]);
+      const grade = normalizeInline(fullMatch[6]).toUpperCase();
+
+      if (code && title && !Number.isNaN(credits) && grade) {
+        rows.push({
+          semester,
+          code,
+          comparableCode: normalizeComparableCourseCode(code),
+          title,
+          credits,
+          grade,
+        });
+      }
+      continue;
+    }
+
+    const noGradeMatch = segment.match(
+      /^(SPRING|SUMMER|FALL)\s*(\d{4})\s*([A-Z]{2,6}\d{4})\s*(.*?)\s*(\d+(?:\.\d+)?)$/i
+    );
+
+    if (noGradeMatch) {
+      const semester = `${String(noGradeMatch[1]).toUpperCase()} ${noGradeMatch[2]}`;
+      const code = normalizeInline(noGradeMatch[3]).toUpperCase();
+      const title = normalizeInline(noGradeMatch[4]);
+      const credits = Number(noGradeMatch[5]);
+
+      if (code && title && !Number.isNaN(credits)) {
+        rows.push({
+          semester,
+          code,
+          comparableCode: normalizeComparableCourseCode(code),
+          title,
+          credits,
+          grade: "",
+        });
+      }
+    }
   }
 
   return rows;

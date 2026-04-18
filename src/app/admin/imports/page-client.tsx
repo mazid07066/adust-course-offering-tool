@@ -11,6 +11,7 @@ type ProgramOption = {
   programType: string;
   studyShift: string;
   curriculumVersion: string;
+  curriculumKey: string | null;
   studentIdSuffix: string | null;
   displayLabel: string;
   active: boolean;
@@ -21,10 +22,12 @@ type PreviewResponse = {
   selectedProgram: {
     programCode: string;
     displayLabel: string;
+    curriculumKey?: string | null;
   };
   inferredProgram: {
     programCode: string;
     displayLabel: string;
+    curriculumKey?: string | null;
   } | null;
   studentIdentity: {
     studentId: string | null;
@@ -70,6 +73,7 @@ type PreviewResponse = {
     type: string;
     group: string | null;
     levelTerm: string | null;
+    curriculumKey?: string | null;
   }>;
   debug?: {
     transcriptTextSample: string;
@@ -83,7 +87,9 @@ export default function ImportsPageClient() {
   const [transcriptFile, setTranscriptFile] = useState<File | null>(null);
   const [registrationFile, setRegistrationFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [saveMessage, setSaveMessage] = useState("");
   const [result, setResult] = useState<PreviewResponse | null>(null);
 
   useEffect(() => {
@@ -106,6 +112,7 @@ export default function ImportsPageClient() {
     e.preventDefault();
     setLoading(true);
     setError("");
+    setSaveMessage("");
     setResult(null);
 
     try {
@@ -139,6 +146,44 @@ export default function ImportsPageClient() {
     }
   }
 
+  async function handleSaveBatchStatus() {
+    if (!result) return;
+
+    setSaving(true);
+    setError("");
+    setSaveMessage("");
+
+    try {
+      const res = await fetch("/api/student-status-save", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          programCode,
+          batchCode: result.studentIdentity.batchCode,
+          studentId: result.studentIdentity.studentId,
+          latestCompletedTerm: result.transcriptSummary.latestCompletedTerm,
+          currentRegistrationTerm: result.registrationSummary.currentRegistrationTerm,
+          completedCourses: result.completedCourses,
+          ongoingCourses: result.ongoingCourses,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to save batch status.");
+      }
+
+      setSaveMessage(data.message || "Batch status saved successfully.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save batch status.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -154,8 +199,7 @@ export default function ImportsPageClient() {
               XXX-YYYY-ZZZ
             </span>{" "}
             where <span className="font-semibold">XXX</span> is the batch code and{" "}
-            <span className="font-semibold">ZZZ</span> is the configured academic
-            suffix.
+            <span className="font-semibold">ZZZ</span> is the configured academic suffix.
           </p>
           <p className="mt-2">
             Transcript logic: passed courses with positive earned credit are treated
@@ -213,7 +257,7 @@ export default function ImportsPageClient() {
             />
           </div>
 
-          <div className="md:col-span-2">
+          <div className="md:col-span-2 flex flex-wrap gap-3">
             <button
               type="submit"
               disabled={loading}
@@ -221,12 +265,29 @@ export default function ImportsPageClient() {
             >
               {loading ? "Parsing..." : "Parse and Preview Status"}
             </button>
+
+            {result ? (
+              <button
+                type="button"
+                onClick={handleSaveBatchStatus}
+                disabled={saving}
+                className="rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+              >
+                {saving ? "Saving..." : "Save Batch Status"}
+              </button>
+            ) : null}
           </div>
         </form>
 
         {error ? (
           <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
+          </p>
+        ) : null}
+
+        {saveMessage ? (
+          <p className="mt-4 rounded-xl bg-green-50 px-4 py-3 text-sm text-green-700">
+            {saveMessage}
           </p>
         ) : null}
       </div>
