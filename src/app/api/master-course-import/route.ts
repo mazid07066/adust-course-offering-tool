@@ -3,7 +3,6 @@ import * as XLSX from "xlsx";
 import mammoth from "mammoth";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
-import { getCatalogProgramByCode } from "@/lib/academic-catalog";
 
 type ParsedCourse = {
   course_code: string;
@@ -16,6 +15,18 @@ type ParsedCourse = {
   is_active: boolean;
 };
 
+type CatalogProgram = {
+  departmentCode: string;
+  departmentName: string;
+  programCode: string;
+  programTitle: string;
+  programType: string;
+  studyShift: string;
+  curriculumVersion: string;
+  studentIdSuffix: string | null;
+  displayLabel: string;
+};
+
 function normalizeText(text: string) {
   return String(text || "").replace(/\s+/g, " ").trim();
 }
@@ -25,7 +36,10 @@ function normalizeTitle(text: string) {
 }
 
 function normalizeCourseCode(text: string) {
-  return String(text || "").replace(/\s+/g, "").trim().toUpperCase();
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
 }
 
 function detectCourseType(rawType: string, rawTitle: string) {
@@ -38,123 +52,197 @@ function detectCourseType(rawType: string, rawTitle: string) {
   return "THEORY";
 }
 
+function isLikelyCourseCode(value: string) {
+  const v = normalizeText(value).toUpperCase();
+  return /^[A-Z]{2,6}\s*\d{2,4}(?:\s*\d{2,4})?$/.test(v);
+}
+
+function isNumericCredit(value: string) {
+  return /^\d+(\.\d+)?$/.test(normalizeText(value));
+}
+
+function extractGroupName(text: string) {
+  const value = normalizeText(text);
+  if (!value) return null;
+
+  if (/group\s*-\s*[a-z0-9]+/i.test(value)) return value;
+  if (/ged|general education/i.test(value)) return value;
+  if (/basic science|mathematics/i.test(value)) return value;
+  if (/other engineering/i.test(value)) return value;
+  if (/core courses?/i.test(value)) return value;
+  if (/elective courses?/i.test(value)) return value;
+  if (/electronics|biomedical|communication|power division|computer engineering/i.test(value)) {
+    return value;
+  }
+
+  return null;
+}
+
 function parseExcel(buffer: Buffer): ParsedCourse[] {
   const workbook = XLSX.read(buffer, { type: "buffer" });
-  const firstSheet = workbook.SheetNames[0];
-  const sheet = workbook.Sheets[firstSheet];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
-
   const courses: ParsedCourse[] = [];
 
-  for (const row of rows) {
-    const code =
-      row["Code"] ||
-      row["Course Code"] ||
-      row["course_code"] ||
-      row["COURSE CODE"] ||
-      "";
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
 
-    const title =
-      row["Title"] ||
-      row["Course Title"] ||
-      row["course_title"] ||
-      row["COURSE TITLE"] ||
-      "";
+    for (const row of rows) {
+      const rowValues = Object.values(row).map((v) => normalizeText(String(v || "")));
+      const joined = rowValues.join(" | ");
 
-    if (!String(code).trim() || !String(title).trim()) continue;
+      const code =
+        row["Code"] ||
+        row["Course Code"] ||
+        row["course_code"] ||
+        row["COURSE CODE"] ||
+        rowValues.find((v) => isLikelyCourseCode(v)) ||
+        "";
 
-    const credit =
-      row["Credit"] ||
-      row["Credits"] ||
-      row["Credit Hour"] ||
-      row["Credit Hours"] ||
-      row["credit"] ||
-      row["CREDIT"] ||
-      0;
+      const title =
+        row["Title"] ||
+        row["Course Title"] ||
+        row["course_title"] ||
+        row["COURSE TITLE"] ||
+        (() => {
+          const idx = rowValues.findIndex((v) => isLikelyCourseCode(v));
+          if (idx >= 0 && rowValues[idx + 1] && !isNumericCredit(rowValues[idx + 1])) {
+            return rowValues[idx + 1];
+          }
+          return "";
+        })();
 
-    const type =
-      row["Type"] ||
-      row["type"] ||
-      row["TYPE"] ||
-      "";
+      const credit =
+        row["Credit"] ||
+        row["Credits"] ||
+        row["Credit Hour"] ||
+        row["Credit Hours"] ||
+        row["credit"] ||
+        row["CREDIT"] ||
+        rowValues.find((v) => isNumericCredit(v)) ||
+        0;
 
-    const levelTerm =
-      row["Level Term"] ||
-      row["Level"] ||
-      row["Semester"] ||
-      row["level_term"] ||
-      row["LEVEL TERM"] ||
-      null;
+      if (!String(code).trim() || !String(title).trim()) continue;
+      if (/course code|course title|credit/i.test(joined)) continue;
 
-    const group =
-      row["Group"] ||
-      row["Category"] ||
-      row["group_name"] ||
-      row["GROUP"] ||
-      null;
-
-    courses.push({
-      course_code: normalizeCourseCode(String(code)),
-      course_title: normalizeText(String(title)),
-      normalized_title: normalizeTitle(String(title)),
-      credit: Number(credit || 0),
-      course_type: detectCourseType(String(type), String(title)),
-      level_term: levelTerm ? normalizeText(String(levelTerm)) : null,
-      group_name: group ? normalizeText(String(group)) : null,
-      is_active: true,
-    });
+      courses.push({
+        course_code: normalizeCourseCode(String(code)),
+        course_title: normalizeText(String(title)),
+        normalized_title: normalizeTitle(String(title)),
+        credit: Number(credit || 0),
+        course_type: detectCourseType("", String(title)),
+        level_term: sheetName || null,
+        group_name: null,
+        is_active: true,
+      });
+    }
   }
 
   return courses;
 }
 
-function parseDocxTableText(text: string): ParsedCourse[] {
+function parseHtmlTables(html: string): ParsedCourse[] {
+  const courses: ParsedCourse[] = [];
+  const tableMatches = html.match(/<table[\s\S]*?<\/table>/gi) || [];
+  let currentGroup: string | null = null;
+
+  for (const tableHtml of tableMatches) {
+    const rowMatches = tableHtml.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+
+    for (const rowHtml of rowMatches) {
+      const cellMatches = [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((m) =>
+        normalizeText(
+          m[1]
+            .replace(/<br\s*\/?>/gi, " ")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/&nbsp;/gi, " ")
+        )
+      );
+
+      if (!cellMatches.length) continue;
+
+      const rowText = cellMatches.join(" | ");
+      const foundGroup = extractGroupName(rowText);
+      if (foundGroup) {
+        currentGroup = foundGroup;
+      }
+
+      if (cellMatches.some((c) => /course code/i.test(c))) continue;
+      if (cellMatches.every((c) => !c)) continue;
+
+      let code = "";
+      let title = "";
+      let credit = "";
+
+      if (cellMatches.length >= 3) {
+        if (isLikelyCourseCode(cellMatches[0])) {
+          code = cellMatches[0];
+
+          if (cellMatches.length >= 4 && isLikelyCourseCode(cellMatches[1])) {
+            title = cellMatches[2];
+            credit = cellMatches[3] || "";
+          } else {
+            title = cellMatches[1];
+            credit = cellMatches[2] || "";
+          }
+        }
+      }
+
+      if (!code || !title) continue;
+      if (!isNumericCredit(credit)) continue;
+
+      courses.push({
+        course_code: normalizeCourseCode(code),
+        course_title: normalizeText(title),
+        normalized_title: normalizeTitle(title),
+        credit: Number(credit),
+        course_type: detectCourseType("", title),
+        level_term: null,
+        group_name: currentGroup,
+        is_active: true,
+      });
+    }
+  }
+
+  return courses;
+}
+
+function parseDocxRawText(text: string): ParsedCourse[] {
   const lines = text
     .split(/\r?\n/)
     .map((line) => normalizeText(line))
     .filter(Boolean);
 
   const courses: ParsedCourse[] = [];
+  let currentGroup: string | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    const codeMatch = line.match(/\b([A-Z]{2,4}\s?\d{3,4}\s?\d{4}|[A-Z]{2,4}\s?\d{3,4}[A-Z]?|[A-Z]{2,4}\d{3,4}[A-Z]?)\b/i);
-    if (!codeMatch) continue;
+    const foundGroup = extractGroupName(line);
+    if (foundGroup) {
+      currentGroup = foundGroup;
+    }
 
-    const courseCode = normalizeCourseCode(codeMatch[1]);
+    if (!isLikelyCourseCode(line)) continue;
 
     const next1 = lines[i + 1] || "";
     const next2 = lines[i + 2] || "";
 
-    let title = "";
-    let credit = 0;
+    if (!next1 || !next2) continue;
+    if (isLikelyCourseCode(next1)) continue;
+    if (!isNumericCredit(next2)) continue;
 
-    if (next1 && !/\b\d+(\.\d+)?\b/.test(next1)) {
-      title = next1;
-      const creditMatch = next2.match(/\b(\d+(?:\.\d+)?)\b/);
-      if (creditMatch) {
-        credit = Number(creditMatch[1]);
-      }
-    } else {
-      const inlineTitle = normalizeText(line.replace(codeMatch[1], ""));
-      title = inlineTitle;
-      const creditMatch = line.match(/\b(\d+(?:\.\d+)?)\b/g);
-      if (creditMatch?.length) {
-        credit = Number(creditMatch[creditMatch.length - 1]);
-      }
-    }
-
-    if (!title) continue;
+    const title = next1;
+    const credit = Number(next2);
 
     courses.push({
-      course_code: courseCode,
+      course_code: normalizeCourseCode(line),
       course_title: normalizeText(title),
       normalized_title: normalizeTitle(title),
       credit,
       course_type: detectCourseType("", title),
       level_term: null,
-      group_name: null,
+      group_name: currentGroup,
       is_active: true,
     });
   }
@@ -163,8 +251,37 @@ function parseDocxTableText(text: string): ParsedCourse[] {
 }
 
 async function parseDocx(buffer: Buffer): Promise<ParsedCourse[]> {
-  const result = await mammoth.extractRawText({ buffer });
-  return parseDocxTableText(result.value || "");
+  const htmlResult = await mammoth.convertToHtml({ buffer });
+  const htmlCourses = parseHtmlTables(htmlResult.value || "");
+  if (htmlCourses.length > 0) {
+    return htmlCourses;
+  }
+
+  const rawResult = await mammoth.extractRawText({ buffer });
+  return parseDocxRawText(rawResult.value || "");
+}
+
+async function getCatalogProgramByCode(programCode: string): Promise<CatalogProgram | null> {
+  const row = await prisma.academic_catalog_entries.findFirst({
+    where: {
+      program_code: programCode,
+      is_active: true,
+    },
+  });
+
+  if (!row) return null;
+
+  return {
+    departmentCode: row.department_code,
+    departmentName: row.department_name,
+    programCode: row.program_code,
+    programTitle: row.program_title,
+    programType: row.program_type,
+    studyShift: row.study_shift,
+    curriculumVersion: row.curriculum_version,
+    studentIdSuffix: row.student_id_suffix,
+    displayLabel: row.display_label,
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -173,11 +290,8 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
 
-    const programCode = String(formData.get("programCode") || "")
-      .trim()
-      .toUpperCase();
-    const replaceExisting =
-      String(formData.get("replaceExisting") || "false") === "true";
+    const programCode = String(formData.get("programCode") || "").trim().toUpperCase();
+    const replaceExisting = String(formData.get("replaceExisting") || "false") === "true";
     const file = formData.get("file") as File | null;
 
     if (!programCode || !file) {
@@ -187,35 +301,63 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const catalogProgram = getCatalogProgramByCode(programCode);
+    const catalogProgram = await getCatalogProgramByCode(programCode);
     if (!catalogProgram) {
       return NextResponse.json(
-        { error: "Selected program/curriculum is not defined in the academic catalog." },
+        { error: "Selected program/curriculum is not defined in academic setup." },
         { status: 400 }
       );
     }
 
-    const existingDepartment = await prisma.departments.findFirst({
-      where: { short_name: catalogProgram.departmentCode },
+    let department = await prisma.departments.findFirst({
+      where: {
+        OR: [
+          { short_name: catalogProgram.departmentCode },
+          { name: catalogProgram.departmentName },
+        ],
+      },
     });
 
-    const department = existingDepartment
-      ? await prisma.departments.update({
-          where: { id: existingDepartment.id },
-          data: {
-            name: catalogProgram.departmentName,
-            short_name: catalogProgram.departmentCode,
-          },
-        })
-      : await prisma.departments.create({
+    if (!department) {
+      department = await prisma.departments.create({
+        data: {
+          name: catalogProgram.departmentName,
+          short_name: catalogProgram.departmentCode,
+        },
+      });
+    } else {
+      const anotherWithSameName = await prisma.departments.findFirst({
+        where: {
+          name: catalogProgram.departmentName,
+          NOT: { id: department.id },
+        },
+      });
+
+      if (!anotherWithSameName) {
+        department = await prisma.departments.update({
+          where: { id: department.id },
           data: {
             name: catalogProgram.departmentName,
             short_name: catalogProgram.departmentCode,
           },
         });
+      } else {
+        department = await prisma.departments.update({
+          where: { id: department.id },
+          data: {
+            short_name: catalogProgram.departmentCode,
+          },
+        });
+      }
+    }
 
     const existingProgram = await prisma.programs.findFirst({
-      where: { short_name: catalogProgram.programCode },
+      where: {
+        OR: [
+          { short_name: catalogProgram.programCode },
+          { name: catalogProgram.programTitle },
+        ],
+      },
     });
 
     const program = existingProgram
@@ -236,24 +378,21 @@ export async function POST(request: NextRequest) {
         });
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    let courses: ParsedCourse[] = [];
-
     const lowerName = file.name.toLowerCase();
+
+    let courses: ParsedCourse[] = [];
 
     if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) {
       courses = parseExcel(buffer);
-    } else if (lowerName.endsWith(".docx") || lowerName.endsWith(".doc") || lowerName.endsWith(".docm")) {
+    } else if (
+      lowerName.endsWith(".docx") ||
+      lowerName.endsWith(".doc") ||
+      lowerName.endsWith(".docm")
+    ) {
       courses = await parseDocx(buffer);
     } else {
       return NextResponse.json(
         { error: "Unsupported file type. Please upload Excel or DOCX." },
-        { status: 400 }
-      );
-    }
-
-    if (!courses.length) {
-      return NextResponse.json(
-        { error: "No course rows could be parsed from the uploaded file." },
         { status: 400 }
       );
     }
@@ -267,6 +406,13 @@ export async function POST(request: NextRequest) {
     }
 
     const dedupedCourses = Array.from(dedupedMap.values());
+
+    if (!dedupedCourses.length) {
+      return NextResponse.json(
+        { error: "No course rows could be parsed from the uploaded file." },
+        { status: 400 }
+      );
+    }
 
     if (replaceExisting) {
       await prisma.master_courses.deleteMany({
@@ -332,8 +478,7 @@ export async function POST(request: NextRequest) {
     console.error(error);
     return NextResponse.json(
       {
-        error:
-          error instanceof Error ? error.message : "Master course import failed.",
+        error: error instanceof Error ? error.message : "Master course import failed.",
       },
       { status: 500 }
     );

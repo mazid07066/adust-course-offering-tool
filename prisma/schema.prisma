@@ -237,3 +237,23 @@ model users {
 
   @@index([id], map: "ix_users_id")
 }
+model academic_catalog_entries {
+  id                Int      @id @default(autoincrement())
+  department_code   String
+  department_name   String
+  program_code      String   @unique
+  program_title     String
+  program_type      String
+  study_shift       String
+  curriculum_version String
+  student_id_suffix String?  @unique
+  display_label     String
+  is_active         Boolean  @default(true)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  @@index([department_code])
+  @@index([program_type])
+  @@index([study_shift])
+  @@index([curriculum_version])
+}
