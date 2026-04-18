@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { normalizeComparableTitle } from "@/lib/student-status-parser";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
 
 type SaveCompletedCourse = {
   code: string;
@@ -19,22 +21,30 @@ type SaveOngoingCourse = {
 
 export const runtime = "nodejs";
 
+function normalizeText(value: string) {
+  return String(value || "").trim();
+}
+
+function normalizeUpper(value: string) {
+  return normalizeText(value).toUpperCase();
+}
+
 export async function POST(request: NextRequest) {
   await requireCoordinatorOrAdminApi();
 
   try {
     const body = await request.json();
 
-    const programCode = String(body.programCode || "").trim().toUpperCase();
-    const batchCode = String(body.batchCode || "").trim();
-    const studentId = String(body.studentId || "").trim();
+    const programCode = normalizeUpper(body.programCode || "");
+    const batchCode = normalizeText(body.batchCode || "");
+    const studentId = normalizeText(body.studentId || "");
 
     const latestCompletedTerm = body.latestCompletedTerm
-      ? String(body.latestCompletedTerm).trim().toUpperCase()
+      ? normalizeUpper(body.latestCompletedTerm)
       : null;
 
     const currentRegistrationTerm = body.currentRegistrationTerm
-      ? String(body.currentRegistrationTerm).trim().toUpperCase()
+      ? normalizeUpper(body.currentRegistrationTerm)
       : null;
 
     const completedCourses = Array.isArray(body.completedCourses)
@@ -53,27 +63,38 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Batch code is required." }, { status: 400 });
     }
 
-    const program = await prisma.programs.findFirst({
+    const academicIdentity = await prisma.academic_catalog_entries.findFirst({
       where: {
-        short_name: programCode,
+        program_code: programCode,
+        is_active: true,
       },
     });
 
-    if (!program) {
+    if (!academicIdentity) {
       return NextResponse.json(
-        { error: "Program record not found. Import curriculum first." },
+        { error: "Academic identity not found in Academic Setup." },
         { status: 400 }
       );
     }
 
+    const program = await resolveCanonicalProgram({
+      department_code: academicIdentity.department_code,
+      department_name: academicIdentity.department_name,
+      program_code: academicIdentity.program_code,
+      program_title: academicIdentity.program_title,
+      study_shift: academicIdentity.study_shift,
+    });
+
     const batch = await prisma.batches.upsert({
       where: {
-        uq_program_batch: {
+        program_id_batch_code: {
           program_id: program.id,
           batch_code: batchCode,
         },
       },
-      update: {},
+      update: {
+        is_active: true,
+      },
       create: {
         program_id: program.id,
         batch_code: batchCode,
@@ -136,11 +157,11 @@ export async function POST(request: NextRequest) {
         data: completedCourses.map((course) => ({
           batch_id: batch.id,
           academic_term_id: completedTermId,
-          course_code: course.code,
-          course_title: course.title,
-          normalized_title: course.title.toLowerCase().trim(),
+          course_code: normalizeUpper(course.code),
+          course_title: normalizeText(course.title),
+          normalized_title: normalizeComparableTitle(course.title),
           credit: Number(course.credits),
-          grade: course.grade || null,
+          grade: normalizeUpper(course.grade || "") || null,
           source_student_id: studentId || null,
           source_file_name: null,
         })),
@@ -152,9 +173,9 @@ export async function POST(request: NextRequest) {
         data: ongoingCourses.map((course) => ({
           batch_id: batch.id,
           academic_term_id: registrationTermId,
-          course_code: course.code,
-          course_title: course.title,
-          normalized_title: course.title.toLowerCase().trim(),
+          course_code: normalizeUpper(course.code),
+          course_title: normalizeText(course.title),
+          normalized_title: normalizeComparableTitle(course.title),
           credit: Number(course.credits),
           source_student_id: studentId || null,
           source_file_name: null,
@@ -166,6 +187,7 @@ export async function POST(request: NextRequest) {
       success: true,
       message: "Batch status saved successfully.",
       batchId: batch.id,
+      programId: program.id,
       savedCompleted: completedCourses.length,
       savedOngoing: ongoingCourses.length,
     });

@@ -4,6 +4,7 @@ export type ParsedTranscriptCourse = {
   semester: string;
   code: string;
   comparableCode: string;
+  comparableTitle: string;
   title: string;
   credits: number;
   grade: string;
@@ -12,6 +13,7 @@ export type ParsedTranscriptCourse = {
 export type ParsedRegistrationCourse = {
   code: string;
   comparableCode: string;
+  comparableTitle: string;
   title: string;
   credits: number;
   section: string | null;
@@ -54,22 +56,92 @@ function collapseText(value: string) {
   return normalizeMultiline(value).replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
 }
 
-export function normalizeComparableCourseCode(value: string) {
+function normalizeRawCourseCode(value: string) {
   const raw = normalizeInline(value).toUpperCase();
   if (!raw) return "";
 
   const compact = raw.replace(/\s+/g, "");
 
-  const directMatch = compact.match(/^([A-Z]{2,6})(\d{4})$/);
+  const directMatch = compact.match(/^([A-Z]{2,6})(\d{3,4})$/);
   if (directMatch) return `${directMatch[1]}${directMatch[2]}`;
 
-  const spacedTailMatch = raw.match(/^([A-Z]{2,6})(?:\s+\d{2,4})?\s+(\d{4})$/);
+  const spacedTailMatch = raw.match(/^([A-Z]{2,6})(?:\s+\d{2,4})?\s+(\d{3,4})$/);
   if (spacedTailMatch) return `${spacedTailMatch[1]}${spacedTailMatch[2]}`;
 
-  const genericMatch = compact.match(/^([A-Z]{2,6}).*?(\d{4})$/);
+  const genericMatch = compact.match(/^([A-Z]{2,6}).*?(\d{3,4})$/);
   if (genericMatch) return `${genericMatch[1]}${genericMatch[2]}`;
 
   return compact;
+}
+
+function normalizeDepartmentSpecificAlias(prefix: string, digits: string) {
+  const threeDigitAliasPrefixes = new Set([
+    "EEE",
+    "MAT",
+    "PHY",
+    "CHE",
+    "MEE",
+    "CSE",
+    "ENG",
+    "STA",
+    "HUM",
+    "ACT",
+    "ECO",
+    "SOC",
+    "ENV",
+    "HIS",
+    "BBA",
+    "MGT",
+    "PEV",
+    "PHI",
+    "CSC",
+  ]);
+
+  if (digits.length === 4 && digits.startsWith("1") && threeDigitAliasPrefixes.has(prefix)) {
+    return `${prefix}${digits.slice(1)}`;
+  }
+
+  return `${prefix}${digits}`;
+}
+
+export function normalizeComparableCourseCode(value: string) {
+  const normalized = normalizeRawCourseCode(value);
+  if (!normalized) return "";
+
+  const match = normalized.match(/^([A-Z]{2,6})(\d{3,4})$/);
+  if (!match) return normalized;
+
+  const prefix = match[1];
+  const digits = match[2];
+
+  return normalizeDepartmentSpecificAlias(prefix, digits);
+}
+
+function cleanRegistrationTitle(value: string) {
+  let cleaned = normalizeInline(value);
+
+  cleaned = cleaned.replace(
+    /\s+(?:SU|SA|TH|MO|FR|WE)-\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?.*$/i,
+    ""
+  );
+
+  cleaned = cleaned.replace(/\s+[A-Z]{2,6}\d{2,}.*$/i, (match) => {
+    return /\b(?:MU|WE|EE|CE|ME|LAB|ROOM)\b/i.test(match) ? "" : match;
+  });
+
+  return normalizeInline(cleaned);
+}
+
+export function normalizeComparableTitle(value: string) {
+  let cleaned = cleanRegistrationTitle(value)
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\b(the|course|lab\s*course)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleaned;
 }
 
 export async function extractPdfText(buffer: Buffer): Promise<string> {
@@ -171,7 +243,7 @@ function splitTranscriptIntoSegments(text: string) {
     .replace(/StudentID:/gi, " Student ID: ");
 
   clean = clean.replace(
-    /(?=(SPRING|SUMMER|FALL)\s*\d{4}\s*[A-Z]{2,6}\d{4})/gi,
+    /(?=(SPRING|SUMMER|FALL)\s*\d{4}\s*[A-Z]{2,6}\d{3,4})/gi,
     " ||ROW|| "
   );
 
@@ -186,12 +258,12 @@ export function parseTranscriptCourses(text: string): ParsedTranscriptCourse[] {
   const rows: ParsedTranscriptCourse[] = [];
 
   for (const segment of segments) {
-    if (!/^(SPRING|SUMMER|FALL)\s*\d{4}\s*[A-Z]{2,6}\d{4}/i.test(segment)) {
+    if (!/^(SPRING|SUMMER|FALL)\s*\d{4}\s*[A-Z]{2,6}\d{3,4}/i.test(segment)) {
       continue;
     }
 
     const fullMatch = segment.match(
-      /^(SPRING|SUMMER|FALL)\s*(\d{4})\s*([A-Z]{2,6}\d{4})\s*(.*?)\s*(\d+(?:\.\d+)?)\s*([A-F][+-]?|I|W)$/i
+      /^(SPRING|SUMMER|FALL)\s*(\d{4})\s*([A-Z]{2,6}\d{3,4})\s*(.*?)\s*(\d+(?:\.\d+)?)\s*([A-F][+-]?|I|W)$/i
     );
 
     if (fullMatch) {
@@ -206,6 +278,7 @@ export function parseTranscriptCourses(text: string): ParsedTranscriptCourse[] {
           semester,
           code,
           comparableCode: normalizeComparableCourseCode(code),
+          comparableTitle: normalizeComparableTitle(title),
           title,
           credits,
           grade,
@@ -215,7 +288,7 @@ export function parseTranscriptCourses(text: string): ParsedTranscriptCourse[] {
     }
 
     const noGradeMatch = segment.match(
-      /^(SPRING|SUMMER|FALL)\s*(\d{4})\s*([A-Z]{2,6}\d{4})\s*(.*?)\s*(\d+(?:\.\d+)?)$/i
+      /^(SPRING|SUMMER|FALL)\s*(\d{4})\s*([A-Z]{2,6}\d{3,4})\s*(.*?)\s*(\d+(?:\.\d+)?)$/i
     );
 
     if (noGradeMatch) {
@@ -229,6 +302,7 @@ export function parseTranscriptCourses(text: string): ParsedTranscriptCourse[] {
           semester,
           code,
           comparableCode: normalizeComparableCourseCode(code),
+          comparableTitle: normalizeComparableTitle(title),
           title,
           credits,
           grade: "",
@@ -251,26 +325,28 @@ export function parseRegistrationCourses(text: string): ParsedRegistrationCourse
 
   const segments =
     clean.match(
-      /A-[A-Z]{2,6}\d{4}CR:\d+(?:\.\d+)?Sec:\d+\s+.*?(?=A-[A-Z]{2,6}\d{4}CR:|Developed by:|Office Copy|Bank Copy|University Management Information System|$)/gi
+      /A-[A-Z]{2,6}\d{3,4}CR:\d+(?:\.\d+)?Sec:\d+\s+.*?(?=A-[A-Z]{2,6}\d{3,4}CR:|Developed by:|Office Copy|Bank Copy|University Management Information System|$)/gi
     ) || [];
 
   const rows: ParsedRegistrationCourse[] = [];
 
   for (const segment of segments) {
     const match = normalizeInline(segment).match(
-      /^A-([A-Z]{2,6}\d{4})CR:(\d+(?:\.\d+)?)Sec:(\d+)\s+(.+?)(?=\s+(?:SU|SA|TH|MO|FR)-|$)/i
+      /^A-([A-Z]{2,6}\d{3,4})CR:(\d+(?:\.\d+)?)Sec:(\d+)\s+(.+?)(?=\s+(?:SU|SA|TH|MO|FR|WE)-|$)/i
     );
 
     if (!match) continue;
 
     const code = normalizeInline(match[1]).toUpperCase();
+    const title = cleanRegistrationTitle(match[4]);
 
     rows.push({
       code,
       comparableCode: normalizeComparableCourseCode(code),
+      comparableTitle: normalizeComparableTitle(title),
       credits: Number(match[2]),
       section: normalizeInline(match[3]) || null,
-      title: normalizeInline(match[4]),
+      title,
     });
   }
 
@@ -314,6 +390,7 @@ export function getCompletedCourseMap(courses: ParsedTranscriptCourse[]) {
     {
       code: string;
       comparableCode: string;
+      comparableTitle: string;
       title: string;
       semester: string;
       credits: number;
@@ -335,6 +412,7 @@ export function getCompletedCourseMap(courses: ParsedTranscriptCourse[]) {
       map.set(row.comparableCode, {
         code: row.code,
         comparableCode: row.comparableCode,
+        comparableTitle: row.comparableTitle,
         title: row.title,
         semester: row.semester,
         credits: row.credits,

@@ -1,184 +1,348 @@
 "use client";
 
-import { useState } from "react";
-import AdminLayout from "@/components/admin-layout";
-import ProgramBatchSelector from "@/components/program-batch-selector";
-import { useAcademicCatalogPrograms } from "@/hooks/use-academic-catalog-programs";
-import { useProgramBatches } from "@/hooks/use-program-batches";
+import { useEffect, useState } from "react";
 
-type StatusRow = {
-  code: string;
-  title: string;
-  credit: number;
-  type: string;
-  category: string;
-  status: string;
+type ProgramOption = {
+  id: number;
+  departmentCode: string;
+  departmentName: string;
+  programCode: string;
+  programTitle: string;
+  programType: string;
+  studyShift: string;
+  curriculumVersion: string;
+  curriculumKey: string | null;
+  studentIdSuffix: string | null;
+  displayLabel: string;
+  active: boolean;
 };
 
-type StatusResponse = {
-  success?: boolean;
-  error?: string;
-  summary?: {
-    total: number;
+type BatchOption = {
+  batchCode: string;
+};
+
+type BatchStatusResponse = {
+  selectedProgram: {
+    programCode: string;
+    displayLabel: string;
+    curriculumKey: string | null;
+  };
+  batchCode: string;
+  counts: {
     completed: number;
     ongoing: number;
     remaining: number;
+    masterCourses: number;
   };
-  rows?: StatusRow[];
+  completedCourses: Array<{
+    semester: string;
+    code: string;
+    title: string;
+    credits: number;
+    grade: string;
+  }>;
+  ongoingCourses: Array<{
+    semester: string;
+    code: string;
+    title: string;
+    credits: number;
+  }>;
+  remainingCourses: Array<{
+    code: string;
+    title: string;
+    credits: number;
+    type: string;
+    group: string | null;
+    levelTerm: string | null;
+  }>;
+  statusRows: Array<{
+    code: string;
+    title: string;
+    credits: number;
+    type: string;
+    group: string | null;
+    levelTerm: string | null;
+    status: string;
+    color: string;
+  }>;
 };
 
 export default function BatchStatusPageClient() {
-  const {
-    programs,
-    programCode,
-    setProgramCode,
-    loadingPrograms,
-    programError,
-  } = useAcademicCatalogPrograms();
-
-  const {
-    batches,
-    batchCode,
-    setBatchCode,
-    loadingBatches,
-    batchError,
-  } = useProgramBatches(programCode);
-
-  const [loadingStatus, setLoadingStatus] = useState(false);
+  const [programs, setPrograms] = useState<ProgramOption[]>([]);
+  const [batches, setBatches] = useState<BatchOption[]>([]);
+  const [programCode, setProgramCode] = useState("");
+  const [batchCode, setBatchCode] = useState("");
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [summary, setSummary] = useState<StatusResponse["summary"] | null>(null);
-  const [rows, setRows] = useState<StatusRow[]>([]);
+  const [result, setResult] = useState<BatchStatusResponse | null>(null);
 
-  async function loadStatus(e: React.FormEvent) {
+  useEffect(() => {
+    async function loadPrograms() {
+      try {
+        const res = await fetch("/api/academic-catalog/options", { cache: "no-store" });
+        const data = await res.json();
+        setPrograms(data.programs || []);
+      } catch {
+        setPrograms([]);
+      }
+    }
+
+    loadPrograms();
+  }, []);
+
+  useEffect(() => {
+    async function loadBatches() {
+      if (!programCode) {
+        setBatches([]);
+        setBatchCode("");
+        return;
+      }
+
+      try {
+        const res = await fetch(
+          `/api/program-batches/options?programCode=${encodeURIComponent(programCode)}`,
+          { cache: "no-store" }
+        );
+        const data = await res.json();
+        setBatches((data.batches || []).map((b: string) => ({ batchCode: b })));
+        setBatchCode("");
+      } catch {
+        setBatches([]);
+        setBatchCode("");
+      }
+    }
+
+    loadBatches();
+  }, [programCode]);
+
+  async function handleLoad(e: React.FormEvent) {
     e.preventDefault();
-
-    setLoadingStatus(true);
+    setLoading(true);
     setError("");
+    setResult(null);
 
     try {
       const res = await fetch(
-        `/api/batch-status?programCode=${encodeURIComponent(
-          programCode
-        )}&batchCode=${encodeURIComponent(batchCode)}`,
-        {
-          method: "GET",
-          cache: "no-store",
-        }
+        `/api/batch-status?programCode=${encodeURIComponent(programCode)}&batchCode=${encodeURIComponent(batchCode)}`,
+        { cache: "no-store" }
       );
-
-      const json: StatusResponse = await res.json();
+      const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(json.error || "Failed to load batch status.");
+        throw new Error(data.error || "Failed to load batch status.");
       }
 
-      setSummary(json.summary || null);
-      setRows(json.rows || []);
+      setResult(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load batch status.");
     } finally {
-      setLoadingStatus(false);
+      setLoading(false);
     }
   }
 
-  const combinedError = error || programError || batchError;
+  function badgeClass(color: string) {
+    if (color === "green") return "bg-green-100 text-green-700";
+    if (color === "blue") return "bg-blue-100 text-blue-700";
+    return "bg-amber-100 text-amber-700";
+  }
 
   return (
-    <AdminLayout title="Batch Academic Status">
-      <div className="space-y-6">
-        <div>
-          <h3 className="text-lg font-semibold text-slate-900">
-            Batch-wise completion overview
-          </h3>
-          <p className="mt-1 text-sm text-slate-500">
-            View completed, ongoing, and remaining courses for a selected batch.
-          </p>
-        </div>
+    <div className="space-y-6">
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-bold text-slate-900">Batch Academic Status</h2>
+        <p className="mt-2 text-sm text-slate-600">
+          Load saved batch-wise completed, ongoing, and remaining course status.
+        </p>
 
-        <form onSubmit={loadStatus} className="space-y-4">
-          <ProgramBatchSelector
-            programs={programs}
-            programCode={programCode}
-            setProgramCode={setProgramCode}
-            loadingPrograms={loadingPrograms}
-            batches={batches}
-            batchCode={batchCode}
-            setBatchCode={setBatchCode}
-            loadingBatches={loadingBatches}
-            showBatch={true}
-          />
+        <form onSubmit={handleLoad} className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-sm font-medium">Program / Curriculum</label>
+            <select
+              value={programCode}
+              onChange={(e) => setProgramCode(e.target.value)}
+              className="w-full rounded-2xl border px-3 py-2"
+              required
+            >
+              <option value="">Select program</option>
+              {programs.map((program) => (
+                <option key={program.programCode} value={program.programCode}>
+                  {program.displayLabel}
+                </option>
+              ))}
+            </select>
+          </div>
 
-          <button
-            type="submit"
-            disabled={loadingStatus || !programCode || !batchCode}
-            className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-          >
-            {loadingStatus ? "Loading..." : "Load Status"}
-          </button>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Batch</label>
+            <select
+              value={batchCode}
+              onChange={(e) => setBatchCode(e.target.value)}
+              className="w-full rounded-2xl border px-3 py-2"
+              required
+            >
+              <option value="">Select batch</option>
+              {batches.map((batch) => (
+                <option key={batch.batchCode} value={batch.batchCode}>
+                  {batch.batchCode}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="md:col-span-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+            >
+              {loading ? "Loading..." : "Load Batch Status"}
+            </button>
+          </div>
         </form>
 
-        {combinedError && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {combinedError}
-          </div>
-        )}
-
-        {summary && (
-          <div className="grid gap-4 md:grid-cols-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-sm text-slate-500">Total Courses</p>
-              <p className="mt-2 text-2xl font-semibold text-slate-900">{summary.total}</p>
-            </div>
-            <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
-              <p className="text-sm text-green-700">Completed</p>
-              <p className="mt-2 text-2xl font-semibold text-green-900">{summary.completed}</p>
-            </div>
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
-              <p className="text-sm text-amber-700">Ongoing</p>
-              <p className="mt-2 text-2xl font-semibold text-amber-900">{summary.ongoing}</p>
-            </div>
-            <div className="rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm">
-              <p className="text-sm text-red-700">Remaining</p>
-              <p className="mt-2 text-2xl font-semibold text-red-900">{summary.remaining}</p>
-            </div>
-          </div>
-        )}
-
-        <div className="overflow-x-auto rounded-xl border border-slate-200">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="border-b px-3 py-3 text-left">Code</th>
-                <th className="border-b px-3 py-3 text-left">Title</th>
-                <th className="border-b px-3 py-3 text-left">Credit</th>
-                <th className="border-b px-3 py-3 text-left">Type</th>
-                <th className="border-b px-3 py-3 text-left">Category</th>
-                <th className="border-b px-3 py-3 text-left">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, idx) => (
-                <tr key={`${row.code}-${idx}`}>
-                  <td className="border-b px-3 py-2">{row.code}</td>
-                  <td className="border-b px-3 py-2">{row.title}</td>
-                  <td className="border-b px-3 py-2">{row.credit}</td>
-                  <td className="border-b px-3 py-2">{row.type}</td>
-                  <td className="border-b px-3 py-2">{row.category}</td>
-                  <td className="border-b px-3 py-2">{row.status}</td>
-                </tr>
-              ))}
-
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                    No status data loaded yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        {error ? (
+          <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
+        ) : null}
       </div>
-    </AdminLayout>
+
+      {result ? (
+        <>
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Completed
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-green-700">
+                {result.counts.completed}
+              </h4>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Ongoing
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-blue-700">
+                {result.counts.ongoing}
+              </h4>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Remaining
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-amber-700">
+                {result.counts.remaining}
+              </h4>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Curriculum Rows
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-slate-900">
+                {result.counts.masterCourses}
+              </h4>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-xl font-bold text-slate-900">Full Course Status Table</h3>
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left">
+                    <th className="px-3 py-2">Code</th>
+                    <th className="px-3 py-2">Title</th>
+                    <th className="px-3 py-2">Credits</th>
+                    <th className="px-3 py-2">Type</th>
+                    <th className="px-3 py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.statusRows.map((row) => (
+                    <tr key={row.code} className="border-b">
+                      <td className="px-3 py-2">{row.code}</td>
+                      <td className="px-3 py-2">{row.title}</td>
+                      <td className="px-3 py-2">{row.credits}</td>
+                      <td className="px-3 py-2">{row.type}</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${badgeClass(
+                            row.color
+                          )}`}
+                        >
+                          {row.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  {!result.statusRows.length ? (
+                    <tr>
+                      <td className="px-3 py-4 text-slate-500" colSpan={5}>
+                        No saved batch status found.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-xl font-bold text-slate-900">Completed Courses</h3>
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left">
+                    <th className="px-3 py-2">Semester</th>
+                    <th className="px-3 py-2">Code</th>
+                    <th className="px-3 py-2">Title</th>
+                    <th className="px-3 py-2">Credits</th>
+                    <th className="px-3 py-2">Grade</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.completedCourses.map((row) => (
+                    <tr key={`${row.semester}-${row.code}`} className="border-b">
+                      <td className="px-3 py-2">{row.semester}</td>
+                      <td className="px-3 py-2">{row.code}</td>
+                      <td className="px-3 py-2">{row.title}</td>
+                      <td className="px-3 py-2">{row.credits}</td>
+                      <td className="px-3 py-2">{row.grade}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-xl font-bold text-slate-900">Ongoing Courses</h3>
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left">
+                    <th className="px-3 py-2">Semester</th>
+                    <th className="px-3 py-2">Code</th>
+                    <th className="px-3 py-2">Title</th>
+                    <th className="px-3 py-2">Credits</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.ongoingCourses.map((row) => (
+                    <tr key={`${row.semester}-${row.code}`} className="border-b">
+                      <td className="px-3 py-2">{row.semester}</td>
+                      <td className="px-3 py-2">{row.code}</td>
+                      <td className="px-3 py-2">{row.title}</td>
+                      <td className="px-3 py-2">{row.credits}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      ) : null}
+    </div>
   );
 }

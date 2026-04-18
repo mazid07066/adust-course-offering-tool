@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type SetupRow = {
   id: number;
@@ -34,9 +34,26 @@ export default function AcademicSetupPageClient() {
   const [programType, setProgramType] = useState("REG");
   const [studyShift, setStudyShift] = useState("REG");
   const [curriculumVersion, setCurriculumVersion] = useState("NEW");
+  const [curriculumMode, setCurriculumMode] = useState("UNIQUE");
   const [curriculumKey, setCurriculumKey] = useState("");
   const [studentIdSuffix, setStudentIdSuffix] = useState("");
   const [isActive, setIsActive] = useState(true);
+
+  const generatedUniqueKey = useMemo(() => {
+    return programCode.trim().toUpperCase();
+  }, [programCode]);
+
+  const generatedSharedKey = useMemo(() => {
+    const dept = departmentCode.trim().toUpperCase();
+    const shift = studyShift.trim().toUpperCase();
+    return dept && shift ? `${dept}-${shift}-SHARED` : "";
+  }, [departmentCode, studyShift]);
+
+  const resolvedCurriculumKey = useMemo(() => {
+    if (curriculumMode === "UNIQUE") return generatedUniqueKey;
+    if (curriculumMode === "SHARED") return curriculumKey.trim().toUpperCase() || generatedSharedKey;
+    return generatedUniqueKey;
+  }, [curriculumMode, generatedUniqueKey, curriculumKey, generatedSharedKey]);
 
   async function loadData() {
     setLoading(true);
@@ -59,6 +76,12 @@ export default function AcademicSetupPageClient() {
     loadData();
   }, []);
 
+  useEffect(() => {
+    if (curriculumMode === "SHARED" && !curriculumKey && generatedSharedKey) {
+      setCurriculumKey(generatedSharedKey);
+    }
+  }, [curriculumMode, curriculumKey, generatedSharedKey]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setMessage("");
@@ -77,7 +100,7 @@ export default function AcademicSetupPageClient() {
           programType,
           studyShift,
           curriculumVersion,
-          curriculumKey,
+          curriculumKey: resolvedCurriculumKey,
           studentIdSuffix,
           isActive,
         }),
@@ -96,6 +119,7 @@ export default function AcademicSetupPageClient() {
       setProgramType("REG");
       setStudyShift("REG");
       setCurriculumVersion("NEW");
+      setCurriculumMode("UNIQUE");
       setCurriculumKey("");
       setStudentIdSuffix("");
       setIsActive(true);
@@ -113,32 +137,18 @@ export default function AcademicSetupPageClient() {
         <div>
           <h2 className="text-xl font-bold text-slate-900">Primary Academic Identity Setup</h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            Define exact academic identities manually. Multiple identities may share one curriculum key.
+            Define academic identities clearly. Use unique curriculum when this identity has its own course list. Use shared curriculum only when two identities truly use the same exact course list.
           </p>
         </div>
 
         <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-5 text-sm leading-7 text-slate-700">
-          <p className="font-semibold text-slate-900">How to fill this form</p>
-
-          <div className="mt-3 space-y-2">
-            <p>
-              <span className="font-semibold">Program Code:</span> unique identity such as{" "}
-              <span className="rounded bg-white px-2 py-1 font-mono">BSC-RAE-REG-OLD</span> or{" "}
-              <span className="rounded bg-white px-2 py-1 font-mono">BSC-RAE-REG-NEW</span>.
-            </p>
-
-            <p>
-              <span className="font-semibold">Curriculum Key:</span> shared curriculum source key.
-              If two identities have the same course list, use the same curriculum key for both, such as{" "}
-              <span className="rounded bg-white px-2 py-1 font-mono">RAE-REG-SHARED</span>.
-            </p>
-
-            <p>
-              <span className="font-semibold">Student ID Suffix (ZZZ):</span> final 3-digit student ID block,
-              such as <span className="rounded bg-white px-2 py-1 font-mono">218</span> or{" "}
-              <span className="rounded bg-white px-2 py-1 font-mono">228</span>.
-            </p>
-          </div>
+          <p className="font-semibold text-slate-900">Professional rule</p>
+          <p className="mt-2">
+            <span className="font-semibold">RAE REG OLD</span> and <span className="font-semibold">RAE REG NEW</span> may share one curriculum key.
+          </p>
+          <p className="mt-2">
+            <span className="font-semibold">EEE REG NEW</span> and <span className="font-semibold">EEE EVE NEW</span> should use different curriculum keys.
+          </p>
         </div>
 
         <form onSubmit={handleSubmit} className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -148,7 +158,7 @@ export default function AcademicSetupPageClient() {
               value={departmentCode}
               onChange={(e) => setDepartmentCode(e.target.value.toUpperCase())}
               className="w-full rounded-2xl border px-3 py-2"
-              placeholder="RAE"
+              placeholder="EEE"
               required
             />
           </div>
@@ -159,7 +169,7 @@ export default function AcademicSetupPageClient() {
               value={departmentName}
               onChange={(e) => setDepartmentName(e.target.value)}
               className="w-full rounded-2xl border px-3 py-2"
-              placeholder="Robotics and Automation Engineering"
+              placeholder="Electrical and Electronic Engineering"
               required
             />
           </div>
@@ -170,7 +180,7 @@ export default function AcademicSetupPageClient() {
               value={programCode}
               onChange={(e) => setProgramCode(e.target.value.toUpperCase())}
               className="w-full rounded-2xl border px-3 py-2"
-              placeholder="BSC-RAE-REG-OLD"
+              placeholder="BSC-EEE-REG-NEW"
               required
             />
           </div>
@@ -181,7 +191,7 @@ export default function AcademicSetupPageClient() {
               value={programTitle}
               onChange={(e) => setProgramTitle(e.target.value)}
               className="w-full rounded-2xl border px-3 py-2"
-              placeholder="BSc RAE"
+              placeholder="BSc EEE"
               required
             />
           </div>
@@ -232,14 +242,41 @@ export default function AcademicSetupPageClient() {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium">Curriculum Key</label>
-            <input
-              value={curriculumKey}
-              onChange={(e) => setCurriculumKey(e.target.value.toUpperCase())}
+            <label className="mb-1 block text-sm font-medium">Curriculum Type</label>
+            <select
+              value={curriculumMode}
+              onChange={(e) => setCurriculumMode(e.target.value)}
               className="w-full rounded-2xl border px-3 py-2"
-              placeholder="RAE-REG-SHARED"
-            />
+            >
+              <option value="UNIQUE">Unique Curriculum</option>
+              <option value="SHARED">Shared Curriculum</option>
+            </select>
           </div>
+
+          {curriculumMode === "SHARED" ? (
+            <div className="md:col-span-2">
+              <label className="mb-1 block text-sm font-medium">Shared Curriculum Key</label>
+              <select
+                value={curriculumKey}
+                onChange={(e) => setCurriculumKey(e.target.value)}
+                className="w-full rounded-2xl border px-3 py-2"
+              >
+                <option value={generatedSharedKey}>{generatedSharedKey || "Generate shared key first"}</option>
+                <option value={`${departmentCode.trim().toUpperCase()}-COMMON-SHARED`}>
+                  {(departmentCode.trim().toUpperCase() ? `${departmentCode.trim().toUpperCase()}-COMMON-SHARED` : "DEPT-COMMON-SHARED")}
+                </option>
+              </select>
+            </div>
+          ) : (
+            <div className="md:col-span-2">
+              <label className="mb-1 block text-sm font-medium">Resolved Unique Curriculum Key</label>
+              <input
+                value={generatedUniqueKey}
+                readOnly
+                className="w-full rounded-2xl border bg-slate-50 px-3 py-2"
+              />
+            </div>
+          )}
 
           <div>
             <label className="mb-1 block text-sm font-medium">Student ID Suffix (ZZZ)</label>
@@ -247,11 +284,11 @@ export default function AcademicSetupPageClient() {
               value={studentIdSuffix}
               onChange={(e) => setStudentIdSuffix(e.target.value.toUpperCase())}
               className="w-full rounded-2xl border px-3 py-2"
-              placeholder="218"
+              placeholder="206"
             />
           </div>
 
-          <div className="md:col-span-2 flex items-center gap-2">
+          <div className="flex items-center gap-2 pt-8">
             <input
               id="isActive"
               type="checkbox"
@@ -261,6 +298,11 @@ export default function AcademicSetupPageClient() {
             <label htmlFor="isActive" className="text-sm font-medium">
               Active
             </label>
+          </div>
+
+          <div className="md:col-span-2 rounded-2xl border bg-slate-50 p-4 text-sm">
+            <span className="font-semibold text-slate-900">Final curriculum key that will be saved:</span>{" "}
+            <span className="font-mono">{resolvedCurriculumKey || "-"}</span>
           </div>
 
           <div className="md:col-span-2">
@@ -293,7 +335,6 @@ export default function AcademicSetupPageClient() {
                 <th className="px-3 py-2">Program Code</th>
                 <th className="px-3 py-2">Program Title</th>
                 <th className="px-3 py-2">Curriculum Key</th>
-                <th className="px-3 py-2">Type</th>
                 <th className="px-3 py-2">Shift</th>
                 <th className="px-3 py-2">Curriculum</th>
                 <th className="px-3 py-2">Suffix</th>
@@ -307,7 +348,6 @@ export default function AcademicSetupPageClient() {
                   <td className="px-3 py-2">{item.program_code}</td>
                   <td className="px-3 py-2">{item.program_title}</td>
                   <td className="px-3 py-2">{item.curriculum_key || "-"}</td>
-                  <td className="px-3 py-2">{item.program_type}</td>
                   <td className="px-3 py-2">{item.study_shift}</td>
                   <td className="px-3 py-2">{item.curriculum_version}</td>
                   <td className="px-3 py-2">{item.student_id_suffix || "-"}</td>
@@ -316,7 +356,7 @@ export default function AcademicSetupPageClient() {
               ))}
               {!items.length ? (
                 <tr>
-                  <td className="px-3 py-4 text-slate-500" colSpan={9}>
+                  <td className="px-3 py-4 text-slate-500" colSpan={8}>
                     No academic setup rows found yet.
                   </td>
                 </tr>

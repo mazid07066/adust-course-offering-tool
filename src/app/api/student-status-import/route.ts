@@ -10,6 +10,7 @@ import {
   getNextTerm,
   makeDebugTextSample,
   normalizeComparableCourseCode,
+  normalizeComparableTitle,
   parseRegistrationCourses,
   parseRegistrationSemester,
   parseStudentIdentity,
@@ -105,6 +106,7 @@ export async function POST(request: NextRequest) {
         {
           code: course.code,
           comparableCode: course.comparableCode,
+          comparableTitle: course.comparableTitle,
           title: course.title,
           credits: course.credits,
           section: course.section,
@@ -155,16 +157,35 @@ export async function POST(request: NextRequest) {
       Array.from(completedMap.values()).map((row) => row.comparableCode)
     );
 
+    const completedComparableTitles = new Set(
+      Array.from(completedMap.values())
+        .map((row) => row.comparableTitle)
+        .filter(Boolean)
+    );
+
     const ongoingComparableCodes = new Set(
       Array.from(ongoingMap.values()).map((row) => row.comparableCode)
     );
 
+    const ongoingComparableTitles = new Set(
+      Array.from(ongoingMap.values())
+        .map((row) => row.comparableTitle)
+        .filter(Boolean)
+    );
+
     const remainingCourses = masterCourses.filter((course) => {
       const comparableCode = normalizeComparableCourseCode(course.course_code);
-      return (
-        !completedComparableCodes.has(comparableCode) &&
-        !ongoingComparableCodes.has(comparableCode)
-      );
+      const comparableTitle = normalizeComparableTitle(course.course_title);
+
+      const matchedCompleted =
+        completedComparableCodes.has(comparableCode) ||
+        (comparableTitle && completedComparableTitles.has(comparableTitle));
+
+      const matchedOngoing =
+        ongoingComparableCodes.has(comparableCode) ||
+        (comparableTitle && ongoingComparableTitles.has(comparableTitle));
+
+      return !matchedCompleted && !matchedOngoing;
     });
 
     const warningMessages: string[] = [];

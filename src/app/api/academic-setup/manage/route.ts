@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
   const studyShift = normalizeUpper(body.studyShift || "");
   const curriculumVersion = normalizeUpper(body.curriculumVersion || "");
   const curriculumKeyRaw = normalizeUpper(body.curriculumKey || "");
-  const curriculumKey = curriculumKeyRaw || null;
+  const curriculumKey = curriculumKeyRaw || programCode;
   const studentIdSuffixRaw = (body.studentIdSuffix || "").trim();
   const studentIdSuffix = studentIdSuffixRaw ? normalizeUpper(studentIdSuffixRaw) : null;
   const isActive = Boolean(body.isActive ?? true);

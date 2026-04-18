@@ -1,13 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import {
+  normalizeComparableCourseCode,
+  normalizeComparableTitle,
+} from "@/lib/student-status-parser";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { resolveCanonicalDepartment } from "@/lib/canonical-program";
 
-function normalizeTitle(title: string) {
-  return title.replace(/\s+/g, " ").trim().toLowerCase();
+export const runtime = "nodejs";
+
+type CatalogProgramRow = {
+  id: number;
+  department_code: string;
+  department_name: string;
+  program_code: string;
+  program_title: string;
+  program_type: string;
+  study_shift: string;
+  curriculum_version: string;
+  curriculum_key: string | null;
+  student_id_suffix: string | null;
+  display_label: string;
+  is_active: boolean;
+};
+
+function normalizeText(value: string) {
+  return String(value || "").trim();
 }
 
-function normalizeCourseCode(raw: string) {
-  return raw.replace(/\s+/g, "").trim().toUpperCase();
+function normalizeUpper(value: string) {
+  return normalizeText(value).toUpperCase();
+}
+
+function buildCanonicalProgramName(programTitle: string, studyShift: string) {
+  return `${normalizeText(programTitle)} [${normalizeUpper(studyShift)}]`;
 }
 
 export async function GET(request: NextRequest) {
@@ -15,128 +41,260 @@ export async function GET(request: NextRequest) {
 
   try {
     const { searchParams } = new URL(request.url);
-
     const programCode = String(searchParams.get("programCode") || "").trim().toUpperCase();
     const batchCode = String(searchParams.get("batchCode") || "").trim();
 
-    if (!programCode || !batchCode) {
+    if (!programCode) {
       return NextResponse.json(
-        { error: "programCode and batchCode are required" },
+        { error: "Program code is required." },
         { status: 400 }
       );
     }
 
+    if (!batchCode) {
+      return NextResponse.json(
+        { error: "Batch code is required." },
+        { status: 400 }
+      );
+    }
+
+    const academicIdentity = (await prisma.academic_catalog_entries.findFirst({
+      where: {
+        program_code: programCode,
+        is_active: true,
+      },
+    })) as CatalogProgramRow | null;
+
+    if (!academicIdentity) {
+      return NextResponse.json(
+        { error: "Academic identity not found." },
+        { status: 404 }
+      );
+    }
+
+    const department = await resolveCanonicalDepartment({
+      department_code: academicIdentity.department_code,
+      department_name: academicIdentity.department_name,
+      program_code: academicIdentity.program_code,
+      program_title: academicIdentity.program_title,
+      study_shift: academicIdentity.study_shift,
+    });
+
     const program = await prisma.programs.findFirst({
       where: {
-        short_name: programCode,
-      },
-      include: {
-        master_courses: {
-          where: { is_active: true },
-          orderBy: [{ level_term: "asc" }, { course_code: "asc" }],
-        },
+        department_id: department.id,
+        name: buildCanonicalProgramName(
+          academicIdentity.program_title,
+          academicIdentity.study_shift
+        ),
       },
     });
 
     if (!program) {
       return NextResponse.json(
-        { error: "Program not found" },
+        { error: "Program record not found." },
         { status: 404 }
       );
     }
 
-    let batch = await prisma.batches.findFirst({
+    const batch = await prisma.batches.findFirst({
       where: {
         program_id: program.id,
         batch_code: batchCode,
       },
     });
 
-    if (!batch) {
-      batch = await prisma.batches.create({
-        data: {
-          program_id: program.id,
-          batch_code: batchCode,
-          admission_term: null,
-          is_active: true,
+    let masterCourses = [];
+
+    if (academicIdentity.curriculum_key) {
+      masterCourses = await prisma.master_courses.findMany({
+        where: {
+          curriculum_key: academicIdentity.curriculum_key,
         },
+        orderBy: [{ course_code: "asc" }],
+      });
+    } else {
+      masterCourses = await prisma.master_courses.findMany({
+        where: {
+          program_id: program.id,
+        },
+        orderBy: [{ course_code: "asc" }],
       });
     }
 
-    const completed = await prisma.batch_completed_courses.findMany({
-      where: { batch_id: batch.id },
-      orderBy: { id: "asc" },
+    if (!batch) {
+      return NextResponse.json({
+        selectedProgram: {
+          programCode: academicIdentity.program_code,
+          displayLabel: academicIdentity.display_label,
+          curriculumKey: academicIdentity.curriculum_key,
+        },
+        batchCode,
+        counts: {
+          completed: 0,
+          ongoing: 0,
+          remaining: masterCourses.length,
+          masterCourses: masterCourses.length,
+        },
+        completedCourses: [],
+        ongoingCourses: [],
+        remainingCourses: masterCourses.map((row) => ({
+          code: row.course_code,
+          title: row.course_title,
+          credits: row.credit,
+          type: row.course_type,
+          group: row.group_name,
+          levelTerm: row.level_term,
+        })),
+        statusRows: masterCourses.map((row) => ({
+          code: row.course_code,
+          title: row.course_title,
+          credits: row.credit,
+          type: row.course_type,
+          group: row.group_name,
+          levelTerm: row.level_term,
+          status: "REMAINING",
+          color: "amber",
+        })),
+      });
+    }
+
+    const completedRows = await prisma.batch_completed_courses.findMany({
+      where: {
+        batch_id: batch.id,
+      },
+      include: {
+        academic_terms: true,
+      },
+      orderBy: [
+        { academic_term_id: "asc" },
+        { course_code: "asc" },
+      ],
     });
 
-    const current = await prisma.batch_current_registrations.findMany({
-      where: { batch_id: batch.id },
-      orderBy: { id: "asc" },
+    const ongoingRows = await prisma.batch_current_registrations.findMany({
+      where: {
+        batch_id: batch.id,
+      },
+      include: {
+        academic_terms: true,
+      },
+      orderBy: [
+        { academic_term_id: "asc" },
+        { course_code: "asc" },
+      ],
     });
 
-    const completedByCode = new Set(completed.map((c) => normalizeCourseCode(c.course_code)));
-    const completedByTitle = new Set(
-      completed.map((c) => normalizeTitle(c.normalized_title || c.course_title))
+    const completedCodeSet = new Set(
+      completedRows.map((row) => normalizeComparableCourseCode(row.course_code))
+    );
+    const completedTitleSet = new Set(
+      completedRows.map((row) => normalizeComparableTitle(row.course_title)).filter(Boolean)
     );
 
-    const currentByCode = new Set(current.map((c) => normalizeCourseCode(c.course_code)));
-    const currentByTitle = new Set(
-      current.map((c) => normalizeTitle(c.normalized_title || c.course_title))
+    const ongoingCodeSet = new Set(
+      ongoingRows.map((row) => normalizeComparableCourseCode(row.course_code))
+    );
+    const ongoingTitleSet = new Set(
+      ongoingRows.map((row) => normalizeComparableTitle(row.course_title)).filter(Boolean)
     );
 
-    const allCourses = program.master_courses.map((course) => {
-      const codeKey = normalizeCourseCode(course.course_code);
-      const titleKey = normalizeTitle(course.normalized_title || course.course_title);
+    const remainingRows = masterCourses.filter((course) => {
+      const code = normalizeComparableCourseCode(course.course_code);
+      const title = normalizeComparableTitle(course.course_title);
 
-      const isCompleted =
-        completedByCode.has(codeKey) || completedByTitle.has(titleKey);
+      const isCompleted = completedCodeSet.has(code) || (title && completedTitleSet.has(title));
+      const isOngoing = ongoingCodeSet.has(code) || (title && ongoingTitleSet.has(title));
 
-      const isOngoing =
-        currentByCode.has(codeKey) || currentByTitle.has(titleKey);
+      return !isCompleted && !isOngoing;
+    });
 
-      let status: "COMPLETED" | "ONGOING" | "REMAINING" = "REMAINING";
+    const statusRows = masterCourses.map((course) => {
+      const code = normalizeComparableCourseCode(course.course_code);
+      const title = normalizeComparableTitle(course.course_title);
 
-      if (isCompleted) status = "COMPLETED";
-      else if (isOngoing) status = "ONGOING";
+      const isCompleted = completedCodeSet.has(code) || (title && completedTitleSet.has(title));
+      const isOngoing = ongoingCodeSet.has(code) || (title && ongoingTitleSet.has(title));
+
+      if (isCompleted) {
+        return {
+          code: course.course_code,
+          title: course.course_title,
+          credits: course.credit,
+          type: course.course_type,
+          group: course.group_name,
+          levelTerm: course.level_term,
+          status: "COMPLETED",
+          color: "green",
+        };
+      }
+
+      if (isOngoing) {
+        return {
+          code: course.course_code,
+          title: course.course_title,
+          credits: course.credit,
+          type: course.course_type,
+          group: course.group_name,
+          levelTerm: course.level_term,
+          status: "ONGOING",
+          color: "blue",
+        };
+      }
 
       return {
-        id: course.id,
-        course_code: course.course_code,
-        course_title: course.course_title,
-        credit: course.credit,
-        course_type: course.course_type,
-        level_term: course.level_term,
-        group_name: course.group_name,
-        status,
+        code: course.course_code,
+        title: course.course_title,
+        credits: course.credit,
+        type: course.course_type,
+        group: course.group_name,
+        levelTerm: course.level_term,
+        status: "REMAINING",
+        color: "amber",
       };
     });
 
     return NextResponse.json({
-      success: true,
-      program: {
-        id: program.id,
-        name: program.name,
-        short_name: program.short_name,
+      selectedProgram: {
+        programCode: academicIdentity.program_code,
+        displayLabel: academicIdentity.display_label,
+        curriculumKey: academicIdentity.curriculum_key,
       },
-      batch: {
-        id: batch.id,
-        batch_code: batch.batch_code,
-        admission_term: batch.admission_term,
+      batchCode,
+      counts: {
+        completed: completedRows.length,
+        ongoing: ongoingRows.length,
+        remaining: remainingRows.length,
+        masterCourses: masterCourses.length,
       },
-      summary: {
-        total: allCourses.length,
-        completed: allCourses.filter((c) => c.status === "COMPLETED").length,
-        ongoing: allCourses.filter((c) => c.status === "ONGOING").length,
-        remaining: allCourses.filter((c) => c.status === "REMAINING").length,
-      },
-      allCourses,
+      completedCourses: completedRows.map((row) => ({
+        semester: row.academic_terms?.name || "-",
+        code: row.course_code,
+        title: row.course_title,
+        credits: row.credit,
+        grade: row.grade || "-",
+      })),
+      ongoingCourses: ongoingRows.map((row) => ({
+        semester: row.academic_terms?.name || "-",
+        code: row.course_code,
+        title: row.course_title,
+        credits: row.credit,
+      })),
+      remainingCourses: remainingRows.map((row) => ({
+        code: row.course_code,
+        title: row.course_title,
+        credits: row.credit,
+        type: row.course_type,
+        group: row.group_name,
+        levelTerm: row.level_term,
+      })),
+      statusRows,
     });
   } catch (error) {
     console.error(error);
-
     return NextResponse.json(
       {
-        error:
-          error instanceof Error ? error.message : "Failed to load batch status",
+        error: error instanceof Error ? error.message : "Failed to load batch status.",
       },
       { status: 500 }
     );

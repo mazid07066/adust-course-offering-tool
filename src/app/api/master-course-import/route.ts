@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import mammoth from "mammoth";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
 
 type ParsedCourse = {
   course_code: string;
@@ -42,13 +43,13 @@ function toCompactCourseCode(text: string) {
 
   const compact = raw.replace(/\s+/g, "");
 
-  const directMatch = compact.match(/^([A-Z]{2,6})(\d{4})$/);
+  const directMatch = compact.match(/^([A-Z]{2,6})(\d{3,4})$/);
   if (directMatch) return `${directMatch[1]}${directMatch[2]}`;
 
-  const spacedMatch = raw.match(/^([A-Z]{2,6})(?:\s+\d{2,4})?\s+(\d{4})$/);
+  const spacedMatch = raw.match(/^([A-Z]{2,6})(?:\s+\d{2,4})?\s+(\d{3,4})$/);
   if (spacedMatch) return `${spacedMatch[1]}${spacedMatch[2]}`;
 
-  const genericMatch = compact.match(/^([A-Z]{2,6}).*?(\d{4})$/);
+  const genericMatch = compact.match(/^([A-Z]{2,6}).*?(\d{3,4})$/);
   if (genericMatch) return `${genericMatch[1]}${genericMatch[2]}`;
 
   return compact;
@@ -66,7 +67,7 @@ function detectCourseType(rawType: string, rawTitle: string) {
 
 function isLikelyCourseCode(value: string) {
   const v = normalizeText(value).toUpperCase();
-  return /^[A-Z]{2,6}\s*\d{2,4}(?:\s*\d{4})?$/.test(v);
+  return /^[A-Z]{2,6}\s*\d{3,4}(?:\s*\d{3,4})?$/.test(v);
 }
 
 function isNumericCredit(value: string) {
@@ -78,7 +79,7 @@ function extractGroupName(text: string) {
   if (!value) return null;
 
   if (/group\s*-\s*[a-z0-9]+/i.test(value)) return value;
-  if (/ged|general education/i.test(value)) return value;
+  if (/ged|general education|language/i.test(value)) return value;
   if (/basic science|mathematics/i.test(value)) return value;
   if (/other engineering/i.test(value)) return value;
   if (/core courses?/i.test(value)) return value;
@@ -96,54 +97,54 @@ function parseExcel(buffer: Buffer): ParsedCourse[] {
 
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+      defval: "",
+      raw: false,
+    });
 
     for (const row of rows) {
-      const rowValues = Object.values(row).map((v) => normalizeText(String(v || "")));
+      const rowValues = Object.values(row)
+        .map((v) => normalizeText(String(v || "")))
+        .filter(Boolean);
+
       const joined = rowValues.join(" | ");
+      const foundGroup = extractGroupName(joined);
 
-      const code =
-        row["Code"] ||
-        row["Course Code"] ||
-        row["course_code"] ||
-        row["COURSE CODE"] ||
-        rowValues.find((v) => isLikelyCourseCode(v)) ||
-        "";
+      let code = "";
+      let title = "";
+      let credit = "";
 
-      const title =
-        row["Title"] ||
-        row["Course Title"] ||
-        row["course_title"] ||
-        row["COURSE TITLE"] ||
-        (() => {
-          const idx = rowValues.findIndex((v) => isLikelyCourseCode(v));
-          if (idx >= 0 && rowValues[idx + 1] && !isNumericCredit(rowValues[idx + 1])) {
-            return rowValues[idx + 1];
+      for (let i = 0; i < rowValues.length; i++) {
+        const current = rowValues[i];
+        const next = rowValues[i + 1] || "";
+        const next2 = rowValues[i + 2] || "";
+
+        if (!code && isLikelyCourseCode(current)) {
+          code = current;
+
+          if (!title && next && !isNumericCredit(next) && !isLikelyCourseCode(next)) {
+            title = next;
           }
-          return "";
-        })();
 
-      const credit =
-        row["Credit"] ||
-        row["Credits"] ||
-        row["Credit Hour"] ||
-        row["Credit Hours"] ||
-        row["credit"] ||
-        row["CREDIT"] ||
-        rowValues.find((v) => isNumericCredit(v)) ||
-        0;
+          if (!credit && isNumericCredit(next2)) {
+            credit = next2;
+          } else if (!credit && isNumericCredit(next)) {
+            credit = next;
+          }
+        }
+      }
 
-      if (!String(code).trim() || !String(title).trim()) continue;
+      if (!code || !title || !credit) continue;
       if (/course code|course title|credit/i.test(joined)) continue;
 
       courses.push({
-        course_code: toCompactCourseCode(String(code)),
-        course_title: normalizeText(String(title)),
-        normalized_title: normalizeTitle(String(title)),
-        credit: Number(credit || 0),
-        course_type: detectCourseType("", String(title)),
+        course_code: toCompactCourseCode(code),
+        course_title: normalizeText(title),
+        normalized_title: normalizeTitle(title),
+        credit: Number(credit),
+        course_type: detectCourseType("", title),
         level_term: sheetName || null,
-        group_name: null,
+        group_name: foundGroup,
         is_active: true,
       });
     }
@@ -183,20 +184,27 @@ function parseHtmlTables(html: string): ParsedCourse[] {
       let title = "";
       let credit = "";
 
-      if (cellMatches.length >= 3 && isLikelyCourseCode(cellMatches[0])) {
-        code = cellMatches[0];
+      for (let i = 0; i < cellMatches.length; i++) {
+        const current = cellMatches[i];
+        const next = cellMatches[i + 1] || "";
+        const next2 = cellMatches[i + 2] || "";
 
-        if (cellMatches.length >= 4 && isLikelyCourseCode(cellMatches[1])) {
-          title = cellMatches[2];
-          credit = cellMatches[3] || "";
-        } else {
-          title = cellMatches[1];
-          credit = cellMatches[2] || "";
+        if (!code && isLikelyCourseCode(current)) {
+          code = current;
+
+          if (!title && next && !isLikelyCourseCode(next) && !isNumericCredit(next)) {
+            title = next;
+          }
+
+          if (!credit && isNumericCredit(next2)) {
+            credit = next2;
+          } else if (!credit && isNumericCredit(next)) {
+            credit = next;
+          }
         }
       }
 
-      if (!code || !title) continue;
-      if (!isNumericCredit(credit)) continue;
+      if (!code || !title || !credit) continue;
 
       courses.push({
         course_code: toCompactCourseCode(code),
@@ -238,15 +246,12 @@ function parseDocxRawText(text: string): ParsedCourse[] {
     if (isLikelyCourseCode(next1)) continue;
     if (!isNumericCredit(next2)) continue;
 
-    const title = next1;
-    const credit = Number(next2);
-
     courses.push({
       course_code: toCompactCourseCode(line),
-      course_title: normalizeText(title),
-      normalized_title: normalizeTitle(title),
-      credit,
-      course_type: detectCourseType("", title),
+      course_title: normalizeText(next1),
+      normalized_title: normalizeTitle(next1),
+      credit: Number(next2),
+      course_type: detectCourseType("", next1),
       level_term: null,
       group_name: currentGroup,
       is_active: true,
@@ -314,53 +319,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!catalogProgram.curriculumKey) {
-      return NextResponse.json(
-        { error: "Selected academic identity has no curriculum key. Please set curriculum key first." },
-        { status: 400 }
-      );
-    }
+    const effectiveCurriculumKey =
+      (catalogProgram.curriculumKey || "").trim().toUpperCase() || catalogProgram.programCode;
 
-    let department = await prisma.departments.findFirst({
-      where: {
-        OR: [
-          { short_name: catalogProgram.departmentCode },
-          { name: catalogProgram.departmentName },
-        ],
-      },
+    const program = await resolveCanonicalProgram({
+      department_code: catalogProgram.departmentCode,
+      department_name: catalogProgram.departmentName,
+      program_code: catalogProgram.programCode,
+      program_title: catalogProgram.programTitle,
+      study_shift: catalogProgram.studyShift,
     });
-
-    if (!department) {
-      department = await prisma.departments.create({
-        data: {
-          name: catalogProgram.departmentName,
-          short_name: catalogProgram.departmentCode,
-        },
-      });
-    }
-
-    const existingProgram = await prisma.programs.findFirst({
-      where: {
-        OR: [{ short_name: catalogProgram.programCode }, { name: catalogProgram.programTitle }],
-      },
-    });
-
-    const program = existingProgram
-      ? await prisma.programs.update({
-          where: { id: existingProgram.id },
-          data: {
-            name: catalogProgram.programTitle,
-            short_name: catalogProgram.programCode,
-            department_id: department.id,
-          },
-        })
-      : await prisma.programs.create({
-          data: {
-            name: catalogProgram.programTitle,
-            short_name: catalogProgram.programCode,
-            department_id: department.id,
-          },
-        });
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const lowerName = file.name.toLowerCase();
@@ -403,7 +371,7 @@ export async function POST(request: NextRequest) {
     if (replaceExisting) {
       await prisma.master_courses.deleteMany({
         where: {
-          curriculum_key: catalogProgram.curriculumKey,
+          curriculum_key: effectiveCurriculumKey,
         },
       });
     }
@@ -414,8 +382,16 @@ export async function POST(request: NextRequest) {
     for (const c of dedupedCourses) {
       const existing = await prisma.master_courses.findFirst({
         where: {
-          curriculum_key: catalogProgram.curriculumKey,
-          course_code: c.course_code,
+          OR: [
+            {
+              curriculum_key: effectiveCurriculumKey,
+              course_code: c.course_code,
+            },
+            {
+              program_id: program.id,
+              course_code: c.course_code,
+            },
+          ],
         },
       });
 
@@ -423,8 +399,8 @@ export async function POST(request: NextRequest) {
         await prisma.master_courses.update({
           where: { id: existing.id },
           data: {
-            program_id: existing.program_id || program.id,
-            curriculum_key: catalogProgram.curriculumKey,
+            program_id: program.id,
+            curriculum_key: effectiveCurriculumKey,
             course_title: c.course_title,
             normalized_title: c.normalized_title,
             credit: c.credit,
@@ -439,7 +415,7 @@ export async function POST(request: NextRequest) {
         await prisma.master_courses.create({
           data: {
             program_id: program.id,
-            curriculum_key: catalogProgram.curriculumKey,
+            curriculum_key: effectiveCurriculumKey,
             course_code: c.course_code,
             course_title: c.course_title,
             normalized_title: c.normalized_title,
@@ -456,12 +432,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Curriculum import completed successfully for ${catalogProgram.curriculumKey}. Inserted ${insertedCount}, updated ${updatedCount}.`,
+      message: `Curriculum import completed successfully for ${effectiveCurriculumKey}. Inserted ${insertedCount}, updated ${updatedCount}.`,
       insertedCount,
       updatedCount,
       parsedCount: dedupedCourses.length,
       programCode: catalogProgram.programCode,
-      curriculumKey: catalogProgram.curriculumKey,
+      curriculumKey: effectiveCurriculumKey,
     });
   } catch (error) {
     console.error(error);
