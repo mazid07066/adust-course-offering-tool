@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import AdminLayout from "@/components/admin-layout";
+import { useEffect, useMemo, useState } from "react";
 
-type ProgramOption = {
-  id: string;
+type CatalogProgram = {
+  id: number;
   departmentCode: string;
   departmentName: string;
   programCode: string;
@@ -12,98 +11,108 @@ type ProgramOption = {
   programType: string;
   studyShift: string;
   curriculumVersion: string;
+  studentIdSuffix: string | null;
   displayLabel: string;
+  active: boolean;
 };
 
-type ImportResponse = {
+type ImportResult = {
   success?: boolean;
-  error?: string;
   message?: string;
+  error?: string;
+  studentId?: string;
   batchCode?: string;
-  detectedStudentId?: string | null;
+  inferredProgramCode?: string | null;
+  inferredSuffix?: string | null;
+  transcriptSemester?: string | null;
   registrationSemester?: string | null;
-  latestCompletedSemester?: string | null;
-  completedImported?: number;
-  ongoingImported?: number;
-  inferenceWarning?: string | null;
-  inferredProgram?: {
-    inferredDepartmentCode: string | null;
-    inferredProgramCode: string | null;
-    inferredVariant: string | null;
-    reason: string;
-  };
-  importTarget?: {
-    departmentCode: string | null;
-    departmentName: string | null;
-    programCode: string;
-    programName: string;
-    batchId: number;
-    batchCode: string;
-    alreadyExisted: boolean;
-  };
+  completedCount?: number;
+  ongoingCount?: number;
+  remainingCount?: number;
 };
 
 export default function ImportsPageClient() {
-  const [programs, setPrograms] = useState<ProgramOption[]>([]);
-  const [programCode, setProgramCode] = useState("");
-  const [transcriptPdf, setTranscriptPdf] = useState<File | null>(null);
-  const [registrationPdf, setRegistrationPdf] = useState<File | null>(null);
-  const [replaceExisting, setReplaceExisting] = useState(true);
-
+  const [programs, setPrograms] = useState<CatalogProgram[]>([]);
   const [loadingPrograms, setLoadingPrograms] = useState(true);
+
+  const [programCode, setProgramCode] = useState("");
+  const [transcriptFile, setTranscriptFile] = useState<File | null>(null);
+  const [registrationFile, setRegistrationFile] = useState<File | null>(null);
+
   const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<ImportResponse | null>(null);
 
   useEffect(() => {
-    async function loadOptions() {
+    let mounted = true;
+
+    async function loadPrograms() {
       setLoadingPrograms(true);
+      setError("");
+
       try {
         const res = await fetch("/api/academic-catalog/options", {
-          method: "GET",
           cache: "no-store",
         });
 
-        const json = await res.json();
+        const data = await res.json();
 
         if (!res.ok) {
-          throw new Error(json.error || "Failed to load catalog options.");
+          throw new Error(data.error || "Failed to load academic identities.");
         }
 
-        setPrograms(json.programs || []);
-        if (json.programs?.length) {
-          setProgramCode(json.programs[0].programCode);
+        if (!mounted) return;
+
+        const rows: CatalogProgram[] = data.programs || [];
+        setPrograms(rows);
+
+        if (rows.length > 0) {
+          setProgramCode((prev) => prev || rows[0].programCode);
         }
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to load catalog options."
-        );
+        if (!mounted) return;
+        setError(err instanceof Error ? err.message : "Failed to load academic identities.");
       } finally {
-        setLoadingPrograms(false);
+        if (mounted) setLoadingPrograms(false);
       }
     }
 
-    loadOptions();
+    loadPrograms();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  const selectedProgram = useMemo(
+    () => programs.find((p) => p.programCode === programCode) || null,
+    [programs, programCode]
+  );
 
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
     setSubmitting(true);
     setError("");
     setResult(null);
 
     try {
-      if (!programCode) throw new Error("Program is required.");
-      if (!registrationPdf) throw new Error("Registration PDF is required.");
+      if (!programCode) {
+        throw new Error("Please select an academic identity.");
+      }
+
+      if (!transcriptFile && !registrationFile) {
+        throw new Error("Please upload at least one PDF file.");
+      }
 
       const formData = new FormData();
       formData.append("programCode", programCode);
-      formData.append("replaceExisting", String(replaceExisting));
-      formData.append("registrationPdf", registrationPdf);
 
-      if (transcriptPdf) {
-        formData.append("transcriptPdf", transcriptPdf);
+      if (transcriptFile) {
+        formData.append("transcript", transcriptFile);
+      }
+
+      if (registrationFile) {
+        formData.append("registration", registrationFile);
       }
 
       const res = await fetch("/api/student-status-import", {
@@ -111,231 +120,238 @@ export default function ImportsPageClient() {
         body: formData,
       });
 
-      const json: ImportResponse = await res.json();
+      const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(json.error || "Import failed.");
+        throw new Error(data.error || "Student status import failed.");
       }
 
-      setResult(json);
+      setResult(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Import failed.");
+      setError(err instanceof Error ? err.message : "Student status import failed.");
     } finally {
       setSubmitting(false);
     }
   }
 
-  const selectedProgram =
-    programs.find((p) => p.programCode === programCode) || null;
-
   return (
-    <AdminLayout title="Transcript & Registration Import">
-      <div className="space-y-6">
-        <div>
-          <h3 className="text-lg font-semibold text-slate-900">
-            Batch-wise student status import
-          </h3>
-          <p className="mt-1 text-sm text-slate-500">
-            All academic identity fields now come from dropdowns only.
+    <div className="space-y-6">
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-bold text-slate-900">Transcript & Registration Import</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          Import transcript PDF and registration PDF to derive completed, ongoing, and remaining
+          courses batch-wise for the selected academic identity.
+        </p>
+
+        <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-slate-700">
+          <p className="font-semibold text-slate-900">Structured import rule</p>
+          <p className="mt-2">
+            Select the exact academic identity from the dropdown first. Student IDs follow the
+            pattern{" "}
+            <span className="rounded bg-white px-2 py-1 font-mono">XXX-YYYY-ZZZ</span> where{" "}
+            <span className="font-semibold">XXX</span> is the batch code and{" "}
+            <span className="font-semibold">ZZZ</span> is the configured program suffix. The
+            selected academic identity and the student ID suffix should agree unless the student is
+            a migrated case.
+          </p>
+          <p className="mt-2">
+            Transcript PDF provides completed-course history. Courses with grade{" "}
+            <span className="rounded bg-white px-2 py-1 font-mono">F</span> are treated as not
+            completed. Registration PDF provides the currently ongoing courses for the current
+            semester.
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="mt-6 space-y-5">
           <div>
-            <label className="mb-2 block text-sm font-medium text-slate-700">
-              Target Program / Curriculum
+            <label className="mb-2 block text-sm font-medium text-slate-800">
+              Academic Identity
             </label>
             <select
               value={programCode}
               onChange={(e) => setProgramCode(e.target.value)}
-              disabled={loadingPrograms}
-              className="w-full rounded-xl border px-4 py-3"
+              disabled={loadingPrograms || submitting}
+              className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm"
             >
-              {programs.map((p) => (
-                <option key={p.programCode} value={p.programCode}>
-                  {p.displayLabel}
+              {programs.map((program) => (
+                <option key={program.programCode} value={program.programCode}>
+                  {program.displayLabel}
                 </option>
               ))}
             </select>
           </div>
 
-          {selectedProgram && (
-            <div className="grid gap-4 md:grid-cols-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">
+          {selectedProgram ? (
+            <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm md:grid-cols-2 xl:grid-cols-4">
               <div>
-                <span className="font-medium text-slate-700">Department:</span>{" "}
-                {selectedProgram.departmentCode}
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Department
+                </p>
+                <p className="mt-1 font-medium text-slate-900">{selectedProgram.departmentName}</p>
               </div>
               <div>
-                <span className="font-medium text-slate-700">Program:</span>{" "}
-                {selectedProgram.programCode}
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Program Code
+                </p>
+                <p className="mt-1 font-medium text-slate-900">{selectedProgram.programCode}</p>
               </div>
               <div>
-                <span className="font-medium text-slate-700">Shift:</span>{" "}
-                {selectedProgram.studyShift}
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Shift / Curriculum
+                </p>
+                <p className="mt-1 font-medium text-slate-900">
+                  {selectedProgram.studyShift} / {selectedProgram.curriculumVersion}
+                </p>
               </div>
               <div>
-                <span className="font-medium text-slate-700">Curriculum:</span>{" "}
-                {selectedProgram.curriculumVersion}
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Student ID Suffix
+                </p>
+                <p className="mt-1 font-medium text-slate-900">
+                  {selectedProgram.studentIdSuffix || "-"}
+                </p>
               </div>
             </div>
-          )}
+          ) : null}
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 p-4">
+              <label className="mb-2 block text-sm font-medium text-slate-800">
                 Transcript PDF
               </label>
               <input
                 type="file"
-                accept=".pdf"
-                onChange={(e) => setTranscriptPdf(e.target.files?.[0] || null)}
-                className="block w-full rounded-xl border px-4 py-3"
+                accept=".pdf,application/pdf"
+                onChange={(e) => setTranscriptFile(e.target.files?.[0] || null)}
+                disabled={submitting}
+                className="block w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
               />
+              <p className="mt-2 text-xs text-slate-500">
+                Upload transcript PDF to detect passed and failed course history.
+              </p>
             </div>
 
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">
+            <div className="rounded-2xl border border-slate-200 p-4">
+              <label className="mb-2 block text-sm font-medium text-slate-800">
                 Registration PDF
               </label>
               <input
                 type="file"
-                accept=".pdf"
-                onChange={(e) => setRegistrationPdf(e.target.files?.[0] || null)}
-                className="block w-full rounded-xl border px-4 py-3"
+                accept=".pdf,application/pdf"
+                onChange={(e) => setRegistrationFile(e.target.files?.[0] || null)}
+                disabled={submitting}
+                className="block w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
               />
+              <p className="mt-2 text-xs text-slate-500">
+                Upload registration PDF to detect currently ongoing courses and current semester.
+              </p>
             </div>
           </div>
 
-          <label className="flex items-center gap-3 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={replaceExisting}
-              onChange={(e) => setReplaceExisting(e.target.checked)}
-            />
-            Replace existing imported status for this batch
-          </label>
-
-          <button
-            type="submit"
-            disabled={submitting}
-            className="rounded-xl bg-slate-900 px-6 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-          >
-            {submitting ? "Importing..." : "Import Student Status"}
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="submit"
+              disabled={submitting || loadingPrograms}
+              className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+            >
+              {submitting ? "Importing..." : "Import Student Status"}
+            </button>
+          </div>
         </form>
 
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {error ? (
+          <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
           </div>
-        )}
+        ) : null}
 
-        {result?.importTarget && (
-          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
-            <h4 className="mb-4 text-base font-semibold text-blue-900">
-              Import Storage Target
-            </h4>
-            <div className="grid gap-4 md:grid-cols-3 text-sm">
-              <div>
-                <span className="font-medium text-blue-900">Department:</span>{" "}
-                {result.importTarget.departmentCode} — {result.importTarget.departmentName}
+        {result ? (
+          <div className="mt-6 rounded-3xl border border-green-200 bg-green-50 p-5">
+            <h3 className="text-lg font-bold text-slate-900">Import Result</h3>
+
+            {result.message ? (
+              <p className="mt-2 text-sm leading-6 text-slate-700">{result.message}</p>
+            ) : null}
+
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-2xl bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Student ID
+                </p>
+                <p className="mt-1 font-semibold text-slate-900">{result.studentId || "-"}</p>
               </div>
-              <div>
-                <span className="font-medium text-blue-900">Program:</span>{" "}
-                {result.importTarget.programCode} — {result.importTarget.programName}
+
+              <div className="rounded-2xl bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Batch Code
+                </p>
+                <p className="mt-1 font-semibold text-slate-900">{result.batchCode || "-"}</p>
               </div>
-              <div>
-                <span className="font-medium text-blue-900">Batch Record:</span>{" "}
-                ID {result.importTarget.batchId} / Batch {result.importTarget.batchCode}
-              </div>
-            </div>
-          </div>
-        )}
 
-        {result?.inferenceWarning && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            {result.inferenceWarning}
-          </div>
-        )}
-
-        {result && (
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h4 className="mb-4 text-base font-semibold text-slate-900">
-              Import Summary
-            </h4>
-
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm text-slate-500">Detected Student ID</p>
-                <p className="mt-2 text-xl font-semibold text-slate-900">
-                  {result.detectedStudentId || "-"}
+              <div className="rounded-2xl bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Inferred Program
+                </p>
+                <p className="mt-1 font-semibold text-slate-900">
+                  {result.inferredProgramCode || "-"}
                 </p>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm text-slate-500">Detected Batch Code</p>
-                <p className="mt-2 text-xl font-semibold text-slate-900">
-                  {result.batchCode || "-"}
+              <div className="rounded-2xl bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Inferred Suffix
+                </p>
+                <p className="mt-1 font-semibold text-slate-900">{result.inferredSuffix || "-"}</p>
+              </div>
+
+              <div className="rounded-2xl bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Transcript Semester
+                </p>
+                <p className="mt-1 font-semibold text-slate-900">
+                  {result.transcriptSemester || "-"}
                 </p>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm text-slate-500">Registration Semester</p>
-                <p className="mt-2 text-xl font-semibold text-slate-900">
+              <div className="rounded-2xl bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Registration Semester
+                </p>
+                <p className="mt-1 font-semibold text-slate-900">
                   {result.registrationSemester || "-"}
                 </p>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm text-slate-500">Latest Completed Semester</p>
-                <p className="mt-2 text-xl font-semibold text-slate-900">
-                  {result.latestCompletedSemester || "-"}
+              <div className="rounded-2xl bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Completed Courses
+                </p>
+                <p className="mt-1 font-semibold text-slate-900">
+                  {result.completedCount ?? "-"}
                 </p>
               </div>
 
-              <div className="rounded-xl border border-green-200 bg-green-50 p-4">
-                <p className="text-sm text-green-700">Completed Imported</p>
-                <p className="mt-2 text-xl font-semibold text-green-900">
-                  {result.completedImported || 0}
+              <div className="rounded-2xl bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Ongoing Courses
                 </p>
-              </div>
-
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-                <p className="text-sm text-amber-700">Ongoing Imported</p>
-                <p className="mt-2 text-xl font-semibold text-amber-900">
-                  {result.ongoingImported || 0}
+                <p className="mt-1 font-semibold text-slate-900">
+                  {result.ongoingCount ?? "-"}
                 </p>
               </div>
             </div>
 
-            {result.inferredProgram && (
-              <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-medium text-slate-700">
-                  Student ID inference
-                </p>
-                <div className="mt-2 grid gap-3 text-sm text-slate-600 md:grid-cols-4">
-                  <div>
-                    <span className="font-medium">Department:</span>{" "}
-                    {result.inferredProgram.inferredDepartmentCode || "-"}
-                  </div>
-                  <div>
-                    <span className="font-medium">Program:</span>{" "}
-                    {result.inferredProgram.inferredProgramCode || "-"}
-                  </div>
-                  <div>
-                    <span className="font-medium">Variant:</span>{" "}
-                    {result.inferredProgram.inferredVariant || "-"}
-                  </div>
-                  <div>
-                    <span className="font-medium">Reason:</span>{" "}
-                    {result.inferredProgram.reason || "-"}
-                  </div>
-                </div>
-              </div>
-            )}
+            <div className="mt-4 rounded-2xl bg-white p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Remaining Courses
+              </p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">
+                {result.remainingCount ?? "-"}
+              </p>
+            </div>
           </div>
-        )}
+        ) : null}
       </div>
-    </AdminLayout>
+    </div>
   );
 }
