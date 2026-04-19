@@ -8,11 +8,13 @@ type ProgramCandidate = {
   id: number;
   short_name: string;
   name: string;
-  source:
-    | "EXACT_PROGRAM_CODE"
-    | "CANONICAL_PROGRAM"
-    | "CURRICULUM_RELATED_PROGRAM";
+  source: "EXACT_PROGRAM_CODE" | "CANONICAL_PROGRAM";
 };
+
+function formatRoomLabel(room: { room_code: string; room_type?: string | null } | null) {
+  if (!room) return "-";
+  return room.room_type ? `${room.room_type} | ${room.room_code}` : room.room_code;
+}
 
 function uniqueById<T extends { id: number }>(rows: T[]): T[] {
   const seen = new Set<number>();
@@ -27,7 +29,7 @@ function uniqueById<T extends { id: number }>(rows: T[]): T[] {
   return out;
 }
 
-async function getProgramCandidates(programCode: string): Promise<ProgramCandidate[]> {
+async function getStrictProgramCandidates(programCode: string): Promise<ProgramCandidate[]> {
   const normalizedProgramCode = String(programCode || "").trim().toUpperCase();
 
   if (!normalizedProgramCode) {
@@ -44,7 +46,6 @@ async function getProgramCandidates(programCode: string): Promise<ProgramCandida
       program_code: normalizedProgramCode,
     },
     select: {
-      curriculum_key: true,
       department_code: true,
       department_name: true,
       program_title: true,
@@ -89,48 +90,6 @@ async function getProgramCandidates(programCode: string): Promise<ProgramCandida
     });
   }
 
-  const curriculumKey = catalogEntry?.curriculum_key || null;
-
-  if (curriculumKey) {
-    const relatedCatalogEntries = await prisma.academic_catalog_entries.findMany({
-      where: {
-        curriculum_key: curriculumKey,
-        is_active: true,
-      },
-      select: {
-        program_code: true,
-      },
-    });
-
-    const relatedProgramCodes = relatedCatalogEntries
-      .map((item) => item.program_code)
-      .filter(Boolean);
-
-    if (relatedProgramCodes.length > 0) {
-      const relatedPrograms = await prisma.programs.findMany({
-        where: {
-          short_name: {
-            in: relatedProgramCodes,
-          },
-        },
-        select: {
-          id: true,
-          short_name: true,
-          name: true,
-        },
-      });
-
-      for (const item of relatedPrograms) {
-        if (!candidates.some((row) => row.id === item.id)) {
-          candidates.push({
-            ...item,
-            source: "CURRICULUM_RELATED_PROGRAM",
-          });
-        }
-      }
-    }
-  }
-
   return uniqueById(candidates);
 }
 
@@ -139,96 +98,69 @@ export async function GET(req: NextRequest) {
     await requireCoordinatorOrAdminApi();
 
     const { searchParams } = new URL(req.url);
-    const programCode = String(searchParams.get("programCode") || "").trim();
+    const programCode = String(searchParams.get("programCode") || "").trim().toUpperCase();
     const termName = String(searchParams.get("termName") || "").trim().toUpperCase();
 
-    if (!programCode || !termName) {
+    if (!programCode) {
       return NextResponse.json(
         {
           ok: false,
-          error: "programCode and termName are required.",
+          error: "programCode is required.",
         },
         { status: 400 }
       );
     }
 
-    const candidates = await getProgramCandidates(programCode);
+    if (!termName) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "termName is required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const candidates = await getStrictProgramCandidates(programCode);
 
     const drafts = await prisma.offerings.findMany({
       where: {
         status: "DRAFT",
-        program_id: {
-          in: candidates.map((item) => item.id),
-        },
         academic_terms: {
           name: termName,
         },
-      },
-      orderBy: {
-        id: "desc",
-      },
-      select: {
-        id: true,
-        status: true,
-        created_at: true,
-        academic_terms: {
-          select: {
-            name: true,
-          },
+        program_id: {
+          in: candidates.map((item) => item.id),
         },
-        programs: {
-          select: {
-            short_name: true,
-            name: true,
-          },
-        },
+      },
+      orderBy: [
+        { id: "desc" },
+      ],
+      include: {
+        academic_terms: true,
+        programs: true,
         offered_courses: {
-          orderBy: [
-            {
-              section: "asc",
-            },
-            {
-              id: "asc",
-            },
-          ],
-          select: {
-            id: true,
-            section: true,
-            master_courses: {
-              select: {
-                course_code: true,
-                course_title: true,
-              },
-            },
+          orderBy: [{ id: "asc" }],
+          include: {
+            master_courses: true,
             offered_course_batches: {
-              select: {
-                batches: {
-                  select: {
-                    batch_code: true,
-                  },
-                },
+              include: {
+                batches: true,
               },
             },
             offered_course_teachers: {
-              select: {
-                teachers: {
-                  select: {
-                    teacher_code: true,
-                    full_name: true,
-                  },
-                },
+              include: {
+                teachers: true,
               },
             },
             offered_course_slots: {
-              select: {
-                day_of_week: true,
-                start_time: true,
-                end_time: true,
-                rooms: {
-                  select: {
-                    room_code: true,
-                  },
-                },
+              orderBy: [
+                { day_of_week: "asc" },
+                { start_time: "asc" },
+                { id: "asc" },
+              ],
+              include: {
+                rooms: true,
               },
             },
           },
@@ -236,9 +168,70 @@ export async function GET(req: NextRequest) {
       },
     });
 
+    const payload = drafts.map((draft) => ({
+      id: draft.id,
+      status: draft.status,
+      created_at: draft.created_at ? draft.created_at.toISOString() : null,
+      academic_terms: {
+        name: draft.academic_terms.name,
+      },
+      programs: {
+        short_name: draft.programs.short_name,
+        name: draft.programs.name,
+      },
+      offered_courses: draft.offered_courses.map((course) => ({
+        id: course.id,
+        section: course.section,
+        master_courses: {
+          course_code: course.master_courses.course_code,
+          course_title: course.master_courses.course_title,
+        },
+        offered_course_batches: course.offered_course_batches.map((x) => ({
+          batches: {
+            batch_code: x.batches.batch_code,
+          },
+        })),
+        offered_course_teachers: course.offered_course_teachers.map((x) => ({
+          teachers: x.teachers
+            ? {
+                teacher_code: x.teachers.teacher_code,
+                full_name: x.teachers.full_name,
+              }
+            : null,
+        })),
+        offered_course_slots: course.offered_course_slots.map((slot) => ({
+          id: slot.id,
+          day_of_week: slot.day_of_week,
+          start_time: slot.start_time,
+          end_time: slot.end_time,
+          room_id: slot.room_id,
+          slot_type: slot.slot_type,
+          rooms: slot.rooms
+            ? {
+                room_code: slot.rooms.room_code,
+                room_type: slot.rooms.room_type,
+              }
+            : null,
+        })),
+        schedule_text:
+          course.offered_course_slots.length > 0
+            ? course.offered_course_slots
+                .map(
+                  (slot) =>
+                    `${slot.day_of_week} ${slot.start_time}-${slot.end_time} (${formatRoomLabel(
+                      slot.rooms
+                    )})`
+                )
+                .join(" | ")
+            : "-",
+      })),
+    }));
+
     return NextResponse.json({
       ok: true,
-      drafts,
+      requestedProgramCode: programCode,
+      matchedProgramCodes: candidates.map((item) => item.short_name),
+      drafts: payload,
     });
   } catch (error) {
     const message =
