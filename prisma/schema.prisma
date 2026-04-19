@@ -72,9 +72,8 @@ model departments {
 }
 
 model master_courses {
-  id               Int      @id @default(autoincrement())
+  id               Int               @id @default(autoincrement())
   program_id       Int
-  curriculum_key   String?
   course_code      String
   course_title     String
   normalized_title String
@@ -82,12 +81,12 @@ model master_courses {
   course_type      String
   level_term       String?
   group_name       String?
-  is_active        Boolean  @default(true)
-  created_at       DateTime @default(now())
-  updated_at       DateTime @default(now()) @updatedAt
-
-  program         programs          @relation(fields: [program_id], references: [id], onDelete: Cascade)
-  offered_courses offered_courses[]
+  is_active        Boolean           @default(true)
+  created_at       DateTime          @default(now())
+  curriculum_key   String?
+  updated_at       DateTime          @default(now()) @updatedAt
+  program          programs          @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  offered_courses  offered_courses[]
 
   @@unique([program_id, course_code])
   @@unique([curriculum_key, course_code])
@@ -249,12 +248,12 @@ model academic_catalog_entries {
   program_type       String
   study_shift        String
   curriculum_version String
-  curriculum_key     String?
   student_id_suffix  String?  @unique
   display_label      String
   is_active          Boolean  @default(true)
   created_at         DateTime @default(now())
   updated_at         DateTime @default(now()) @updatedAt
+  curriculum_key     String?
 
   @@index([department_code])
   @@index([program_type])

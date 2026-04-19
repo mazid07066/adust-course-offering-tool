@@ -9,6 +9,7 @@ export type ParsedMasterCourse = {
   theoryCredits: number;
   labCredits: number;
   semesterNo: number | null;
+  levelTerm: string | null;
   courseType: CourseType;
   isElective: boolean;
   electiveGroup: string | null;
@@ -22,10 +23,6 @@ function normalizeCourseCode(raw: string): string {
   const cleaned = raw.toUpperCase().replace(/[^A-Z0-9 ]/g, " ");
   const parts = cleaned.split(/\s+/).filter(Boolean);
 
-  // Example:
-  // RAE 0714 1101 -> RAE1101
-  // ENG 0231 1206 -> ENG1206
-  // PHY1113 -> PHY1113
   if (parts.length >= 2) {
     const first = parts[0];
     const last = parts[parts.length - 1];
@@ -78,15 +75,82 @@ function parseSemesterNumberFromCode(code: string): number | null {
   return Number.isNaN(semesterDigit) ? null : semesterDigit;
 }
 
+function parseLevelTermFromCode(code: string): string | null {
+  const match = code.match(/^[A-Z]{2,8}(\d{4})$/);
+  if (!match) return null;
+
+  const digits = match[1];
+  const level = Number(digits[0]);
+  const term = Number(digits[1]);
+
+  if (!Number.isFinite(level) || !Number.isFinite(term)) {
+    return null;
+  }
+
+  if (level <= 0 || term <= 0) {
+    return null;
+  }
+
+  return `${level}.${term}`;
+}
+
+function parseExplicitLevelTerm(raw: string): string | null {
+  const cleaned = normalizeWhitespace(raw).toUpperCase();
+
+  if (!cleaned) return null;
+
+  let match = cleaned.match(/^(\d+)[.\-_/ ](\d+)$/);
+  if (match) {
+    return `${Number(match[1])}.${Number(match[2])}`;
+  }
+
+  match = cleaned.match(/^L?\s*(\d+)\s*T?\s*(\d+)$/i);
+  if (match) {
+    return `${Number(match[1])}.${Number(match[2])}`;
+  }
+
+  match = cleaned.match(/LEVEL\s*(\d+)\s*TERM\s*(\d+)/i);
+  if (match) {
+    return `${Number(match[1])}.${Number(match[2])}`;
+  }
+
+  match = cleaned.match(/YEAR\s*(\d+)\s*SEM(?:ESTER)?\s*(\d+)/i);
+  if (match) {
+    return `${Number(match[1])}.${Number(match[2])}`;
+  }
+
+  return null;
+}
+
 function deduplicateCourses(courses: ParsedMasterCourse[]): ParsedMasterCourse[] {
   const map = new Map<string, ParsedMasterCourse>();
+
   for (const course of courses) {
-    map.set(course.code, course);
+    const existing = map.get(course.code);
+
+    if (!existing) {
+      map.set(course.code, course);
+      continue;
+    }
+
+    const existingLevel = existing.levelTerm ? 1 : 0;
+    const currentLevel = course.levelTerm ? 1 : 0;
+
+    if (currentLevel > existingLevel) {
+      map.set(course.code, course);
+    }
   }
+
   return Array.from(map.values());
 }
 
-function buildCourse(codeRaw: string, titleRaw: string, creditRaw: string | number, electiveGroup: string | null): ParsedMasterCourse | null {
+function buildCourse(
+  codeRaw: string,
+  titleRaw: string,
+  creditRaw: string | number,
+  electiveGroup: string | null,
+  explicitLevelTerm?: string | null
+): ParsedMasterCourse | null {
   const code = normalizeCourseCode(codeRaw);
   const title = normalizeWhitespace(String(titleRaw));
   const creditHours = parseCredit(String(creditRaw));
@@ -98,6 +162,9 @@ function buildCourse(codeRaw: string, titleRaw: string, creditRaw: string | numb
   const courseType = detectCourseType(title);
   const credits = splitTheoryLabCredits(courseType, creditHours);
 
+  const inferredLevelTerm = parseLevelTermFromCode(code);
+  const resolvedLevelTerm = parseExplicitLevelTerm(explicitLevelTerm || "") || inferredLevelTerm;
+
   return {
     code,
     title,
@@ -105,6 +172,7 @@ function buildCourse(codeRaw: string, titleRaw: string, creditRaw: string | numb
     theoryCredits: credits.theoryCredits,
     labCredits: credits.labCredits,
     semesterNo: parseSemesterNumberFromCode(code),
+    levelTerm: resolvedLevelTerm,
     courseType,
     isElective: electiveGroup !== null,
     electiveGroup,
@@ -114,6 +182,7 @@ function buildCourse(codeRaw: string, titleRaw: string, creditRaw: string | numb
 function parseDocxLinesToCourses(lines: string[]): ParsedMasterCourse[] {
   const courses: ParsedMasterCourse[] = [];
   let electiveGroup: string | null = null;
+  let currentLevelTerm: string | null = null;
 
   const cleanedLines = lines
     .map((line) => normalizeWhitespace(line))
@@ -125,6 +194,12 @@ function parseDocxLinesToCourses(lines: string[]): ParsedMasterCourse[] {
     const groupMatch = line.match(/^Group\s*-\s*([A-Z0-9]+)/i);
     if (groupMatch) {
       electiveGroup = groupMatch[1].toUpperCase();
+      continue;
+    }
+
+    const explicitLevelTerm = parseExplicitLevelTerm(line);
+    if (explicitLevelTerm) {
+      currentLevelTerm = explicitLevelTerm;
       continue;
     }
 
@@ -143,10 +218,6 @@ function parseDocxLinesToCourses(lines: string[]): ParsedMasterCourse[] {
     let title = "";
     let credit: string | number = "";
 
-    // Common case in docx:
-    // code
-    // title
-    // credit
     if (cleanedLines[i + 1] && !isCourseCode(cleanedLines[i + 1])) {
       title = cleanedLines[i + 1];
     }
@@ -154,18 +225,23 @@ function parseDocxLinesToCourses(lines: string[]): ParsedMasterCourse[] {
       credit = cleanedLines[i + 2];
     }
 
-    const built = buildCourse(line, title, credit, electiveGroup);
+    const built = buildCourse(line, title, credit, electiveGroup, currentLevelTerm);
     if (built) {
       courses.push(built);
       i += 2;
       continue;
     }
 
-    // Fallback case:
-    // code title credit all in nearby lines or odd formatting
     const fallbackTitle = cleanedLines[i + 1] ?? "";
     const fallbackCredit = cleanedLines[i + 3] ?? cleanedLines[i + 2] ?? "";
-    const builtFallback = buildCourse(line, fallbackTitle, fallbackCredit, electiveGroup);
+    const builtFallback = buildCourse(
+      line,
+      fallbackTitle,
+      fallbackCredit,
+      electiveGroup,
+      currentLevelTerm
+    );
+
     if (builtFallback) {
       courses.push(builtFallback);
     }
@@ -184,11 +260,11 @@ export async function parseDocxCourseList(buffer: Buffer): Promise<ParsedMasterC
 function parseXlsxRowsToCourses(rows: string[][]): ParsedMasterCourse[] {
   const courses: ParsedMasterCourse[] = [];
   let electiveGroup: string | null = null;
+  let currentLevelTerm: string | null = null;
 
   for (const row of rows) {
-    const cells = row
-      .map((cell) => normalizeWhitespace(String(cell ?? "")))
-      .filter(Boolean);
+    const rawCells = row.map((cell) => String(cell ?? ""));
+    const cells = rawCells.map((cell) => normalizeWhitespace(cell)).filter(Boolean);
 
     if (cells.length === 0) continue;
 
@@ -200,7 +276,12 @@ function parseXlsxRowsToCourses(rows: string[][]): ParsedMasterCourse[] {
       continue;
     }
 
-    // Skip common headers
+    const explicitLevelTerm = parseExplicitLevelTerm(joined);
+    if (explicitLevelTerm) {
+      currentLevelTerm = explicitLevelTerm;
+      continue;
+    }
+
     if (
       joined.match(/^Sl$/i) ||
       joined.match(/^Course Code$/i) ||
@@ -213,7 +294,6 @@ function parseXlsxRowsToCourses(rows: string[][]): ParsedMasterCourse[] {
       continue;
     }
 
-    // Try to find code cell and credit cell anywhere in row
     let codeIndex = -1;
     let creditIndex = -1;
 
@@ -238,7 +318,14 @@ function parseXlsxRowsToCourses(rows: string[][]): ParsedMasterCourse[] {
     const creditRaw = cells[creditIndex];
     const titleRaw = cells.slice(codeIndex + 1, creditIndex).join(" ").trim();
 
-    const built = buildCourse(codeRaw, titleRaw, creditRaw, electiveGroup);
+    const built = buildCourse(
+      codeRaw,
+      titleRaw,
+      creditRaw,
+      electiveGroup,
+      currentLevelTerm
+    );
+
     if (built) {
       courses.push(built);
     }
@@ -260,7 +347,11 @@ export async function parseXlsxCourseList(buffer: Buffer): Promise<ParsedMasterC
     });
 
     const normalizedRows = rows.map((row) => row.map((cell) => String(cell ?? "")));
-    const courses = parseXlsxRowsToCourses(normalizedRows);
+    const courses = parseXlsxRowsToCourses(normalizedRows).map((course) => ({
+      ...course,
+      levelTerm: course.levelTerm || parseExplicitLevelTerm(sheetName) || null,
+    }));
+
     allCourses.push(...courses);
   }
 

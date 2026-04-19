@@ -141,12 +141,13 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const programCode = String(searchParams.get("programCode") || "").trim();
     const termName = String(searchParams.get("termName") || "").trim().toUpperCase();
+    const batchCode = String(searchParams.get("batchCode") || "").trim();
 
-    if (!programCode || !termName) {
+    if (!programCode || !termName || !batchCode) {
       return NextResponse.json(
         {
           ok: false,
-          error: "programCode and termName are required.",
+          error: "programCode, termName, and batchCode are required.",
         },
         { status: 400 }
       );
@@ -169,35 +170,13 @@ export async function GET(req: NextRequest) {
       },
       select: {
         id: true,
-        status: true,
-        created_at: true,
-        academic_terms: {
-          select: {
-            name: true,
-          },
-        },
-        programs: {
-          select: {
-            short_name: true,
-            name: true,
-          },
-        },
         offered_courses: {
-          orderBy: [
-            {
-              section: "asc",
-            },
-            {
-              id: "asc",
-            },
-          ],
           select: {
             id: true,
-            section: true,
+            master_course_id: true,
             master_courses: {
               select: {
-                course_code: true,
-                course_title: true,
+                credit: true,
               },
             },
             offered_course_batches: {
@@ -209,40 +188,49 @@ export async function GET(req: NextRequest) {
                 },
               },
             },
-            offered_course_teachers: {
-              select: {
-                teachers: {
-                  select: {
-                    teacher_code: true,
-                    full_name: true,
-                  },
-                },
-              },
-            },
-            offered_course_slots: {
-              select: {
-                day_of_week: true,
-                start_time: true,
-                end_time: true,
-                rooms: {
-                  select: {
-                    room_code: true,
-                  },
-                },
-              },
-            },
           },
         },
       },
     });
 
+    const matchingDraft = drafts.find((draft) =>
+      draft.offered_courses.some((course) =>
+        course.offered_course_batches.some(
+          (b) => String(b.batches.batch_code || "").trim() === batchCode
+        )
+      )
+    ) || drafts[0] || null;
+
+    if (!matchingDraft) {
+      return NextResponse.json({
+        ok: true,
+        draftId: null,
+        hiddenCourseIds: [],
+        totalDraftCredits: 0,
+      });
+    }
+
+    const offeredForBatch = matchingDraft.offered_courses.filter((course) =>
+      course.offered_course_batches.some(
+        (b) => String(b.batches.batch_code || "").trim() === batchCode
+      )
+    );
+
+    const hiddenCourseIds = [...new Set(offeredForBatch.map((c) => c.master_course_id))];
+
+    const totalDraftCredits = offeredForBatch.reduce((sum, row) => {
+      return sum + Number(row.master_courses?.credit || 0);
+    }, 0);
+
     return NextResponse.json({
       ok: true,
-      drafts,
+      draftId: matchingDraft.id,
+      hiddenCourseIds,
+      totalDraftCredits,
     });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to load draft offerings.";
+      error instanceof Error ? error.message : "Failed to load draft context.";
 
     return NextResponse.json(
       {

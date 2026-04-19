@@ -30,61 +30,32 @@ function splitStoredRoomCode(stored: string) {
   };
 }
 
-export async function GET() {
+export async function PUT(
+  req: NextRequest,
+  context: { params: Promise<{ roomId: string }> }
+) {
   try {
     await requireCoordinatorOrAdminApi();
 
-    const rooms = await prisma.rooms.findMany({
-      orderBy: {
-        room_code: "asc",
-      },
-      select: {
-        id: true,
-        room_code: true,
-        room_type: true,
-        is_active: true,
-      },
-    });
+    const params = await context.params;
+    const roomId = Number(params.roomId);
 
-    return NextResponse.json({
-      ok: true,
-      rooms: rooms.map((room) => {
-        const parsed = splitStoredRoomCode(room.room_code);
-
-        return {
-          id: room.id,
-          roomCode: parsed.roomCode,
-          roomNumber: parsed.roomNumber,
-          building: room.room_type,
-          isActive: Boolean(room.is_active),
-          displayCode: `${parsed.roomCode} | ${parsed.roomNumber}`,
-        };
-      }),
-    });
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to load rooms.";
-
-    return NextResponse.json(
-      {
-        ok: false,
-        error: message,
-      },
-      { status: 500 }
-    );
-  }
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    await requireCoordinatorOrAdminApi();
+    if (!Number.isFinite(roomId) || roomId <= 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Valid roomId is required.",
+        },
+        { status: 400 }
+      );
+    }
 
     const body = await req.json();
 
     const roomCode = String(body.roomCode || "").trim().toUpperCase();
     const roomNumber = String(body.roomNumber || "").trim().toUpperCase();
     const building = String(body.building || "").trim().toUpperCase();
-    const isActive = body.isActive === undefined ? true : Boolean(body.isActive);
+    const isActive = Boolean(body.isActive);
 
     if (!roomCode) {
       return NextResponse.json(
@@ -118,26 +89,32 @@ export async function POST(req: NextRequest) {
 
     const storedRoomCode = buildStoredRoomCode(roomCode, roomNumber);
 
-    const existing = await prisma.rooms.findFirst({
+    const duplicate = await prisma.rooms.findFirst({
       where: {
         room_code: storedRoomCode,
+        NOT: {
+          id: roomId,
+        },
       },
       select: {
         id: true,
       },
     });
 
-    if (existing) {
+    if (duplicate) {
       return NextResponse.json(
         {
           ok: false,
-          error: "This room code and room number combination already exists.",
+          error: "Another room already uses this room code and room number combination.",
         },
         { status: 400 }
       );
     }
 
-    const room = await prisma.rooms.create({
+    const updated = await prisma.rooms.update({
+      where: {
+        id: roomId,
+      },
       data: {
         room_code: storedRoomCode,
         room_type: building,
@@ -151,22 +128,83 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const parsed = splitStoredRoomCode(room.room_code);
+    const parsed = splitStoredRoomCode(updated.room_code);
 
     return NextResponse.json({
       ok: true,
       room: {
-        id: room.id,
+        id: updated.id,
         roomCode: parsed.roomCode,
         roomNumber: parsed.roomNumber,
-        building: room.room_type,
-        isActive: Boolean(room.is_active),
+        building: updated.room_type,
+        isActive: Boolean(updated.is_active),
         displayCode: `${parsed.roomCode} | ${parsed.roomNumber}`,
       },
     });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to create room.";
+      error instanceof Error ? error.message : "Failed to update room.";
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: message,
+      },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  _req: NextRequest,
+  context: { params: Promise<{ roomId: string }> }
+) {
+  try {
+    await requireCoordinatorOrAdminApi();
+
+    const params = await context.params;
+    const roomId = Number(params.roomId);
+
+    if (!Number.isFinite(roomId) || roomId <= 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Valid roomId is required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const usageCount = await prisma.offered_course_slots.count({
+      where: {
+        room_id: roomId,
+      },
+    });
+
+    if (usageCount > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "This room is already used in scheduled slots. Set it inactive instead of deleting.",
+        },
+        { status: 400 }
+      );
+    }
+
+    await prisma.rooms.delete({
+      where: {
+        id: roomId,
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      message: "Room deleted successfully.",
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to delete room.";
 
     return NextResponse.json(
       {
