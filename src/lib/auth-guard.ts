@@ -1,43 +1,55 @@
-type MockSession = {
-  user: {
-    id: string;
-    name: string;
-    email: string;
-    role: "SUPER_ADMIN" | "COORDINATOR" | "FACULTY";
-  };
-};
+import { NextResponse } from "next/server";
+import { redirect } from "next/navigation";
+import { getSessionUser } from "./auth-session";
 
-export async function requireAuth(): Promise<MockSession> {
-  return {
-    user: {
-      id: "dev-user-1",
-      name: "Admin",
-      email: "admin@local",
-      role: "SUPER_ADMIN",
-    },
-  };
-}
-
-export async function requireSuperAdmin() {
-  return requireAuth();
-}
-
-export async function requireCoordinatorOrAdmin() {
-  return requireAuth();
-}
-
-export async function requireFacultyOrAdmin() {
-  return requireAuth();
-}
+/* ================= API GUARDS ================= */
 
 export async function requireCoordinatorOrAdminApi() {
-  return requireCoordinatorOrAdmin();
+  const user = await getSessionUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (user.role !== "SUPER_ADMIN" && user.role !== "COORDINATOR") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  return user;
 }
 
 export async function requireSuperAdminApi() {
-  return requireSuperAdmin();
+  const user = await getSessionUser();
+
+  if (!user || user.role !== "SUPER_ADMIN") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  return user;
 }
 
-export async function requireFacultyOrAdminApi() {
-  return requireFacultyOrAdmin();
+/* ================= PAGE GUARDS ================= */
+
+export async function requireCoordinatorOrAdmin() {
+  const user = await getSessionUser();
+
+  if (!user) {
+    redirect("/auth/login");
+  }
+
+  if (user.role !== "SUPER_ADMIN" && user.role !== "COORDINATOR") {
+    redirect("/auth/login");
+  }
+
+  return user;
+}
+
+export async function requireSuperAdmin() {
+  const user = await getSessionUser();
+
+  if (!user || user.role !== "SUPER_ADMIN") {
+    redirect("/auth/login");
+  }
+
+  return user;
 }

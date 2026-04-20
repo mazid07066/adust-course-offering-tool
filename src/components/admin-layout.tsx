@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 type AdminLayoutProps = {
-  title: string;
+  title?: string; // ✅ FIX: made optional
   children: ReactNode;
 };
 
@@ -17,6 +17,10 @@ const navItems = [
   { href: "/admin/courses", label: "Courses" },
   { href: "/admin/batch-curriculum-assignment", label: "Batch Curriculum Assignment" },
   { href: "/admin/faculties", label: "Faculties" },
+
+  // ✅ NEW (USER MANAGEMENT)
+  { href: "/admin/users", label: "User Accounts" },
+
   { href: "/admin/rooms", label: "Rooms" },
   { href: "/admin/academic-terms", label: "Academic Terms" },
   { href: "/admin/semesters", label: "Academic Terms Management" },
@@ -29,6 +33,7 @@ const navItems = [
   { href: "/admin/offering-reports", label: "Confirmed Offering Reports" },
   { href: "/admin/faculty-load", label: "Faculty Load Report" },
   { href: "/admin/schedule", label: "Schedule" },
+  { href: "/admin/faculty-choice-control", label: "Faculty Choice Control" },
   { href: "/admin/system-reset", label: "System Reset" },
 ];
 
@@ -37,8 +42,18 @@ function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export default function AdminLayout({ title, children }: AdminLayoutProps) {
+export default function AdminLayout({ title = "Admin Panel", children }: AdminLayoutProps) {
   const pathname = usePathname();
+
+  async function handleLogout() {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+      });
+    } finally {
+      window.location.href = "/auth/login";
+    }
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
@@ -46,7 +61,9 @@ export default function AdminLayout({ title, children }: AdminLayoutProps) {
         <aside className="hidden w-72 shrink-0 border-r border-slate-800 bg-slate-950 text-white lg:block">
           <div className="sticky top-0 h-screen overflow-y-auto px-5 py-6">
             <Link href="/admin" className="block">
-              <div className="text-2xl font-bold tracking-tight">ADUST Course Tool</div>
+              <div className="text-2xl font-bold tracking-tight">
+                ADUST Course Tool
+              </div>
               <p className="mt-2 text-sm leading-5 text-slate-300">
                 Professional academic offering and scheduling workspace
               </p>
@@ -93,12 +110,20 @@ export default function AdminLayout({ title, children }: AdminLayoutProps) {
                   >
                     Public Home
                   </Link>
+
                   <Link
                     href="/admin/academic-setup"
                     className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
                   >
                     Open Academic Setup
                   </Link>
+
+                  <button
+                    onClick={handleLogout}
+                    className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+                  >
+                    Logout
+                  </button>
                 </div>
               </div>
             </div>
