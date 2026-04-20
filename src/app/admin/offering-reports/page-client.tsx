@@ -1,457 +1,205 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import AdminLayout from "@/components/admin-layout";
-import ProgramTermSelector from "@/components/program-term-selector";
-import { useAcademicCatalogPrograms } from "@/hooks/use-academic-catalog-programs";
 import { useAcademicTerms } from "@/hooks/use-academic-terms";
 
-type Offering = {
-  id: number;
-  status: string;
-  created_at: string | null;
-  academic_terms: {
-    name: string;
-  };
-  programs: {
-    short_name: string;
-    name: string;
-  };
-  offered_courses: Array<{
-    id: number;
-    section: string;
-    master_courses: {
-      course_code: string;
-      course_title: string;
-      credit: number;
-      course_type: string;
-      group_name: string | null;
-      level_term: string | null;
-    };
-    offered_course_batches: Array<{
-      batches: {
-        batch_code: string;
-      };
-    }>;
-    offered_course_teachers: Array<{
-      teachers: {
-        teacher_code: string;
-        full_name: string;
-      } | null;
-    }>;
-    offered_course_slots: Array<{
-      day_of_week: string;
-      start_time: string;
-      end_time: string;
-      rooms: {
-        room_code: string;
-      } | null;
-    }>;
-  }>;
+type ReportRow = {
+  offeredCourseId: number;
+  offeringId: number;
+  programCode: string;
+  programName: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  credit: number;
+  role: string;
+  primaryReference: string;
+  batchCodes: string[];
+  facultyText: string;
+  assignedFacultyCount: number;
+  scheduleText: string;
 };
 
-type ConfirmedResponse = {
+type ApiResponse = {
   success?: boolean;
   error?: string;
-  offerings?: Offering[];
+  termName?: string;
+  summary?: {
+    totalRows: number;
+    primaryRows: number;
+    secondaryRows: number;
+    rowsWithFaculty: number;
+    rowsWithoutFaculty: number;
+  };
+  rows?: ReportRow[];
 };
 
-const dayOrder = ["THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY", "MONDAY"];
-
 export default function OfferingReportsPageClient() {
-  const {
-    programs,
-    programCode,
-    setProgramCode,
-    loadingPrograms,
-    programError,
-  } = useAcademicCatalogPrograms();
-
-  const {
-    terms,
-    termName,
-    setTermName,
-    loadingTerms,
-    termError,
-  } = useAcademicTerms();
+  const { terms, termName, setTermName, loadingTerms, termError } = useAcademicTerms();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [offerings, setOfferings] = useState<Offering[]>([]);
+  const [rows, setRows] = useState<ReportRow[]>([]);
+  const [summary, setSummary] = useState<ApiResponse["summary"] | null>(null);
 
-  async function loadConfirmed(e?: React.FormEvent) {
-    if (e) e.preventDefault();
+  async function loadReport() {
+    if (!termName) return;
 
     setLoading(true);
     setError("");
-    setMessage("");
 
     try {
-      const params = new URLSearchParams({
-        programCode,
-        termName,
-      });
+      const res = await fetch(
+        `/api/admin/reports/confirmed-offerings?termName=${encodeURIComponent(termName)}`,
+        {
+          cache: "no-store",
+        }
+      );
 
-      const res = await fetch(`/api/offerings/confirmed?${params.toString()}`, {
-        method: "GET",
-        cache: "no-store",
-      });
-
-      const json: ConfirmedResponse = await res.json();
+      const json: ApiResponse = await res.json();
 
       if (!res.ok) {
-        throw new Error(json.error || "Failed to load confirmed offerings.");
+        throw new Error(json.error || "Failed to load confirmed offering report.");
       }
 
-      setOfferings(json.offerings || []);
+      setRows(json.rows || []);
+      setSummary(json.summary || null);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Failed to load confirmed offerings."
+        err instanceof Error ? err.message : "Failed to load confirmed offering report."
       );
+      setRows([]);
+      setSummary(null);
     } finally {
       setLoading(false);
     }
   }
 
-  async function deleteConfirmedOffering(offeringId: number) {
-    const ok = window.confirm("Delete this confirmed offering?");
-    if (!ok) return;
-
-    setError("");
-    setMessage("");
-
-    try {
-      const res = await fetch(`/api/offerings/confirmed/${offeringId}`, {
-        method: "DELETE",
-      });
-
-      const json = await res.json();
-
-      if (!res.ok) {
-        throw new Error(json.error || "Failed to delete confirmed offering.");
-      }
-
-      setMessage("Confirmed offering deleted successfully.");
-      await loadConfirmed();
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to delete confirmed offering."
-      );
+  useEffect(() => {
+    if (termName) {
+      loadReport();
     }
-  }
-
-  const flatCourses = useMemo(() => {
-    return offerings.flatMap((offering) =>
-      offering.offered_courses.map((course) => ({
-        offeringId: offering.id,
-        termName: offering.academic_terms.name,
-        programCode: offering.programs.short_name,
-        courseCode: course.master_courses.course_code,
-        courseTitle: course.master_courses.course_title,
-        credit: course.master_courses.credit,
-        courseType: course.master_courses.course_type,
-        section: course.section,
-        levelTerm: course.master_courses.level_term,
-        groupName: course.master_courses.group_name,
-        batches: course.offered_course_batches
-          .map((b) => b.batches.batch_code)
-          .join(", "),
-        faculty: course.offered_course_teachers
-          .map((t) => t.teachers?.teacher_code || "-")
-          .join(", "),
-        slots: course.offered_course_slots,
-      }))
-    );
-  }, [offerings]);
-
-  const scheduleByDay = useMemo(() => {
-    const grouped: Record<
-      string,
-      Array<{
-        offeringId: number;
-        courseCode: string;
-        courseTitle: string;
-        section: string;
-        faculty: string;
-        batches: string;
-        room: string;
-        start: string;
-        end: string;
-        slotType: string;
-      }>
-    > = {};
-
-    for (const day of dayOrder) {
-      grouped[day] = [];
-    }
-
-    for (const course of flatCourses) {
-      for (const slot of course.slots) {
-        const day = String(slot.day_of_week || "").toUpperCase();
-        if (!grouped[day]) grouped[day] = [];
-
-        grouped[day].push({
-          offeringId: course.offeringId,
-          courseCode: course.courseCode,
-          courseTitle: course.courseTitle,
-          section: course.section,
-          faculty: course.faculty,
-          batches: course.batches,
-          room: slot.rooms?.room_code || "-",
-          start: slot.start_time,
-          end: slot.end_time,
-          slotType: "CLASS",
-        });
-      }
-    }
-
-    for (const day of Object.keys(grouped)) {
-      grouped[day].sort((a, b) => a.start.localeCompare(b.start));
-    }
-
-    return grouped;
-  }, [flatCourses]);
-
-  const combinedError = error || programError || termError;
+  }, [termName]);
 
   return (
     <AdminLayout title="Confirmed Offering Reports">
       <div className="space-y-6">
-        <form onSubmit={loadConfirmed} className="space-y-4">
-          <ProgramTermSelector
-            programs={programs}
-            programCode={programCode}
-            setProgramCode={setProgramCode}
-            loadingPrograms={loadingPrograms}
-            terms={terms}
-            termName={termName}
-            setTermName={setTermName}
-            loadingTerms={loadingTerms}
-          />
-
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="submit"
-              disabled={loading || !programCode || !termName}
-              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-            >
-              {loading ? "Loading..." : "Load Reports"}
-            </button>
-
-            <a
-              href={`/api/export/offered-courses?programCode=${encodeURIComponent(
-                programCode
-              )}&termName=${encodeURIComponent(termName)}`}
-              className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              Download Offered Courses Excel
-            </a>
-
-            <a
-              href={`/api/export/schedule?programCode=${encodeURIComponent(
-                programCode
-              )}&termName=${encodeURIComponent(termName)}`}
-              className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-700"
-            >
-              Download Schedule Excel
-            </a>
-          </div>
-        </form>
-
-        {combinedError && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {combinedError}
-          </div>
-        )}
-
-        {message && (
-          <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-            {message}
-          </div>
-        )}
-
-        <div className="grid gap-4 md:grid-cols-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">Confirmed Offerings</p>
-            <p className="mt-2 text-2xl font-semibold text-slate-900">
-              {offerings.length}
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">Offered Courses</p>
-            <p className="mt-2 text-2xl font-semibold text-slate-900">
-              {flatCourses.length}
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">Program</p>
-            <p className="mt-2 text-xl font-semibold text-slate-900">
-              {programCode || "-"}
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">Term</p>
-            <p className="mt-2 text-xl font-semibold text-slate-900">
-              {termName || "-"}
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          {offerings.map((offering) => (
-            <div
-              key={offering.id}
-              className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-            >
-              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <h3 className="text-lg font-semibold text-slate-900">
-                    {offering.programs.short_name} — {offering.academic_terms.name}
-                  </h3>
-                  <p className="text-sm text-slate-500">
-                    Offering ID: {offering.id} | Status: {offering.status}
-                  </p>
-                </div>
-
-                <button
-                  onClick={() => deleteConfirmedOffering(offering.id)}
-                  className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
-                >
-                  Delete Confirmed Offering
-                </button>
-              </div>
-
-              <div className="overflow-x-auto rounded-xl border border-slate-200">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="border-b px-3 py-3 text-left">Course</th>
-                      <th className="border-b px-3 py-3 text-left">Section</th>
-                      <th className="border-b px-3 py-3 text-left">Credit</th>
-                      <th className="border-b px-3 py-3 text-left">Type</th>
-                      <th className="border-b px-3 py-3 text-left">Batches</th>
-                      <th className="border-b px-3 py-3 text-left">Faculty</th>
-                      <th className="border-b px-3 py-3 text-left">Meetings</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {offering.offered_courses.map((course) => (
-                      <tr key={course.id}>
-                        <td className="border-b px-3 py-2">
-                          {course.master_courses.course_code} —{" "}
-                          {course.master_courses.course_title}
-                        </td>
-                        <td className="border-b px-3 py-2">{course.section}</td>
-                        <td className="border-b px-3 py-2">
-                          {course.master_courses.credit}
-                        </td>
-                        <td className="border-b px-3 py-2">
-                          {course.master_courses.course_type}
-                        </td>
-                        <td className="border-b px-3 py-2">
-                          {course.offered_course_batches
-                            .map((b) => b.batches.batch_code)
-                            .join(", ")}
-                        </td>
-                        <td className="border-b px-3 py-2">
-                          {course.offered_course_teachers
-                            .map((t) => t.teachers?.teacher_code || "-")
-                            .join(", ")}
-                        </td>
-                        <td className="border-b px-3 py-2">
-                          {course.offered_course_slots
-                            .map(
-                              (slot) =>
-                                `${slot.day_of_week} ${slot.start_time}-${slot.end_time} (${slot.rooms?.room_code || "-"})`
-                            )
-                            .join(" | ")}
-                        </td>
-                      </tr>
-                    ))}
-
-                    {offering.offered_courses.length === 0 && (
-                      <tr>
-                        <td
-                          colSpan={7}
-                          className="px-4 py-6 text-center text-slate-500"
-                        >
-                          No courses found in this offering.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ))}
-
-          {offerings.length === 0 && (
-            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm">
-              No confirmed offerings loaded yet.
-            </div>
-          )}
-        </div>
-
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="mb-4 text-lg font-semibold text-slate-900">
-            Day-wise Schedule View
-          </h3>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="w-full max-w-md">
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Academic Term
+              </label>
+              <select
+                value={termName}
+                onChange={(e) => setTermName(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+                disabled={loadingTerms}
+              >
+                <option value="">
+                  {loadingTerms ? "Loading terms..." : "Select Academic Term"}
+                </option>
+                {terms.map((term) => (
+                  <option key={term.name} value={term.name}>
+                    {term.name}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div className="space-y-6">
-            {dayOrder.map((day) => (
-              <div key={day}>
-                <h4 className="mb-3 text-base font-semibold text-slate-800">
-                  {day}
-                </h4>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={loadReport}
+                disabled={!termName || loading}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+              >
+                {loading ? "Loading..." : "Refresh Report"}
+              </button>
 
-                <div className="overflow-x-auto rounded-xl border border-slate-200">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50">
-                      <tr>
-                        <th className="border-b px-3 py-3 text-left">Course</th>
-                        <th className="border-b px-3 py-3 text-left">Section</th>
-                        <th className="border-b px-3 py-3 text-left">Time</th>
-                        <th className="border-b px-3 py-3 text-left">Room</th>
-                        <th className="border-b px-3 py-3 text-left">Faculty</th>
-                        <th className="border-b px-3 py-3 text-left">Batches</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(scheduleByDay[day] || []).map((row, idx) => (
-                        <tr key={`${day}-${idx}`}>
-                          <td className="border-b px-3 py-2">
-                            {row.courseCode} — {row.courseTitle}
-                          </td>
-                          <td className="border-b px-3 py-2">{row.section}</td>
-                          <td className="border-b px-3 py-2">
-                            {row.start} - {row.end}
-                          </td>
-                          <td className="border-b px-3 py-2">{row.room}</td>
-                          <td className="border-b px-3 py-2">{row.faculty}</td>
-                          <td className="border-b px-3 py-2">{row.batches}</td>
-                        </tr>
-                      ))}
-
-                      {(scheduleByDay[day] || []).length === 0 && (
-                        <tr>
-                          <td
-                            colSpan={6}
-                            className="px-4 py-6 text-center text-slate-500"
-                          >
-                            No scheduled classes for this day.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))}
+              <a
+                href={`/api/export/confirmed-offering?termName=${encodeURIComponent(termName || "")}`}
+                className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Download Confirmed Offering CSV
+              </a>
+            </div>
           </div>
+        </div>
+
+        {(error || termError) && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error || termError}
+          </div>
+        )}
+
+        {summary && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Summary</h2>
+            <div className="mt-4 flex flex-wrap gap-3 text-sm">
+              <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700">
+                Total Rows: {summary.totalRows}
+              </span>
+              <span className="rounded-full bg-green-100 px-3 py-1 font-medium text-green-700">
+                Primary: {summary.primaryRows}
+              </span>
+              <span className="rounded-full bg-indigo-100 px-3 py-1 font-medium text-indigo-700">
+                Secondary: {summary.secondaryRows}
+              </span>
+              <span className="rounded-full bg-blue-100 px-3 py-1 font-medium text-blue-700">
+                With Faculty: {summary.rowsWithFaculty}
+              </span>
+              <span className="rounded-full bg-amber-100 px-3 py-1 font-medium text-amber-700">
+                Without Faculty: {summary.rowsWithoutFaculty}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="border-b px-3 py-3 text-left">Program</th>
+                <th className="border-b px-3 py-3 text-left">Course</th>
+                <th className="border-b px-3 py-3 text-left">Section</th>
+                <th className="border-b px-3 py-3 text-left">Credit</th>
+                <th className="border-b px-3 py-3 text-left">Role</th>
+                <th className="border-b px-3 py-3 text-left">Primary Reference</th>
+                <th className="border-b px-3 py-3 text-left">Batches</th>
+                <th className="border-b px-3 py-3 text-left">Assigned Faculty</th>
+                <th className="border-b px-3 py-3 text-left">Schedule</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.offeredCourseId}>
+                  <td className="border-b px-3 py-2">{row.programCode}</td>
+                  <td className="border-b px-3 py-2">
+                    {row.courseCode} — {row.courseTitle}
+                  </td>
+                  <td className="border-b px-3 py-2">{row.section}</td>
+                  <td className="border-b px-3 py-2">{row.credit}</td>
+                  <td className="border-b px-3 py-2">{row.role}</td>
+                  <td className="border-b px-3 py-2">{row.primaryReference}</td>
+                  <td className="border-b px-3 py-2">
+                    {row.batchCodes.join(", ") || "-"}
+                  </td>
+                  <td className="border-b px-3 py-2">{row.facultyText}</td>
+                  <td className="border-b px-3 py-2">{row.scheduleText}</td>
+                </tr>
+              ))}
+
+              {rows.length === 0 && !loading && (
+                <tr>
+                  <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                    No confirmed offering rows found for the selected term.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </AdminLayout>
