@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { getCatalogProgramByCode } from "@/lib/academic-catalog";
 import { resolveCanonicalProgram } from "@/lib/canonical-program";
+import { buildDraftSectionGroups } from "@/lib/offering-section-group";
 
 type ProgramCandidate = {
   id: number;
@@ -10,11 +11,6 @@ type ProgramCandidate = {
   name: string;
   source: "EXACT_PROGRAM_CODE" | "CANONICAL_PROGRAM";
 };
-
-function formatRoomLabel(room: { room_code: string; room_type?: string | null } | null) {
-  if (!room) return "-";
-  return room.room_type ? `${room.room_type} | ${room.room_code}` : room.room_code;
-}
 
 function uniqueById<T extends { id: number }>(rows: T[]): T[] {
   const seen = new Set<number>();
@@ -133,16 +129,18 @@ export async function GET(req: NextRequest) {
           in: candidates.map((item) => item.id),
         },
       },
-      orderBy: [
-        { id: "desc" },
-      ],
+      orderBy: [{ id: "desc" }],
       include: {
         academic_terms: true,
         programs: true,
         offered_courses: {
           orderBy: [{ id: "asc" }],
           include: {
-            master_courses: true,
+            master_courses: {
+              include: {
+                program: true,
+              },
+            },
             offered_course_batches: {
               include: {
                 batches: true,
@@ -179,52 +177,51 @@ export async function GET(req: NextRequest) {
         short_name: draft.programs.short_name,
         name: draft.programs.name,
       },
-      offered_courses: draft.offered_courses.map((course) => ({
-        id: course.id,
-        section: course.section,
-        master_courses: {
-          course_code: course.master_courses.course_code,
-          course_title: course.master_courses.course_title,
-        },
-        offered_course_batches: course.offered_course_batches.map((x) => ({
-          batches: {
-            batch_code: x.batches.batch_code,
+      section_groups: buildDraftSectionGroups(
+        draft.offered_courses.map((course) => ({
+          id: course.id,
+          section: course.section,
+          is_cooffered: course.is_cooffered,
+          primary_offered_course_id: course.primary_offered_course_id,
+          master_courses: {
+            course_code: course.master_courses.course_code,
+            course_title: course.master_courses.course_title,
+            program: {
+              short_name: course.master_courses.program.short_name,
+              name: course.master_courses.program.name,
+            },
           },
-        })),
-        offered_course_teachers: course.offered_course_teachers.map((x) => ({
-          teachers: x.teachers
-            ? {
-                teacher_code: x.teachers.teacher_code,
-                full_name: x.teachers.full_name,
-              }
-            : null,
-        })),
-        offered_course_slots: course.offered_course_slots.map((slot) => ({
-          id: slot.id,
-          day_of_week: slot.day_of_week,
-          start_time: slot.start_time,
-          end_time: slot.end_time,
-          room_id: slot.room_id,
-          slot_type: slot.slot_type,
-          rooms: slot.rooms
-            ? {
-                room_code: slot.rooms.room_code,
-                room_type: slot.rooms.room_type,
-              }
-            : null,
-        })),
-        schedule_text:
-          course.offered_course_slots.length > 0
-            ? course.offered_course_slots
-                .map(
-                  (slot) =>
-                    `${slot.day_of_week} ${slot.start_time}-${slot.end_time} (${formatRoomLabel(
-                      slot.rooms
-                    )})`
-                )
-                .join(" | ")
-            : "-",
-      })),
+          offered_course_batches: course.offered_course_batches.map((x) => ({
+            batch_id: x.batch_id,
+            batches: {
+              batch_code: x.batches.batch_code,
+            },
+          })),
+          offered_course_teachers: course.offered_course_teachers.map((x) => ({
+            teacher_id: x.teacher_id,
+            teachers: x.teachers
+              ? {
+                  teacher_code: x.teachers.teacher_code,
+                  full_name: x.teachers.full_name,
+                }
+              : null,
+          })),
+          offered_course_slots: course.offered_course_slots.map((slot) => ({
+            id: slot.id,
+            day_of_week: slot.day_of_week,
+            start_time: slot.start_time,
+            end_time: slot.end_time,
+            room_id: slot.room_id,
+            slot_type: slot.slot_type,
+            rooms: slot.rooms
+              ? {
+                  room_code: slot.rooms.room_code,
+                  room_type: slot.rooms.room_type,
+                }
+              : null,
+          })),
+        }))
+      ),
     }));
 
     return NextResponse.json({

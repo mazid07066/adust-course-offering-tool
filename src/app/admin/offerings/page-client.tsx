@@ -73,6 +73,7 @@ type DraftContextResponse = {
   draftId: number | null;
   hiddenCourseIds: number[];
   totalDraftCredits: number;
+  draftStatus?: string | null;
 };
 
 function CourseTable({
@@ -204,6 +205,7 @@ export default function OfferingsPageClient() {
   const [contextData, setContextData] = useState<ContextData | null>(null);
 
   const [draftId, setDraftId] = useState<number | null>(null);
+  const [draftStatus, setDraftStatus] = useState<string | null>(null);
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [addingCourseId, setAddingCourseId] = useState<number | null>(null);
 
@@ -214,7 +216,8 @@ export default function OfferingsPageClient() {
   async function loadDraftContext(
     selectedProgramCode: string,
     selectedBatchCode: string,
-    selectedTermName: string
+    selectedTermName: string,
+    fallbackDraftId?: number | null
   ) {
     setLoadingDraftContext(true);
 
@@ -236,11 +239,13 @@ export default function OfferingsPageClient() {
         throw new Error(json.error || "Failed to load draft context.");
       }
 
-      setDraftId(json.draftId || null);
+      setDraftId(json.draftId ?? fallbackDraftId ?? null);
+      setDraftStatus(json.draftStatus || null);
       setHiddenCourseIds(json.hiddenCourseIds || []);
       setTotalDraftCredits(Number(json.totalDraftCredits || 0));
     } catch (err) {
-      setDraftId(null);
+      setDraftId(fallbackDraftId ?? null);
+      setDraftStatus(null);
       setHiddenCourseIds([]);
       setTotalDraftCredits(0);
       throw err;
@@ -257,6 +262,7 @@ export default function OfferingsPageClient() {
       setMessage("");
       setContextData(null);
       setDraftId(null);
+      setDraftStatus(null);
       setHiddenCourseIds([]);
       setTotalDraftCredits(0);
       return;
@@ -267,6 +273,7 @@ export default function OfferingsPageClient() {
     setMessage("");
     setContextData(null);
     setDraftId(null);
+    setDraftStatus(null);
     setHiddenCourseIds([]);
     setTotalDraftCredits(0);
 
@@ -340,12 +347,14 @@ export default function OfferingsPageClient() {
         throw new Error(json.error || "Failed to create draft offering.");
       }
 
-      setDraftId(json.draftId);
+      const createdDraftId = Number(json.draftId);
+      setDraftId(createdDraftId);
 
       await loadDraftContext(
         contextData.programCode,
         contextData.batchCode,
-        contextData.suggestedOfferingAcademicTerm
+        contextData.suggestedOfferingAcademicTerm,
+        createdDraftId
       );
 
       setMessage(
@@ -408,7 +417,8 @@ export default function OfferingsPageClient() {
       await loadDraftContext(
         contextData.programCode,
         contextData.batchCode,
-        contextData.suggestedOfferingAcademicTerm || ""
+        contextData.suggestedOfferingAcademicTerm || "",
+        draftId
       );
 
       setMessage(
@@ -520,6 +530,12 @@ export default function OfferingsPageClient() {
               {draftId && (
                 <div className="rounded-full bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700">
                   Active Draft ID: {draftId}
+                </div>
+              )}
+
+              {draftStatus && (
+                <div className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700">
+                  Draft Status: {draftStatus}
                 </div>
               )}
 

@@ -25,6 +25,54 @@ type DraftSlot = {
   } | null;
 };
 
+type LinkedCourseRow = {
+  id: number;
+  section: string;
+  master_course: {
+    course_code: string;
+    course_title: string;
+    program_code: string;
+    program_name: string;
+  };
+  offered_course_batches: Array<{
+    batch_id: number;
+    batches: {
+      batch_code: string;
+    };
+  }>;
+};
+
+type SectionGroup = {
+  primary_course: {
+    id: number;
+    section: string;
+    is_cooffered: boolean;
+    master_course: {
+      course_code: string;
+      course_title: string;
+      program_code: string;
+      program_name: string;
+    };
+    offered_course_batches: Array<{
+      batch_id: number;
+      batches: {
+        batch_code: string;
+      };
+    }>;
+    offered_course_teachers: Array<{
+      teacher_id: number;
+      teachers: {
+        teacher_code: string;
+        full_name: string;
+      } | null;
+    }>;
+    offered_course_slots: DraftSlot[];
+    schedule_text?: string;
+  };
+  linked_courses: LinkedCourseRow[];
+  section_batch_codes: string[];
+};
+
 type Draft = {
   id: number;
   status: string;
@@ -36,27 +84,7 @@ type Draft = {
     short_name: string;
     name: string;
   };
-  offered_courses: Array<{
-    id: number;
-    section: string;
-    master_courses: {
-      course_code: string;
-      course_title: string;
-    };
-    offered_course_batches: Array<{
-      batches: {
-        batch_code: string;
-      };
-    }>;
-    offered_course_teachers: Array<{
-      teachers: {
-        teacher_code: string;
-        full_name: string;
-      } | null;
-    }>;
-    offered_course_slots: DraftSlot[];
-    schedule_text?: string;
-  }>;
+  section_groups: SectionGroup[];
 };
 
 type DraftResponse = {
@@ -83,6 +111,21 @@ type RoomResponse = {
   >;
 };
 
+type ProgramBatchResponse = {
+  ok?: boolean;
+  error?: string;
+  batches?: Array<
+    | {
+        id: number;
+        batch_code: string;
+      }
+    | {
+        id: number;
+        batchCode: string;
+      }
+  >;
+};
+
 type SlotEditorRow = {
   dayOfWeek: string;
   startTime: string;
@@ -90,6 +133,11 @@ type SlotEditorRow = {
   roomId: string;
   availableRooms: RoomOption[];
   loadingRooms: boolean;
+};
+
+type BatchOption = {
+  id: number;
+  batchCode: string;
 };
 
 const DAYS = ["THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY", "MONDAY"];
@@ -151,6 +199,30 @@ function normalizeRoomOption(
   };
 }
 
+function normalizeBatchOption(
+  row:
+    | {
+        id: number;
+        batch_code: string;
+      }
+    | {
+        id: number;
+        batchCode: string;
+      }
+): BatchOption {
+  if ("batch_code" in row) {
+    return {
+      id: row.id,
+      batchCode: row.batch_code,
+    };
+  }
+
+  return {
+    id: row.id,
+    batchCode: row.batchCode,
+  };
+}
+
 function buildDefaultSlotRow(initialRoomId = ""): SlotEditorRow {
   return {
     dayOfWeek: "THURSDAY",
@@ -202,20 +274,30 @@ export default function OfferingDraftsPageClient() {
   const [deletingCourseId, setDeletingCourseId] = useState<number | null>(null);
   const [deletingSlotId, setDeletingSlotId] = useState<number | null>(null);
 
+  const [attachEditorCourseId, setAttachEditorCourseId] = useState<number | null>(null);
+  const [attachProgramCode, setAttachProgramCode] = useState("");
+  const [attachBatchCode, setAttachBatchCode] = useState("");
+  const [attachBatchOptions, setAttachBatchOptions] = useState<BatchOption[]>([]);
+  const [attachOptionsLoading, setAttachOptionsLoading] = useState(false);
+  const [savingAttach, setSavingAttach] = useState(false);
+
   const combinedError = error || programError || termError;
   const configuredRoomCount = allRooms.length;
 
-  function getCourseById(courseId: number) {
+  function getPrimaryCourseById(courseId: number) {
     for (const draft of drafts) {
-      const found = draft.offered_courses.find((course) => course.id === courseId);
-      if (found) return found;
+      for (const group of draft.section_groups) {
+        if (group.primary_course.id === courseId) {
+          return group.primary_course;
+        }
+      }
     }
     return null;
   }
 
   function currentCourseSlotCount() {
     if (!slotEditorCourseId) return 0;
-    const course = getCourseById(slotEditorCourseId);
+    const course = getPrimaryCourseById(slotEditorCourseId);
     return course?.offered_course_slots.length || 0;
   }
 
@@ -236,7 +318,7 @@ export default function OfferingDraftsPageClient() {
   }
 
   function openSlotEditorForNew(courseId: number) {
-    const course = getCourseById(courseId);
+    const course = getPrimaryCourseById(courseId);
     const currentSlotCount = course?.offered_course_slots.length || 0;
     const initialTarget = currentSlotCount === 0 ? "1" : currentSlotCount === 1 ? "2" : "3";
     const rowCount = getRemainingSlotCount(currentSlotCount, initialTarget);
@@ -280,6 +362,54 @@ export default function OfferingDraftsPageClient() {
     setSlotRows([]);
   }
 
+  async function loadAttachBatchOptions(selectedProgramCode: string) {
+    if (!selectedProgramCode) {
+      setAttachBatchOptions([]);
+      return;
+    }
+
+    setAttachOptionsLoading(true);
+
+    try {
+      const params = new URLSearchParams({
+        programCode: selectedProgramCode,
+      });
+
+      const res = await fetch(`/api/program-batches/options?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const json: ProgramBatchResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load batches.");
+      }
+
+      setAttachBatchOptions((json.batches || []).map(normalizeBatchOption));
+    } catch (err) {
+      setAttachBatchOptions([]);
+      setError(err instanceof Error ? err.message : "Failed to load batches.");
+    } finally {
+      setAttachOptionsLoading(false);
+    }
+  }
+
+  function openAttachEditor(courseId: number, defaultProgramCode: string) {
+    setAttachEditorCourseId(courseId);
+    setAttachProgramCode(defaultProgramCode);
+    setAttachBatchCode("");
+    setAttachBatchOptions([]);
+    void loadAttachBatchOptions(defaultProgramCode);
+  }
+
+  function closeAttachEditor() {
+    setAttachEditorCourseId(null);
+    setAttachProgramCode("");
+    setAttachBatchCode("");
+    setAttachBatchOptions([]);
+  }
+
   async function loadAllRooms() {
     setRoomsLoading(true);
 
@@ -311,9 +441,7 @@ export default function OfferingDraftsPageClient() {
     const endTime = addMinutesToTime(row.startTime, Number(row.durationMinutes || 60));
 
     setSlotRows((prev) =>
-      prev.map((item, i) =>
-        i === index ? { ...item, loadingRooms: true } : item
-      )
+      prev.map((item, i) => (i === index ? { ...item, loadingRooms: true } : item))
     );
 
     try {
@@ -473,7 +601,9 @@ export default function OfferingDraftsPageClient() {
   }
 
   async function deleteDraftCourse(offeredCourseId: number) {
-    const ok = window.confirm("Delete this course from the draft?");
+    const ok = window.confirm(
+      "Delete this course row? If it is a primary section, linked secondaries under it will also be removed."
+    );
     if (!ok) return;
 
     setDeletingCourseId(offeredCourseId);
@@ -558,6 +688,46 @@ export default function OfferingDraftsPageClient() {
       await loadDrafts();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to publish draft offering.");
+    }
+  }
+
+  async function saveAttachBatch() {
+    if (!attachEditorCourseId || !attachProgramCode || !attachBatchCode) {
+      setError("Please choose both academic identity and batch.");
+      setMessage("");
+      return;
+    }
+
+    setSavingAttach(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/offerings/drafts/attach-batches", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          offeredCourseId: attachEditorCourseId,
+          programCode: attachProgramCode,
+          batchCode: attachBatchCode,
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to attach batch.");
+      }
+
+      setMessage("Batch attached successfully.");
+      closeAttachEditor();
+      await loadDrafts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to attach batch.");
+    } finally {
+      setSavingAttach(false);
     }
   }
 
@@ -658,6 +828,8 @@ export default function OfferingDraftsPageClient() {
     }
   }
 
+  const draftCount = useMemo(() => drafts.length, [drafts]);
+
   return (
     <AdminLayout title="Draft Offerings">
       <div className="space-y-6">
@@ -697,6 +869,13 @@ export default function OfferingDraftsPageClient() {
             >
               Open Rooms Setup
             </a>
+
+            <a
+              href={`/admin/co-offering-setup?termName=${encodeURIComponent(termName || "")}&primaryProgramCode=${encodeURIComponent(programCode || "")}`}
+              className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white hover:bg-indigo-700"
+            >
+              Open Co-offering Setup
+            </a>
           </div>
         </form>
 
@@ -721,6 +900,12 @@ export default function OfferingDraftsPageClient() {
         {matchedProgramCodes.length > 0 && (
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
             Draft lookup matched program(s): {matchedProgramCodes.join(", ")}
+          </div>
+        )}
+
+        {draftCount > 0 && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+            Section-group view active. Each row below is one operational teaching section.
           </div>
         )}
 
@@ -761,9 +946,8 @@ export default function OfferingDraftsPageClient() {
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50">
                     <tr>
-                      <th className="border-b px-3 py-3 text-left">Course</th>
-                      <th className="border-b px-3 py-3 text-left">Section</th>
-                      <th className="border-b px-3 py-3 text-left">Batches</th>
+                      <th className="border-b px-3 py-3 text-left">Section Group</th>
+                      <th className="border-b px-3 py-3 text-left">All Batches</th>
                       <th className="border-b px-3 py-3 text-left">Faculty</th>
                       <th className="border-b px-3 py-3 text-left">Schedule</th>
                       <th className="border-b px-3 py-3 text-left">Action</th>
@@ -771,39 +955,280 @@ export default function OfferingDraftsPageClient() {
                   </thead>
 
                   <tbody>
-                    {draft.offered_courses.map((course) => {
-                      const currentSlotCount = course.offered_course_slots.length;
+                    {draft.section_groups.map((group) => {
+                      const currentSlotCount = group.primary_course.offered_course_slots.length;
                       const remainingCount = editingSlotId
                         ? 1
                         : getRemainingSlotCount(currentSlotCount, slotWeeklyTarget);
 
                       return (
-                        <Fragment key={course.id}>
+                        <Fragment key={group.primary_course.id}>
                           <tr>
-                            <td className="border-b px-3 py-2">
-                              {course.master_courses.course_code} — {course.master_courses.course_title}
+                            <td className="border-b px-3 py-3 align-top">
+                              <div className="space-y-3">
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                    Primary
+                                  </div>
+                                  <div className="mt-1 font-medium text-slate-900">
+                                    {group.primary_course.master_course.course_code} — {group.primary_course.master_course.course_title}
+                                  </div>
+                                  <div className="mt-1 text-xs text-slate-600">
+                                    Program: {group.primary_course.master_course.program_code}
+                                  </div>
+                                  <div className="mt-1 text-xs text-slate-600">
+                                    Section: {group.primary_course.section}
+                                  </div>
+                                  <div className="mt-2 text-xs text-slate-600">
+                                    Batches:{" "}
+                                    {group.primary_course.offered_course_batches
+                                      .map((b) => b.batches.batch_code)
+                                      .join(", ") || "-"}
+                                  </div>
+
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openAttachEditor(
+                                          group.primary_course.id,
+                                          draft.programs.short_name
+                                        )
+                                      }
+                                      className="rounded-lg border px-2 py-1 text-xs font-medium text-slate-700 hover:bg-white"
+                                    >
+                                      Add Batch
+                                    </button>
+
+                                    <a
+                                      href={`/admin/co-offering-setup?termName=${encodeURIComponent(termName || draft.academic_terms.name)}&primaryProgramCode=${encodeURIComponent(programCode || draft.programs.short_name)}&primaryOfferedCourseId=${group.primary_course.id}`}
+                                      className="rounded-lg border px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-white"
+                                    >
+                                      Manage Co-offering
+                                    </a>
+                                  </div>
+
+                                  {attachEditorCourseId === group.primary_course.id && (
+                                    <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                                      <div className="grid gap-3 md:grid-cols-2">
+                                        <div>
+                                          <label className="mb-2 block text-xs font-medium text-slate-700">
+                                            Academic Identity
+                                          </label>
+                                          <select
+                                            value={attachProgramCode}
+                                            onChange={(e) => {
+                                              setAttachProgramCode(e.target.value);
+                                              setAttachBatchCode("");
+                                              void loadAttachBatchOptions(e.target.value);
+                                            }}
+                                            className="w-full rounded-lg border px-3 py-2 text-sm"
+                                          >
+                                            <option value="">Select program</option>
+                                            {programs.map((item, index) => (
+                                              <option
+                                                key={`${item.programCode}-${index}`}
+                                                value={item.programCode}
+                                              >
+                                                {item.displayLabel}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+
+                                        <div>
+                                          <label className="mb-2 block text-xs font-medium text-slate-700">
+                                            Batch
+                                          </label>
+                                          <select
+                                            value={attachBatchCode}
+                                            onChange={(e) => setAttachBatchCode(e.target.value)}
+                                            className="w-full rounded-lg border px-3 py-2 text-sm"
+                                            disabled={!attachProgramCode || attachOptionsLoading}
+                                          >
+                                            <option value="">
+                                              {attachOptionsLoading ? "Loading batches..." : "Select batch"}
+                                            </option>
+                                            {attachBatchOptions.map((item) => (
+                                              <option key={`attach-${item.id}`} value={item.batchCode}>
+                                                {item.batchCode}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      </div>
+
+                                      <div className="mt-3 flex gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={saveAttachBatch}
+                                          disabled={savingAttach || !attachProgramCode || !attachBatchCode}
+                                          className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                                        >
+                                          {savingAttach ? "Saving..." : "Save Batch"}
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={closeAttachEditor}
+                                          className="rounded-lg bg-slate-200 px-3 py-2 text-xs font-medium text-slate-800 hover:bg-slate-300"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {group.linked_courses.length > 0 && (
+                                  <div className="space-y-2">
+                                    {group.linked_courses.map((linked) => (
+                                      <div
+                                        key={linked.id}
+                                        className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"
+                                      >
+                                        <div className="text-xs font-semibold uppercase tracking-wide text-indigo-600">
+                                          Linked Secondary
+                                        </div>
+                                        <div className="mt-1 font-medium text-slate-900">
+                                          {linked.master_course.course_code} — {linked.master_course.course_title}
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-600">
+                                          Program: {linked.master_course.program_code}
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-600">
+                                          Section: {linked.section}
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-600">
+                                          Batches:{" "}
+                                          {linked.offered_course_batches
+                                            .map((b) => b.batches.batch_code)
+                                            .join(", ") || "-"}
+                                        </div>
+
+                                        <div className="mt-2 flex flex-wrap gap-2">
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              openAttachEditor(linked.id, linked.master_course.program_code)
+                                            }
+                                            className="rounded-lg border px-2 py-1 text-xs font-medium text-slate-700 hover:bg-white"
+                                          >
+                                            Add Batch
+                                          </button>
+
+                                          <a
+                                            href={`/admin/co-offering-setup?termName=${encodeURIComponent(termName || draft.academic_terms.name)}&primaryProgramCode=${encodeURIComponent(programCode || draft.programs.short_name)}&primaryOfferedCourseId=${group.primary_course.id}`}
+                                            className="rounded-lg border px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-white"
+                                          >
+                                            Manage Co-offering
+                                          </a>
+
+                                          <button
+                                            type="button"
+                                            onClick={() => deleteDraftCourse(linked.id)}
+                                            disabled={deletingCourseId === linked.id}
+                                            className="rounded-lg border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+                                          >
+                                            {deletingCourseId === linked.id ? "Deleting..." : "Remove Link"}
+                                          </button>
+                                        </div>
+
+                                        {attachEditorCourseId === linked.id && (
+                                          <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                                            <div className="grid gap-3 md:grid-cols-2">
+                                              <div>
+                                                <label className="mb-2 block text-xs font-medium text-slate-700">
+                                                  Academic Identity
+                                                </label>
+                                                <select
+                                                  value={attachProgramCode}
+                                                  onChange={(e) => {
+                                                    setAttachProgramCode(e.target.value);
+                                                    setAttachBatchCode("");
+                                                    void loadAttachBatchOptions(e.target.value);
+                                                  }}
+                                                  className="w-full rounded-lg border px-3 py-2 text-sm"
+                                                >
+                                                  <option value="">Select program</option>
+                                                  {programs.map((item, index) => (
+                                                    <option
+                                                      key={`${item.programCode}-${index}`}
+                                                      value={item.programCode}
+                                                    >
+                                                      {item.displayLabel}
+                                                    </option>
+                                                  ))}
+                                                </select>
+                                              </div>
+
+                                              <div>
+                                                <label className="mb-2 block text-xs font-medium text-slate-700">
+                                                  Batch
+                                                </label>
+                                                <select
+                                                  value={attachBatchCode}
+                                                  onChange={(e) => setAttachBatchCode(e.target.value)}
+                                                  className="w-full rounded-lg border px-3 py-2 text-sm"
+                                                  disabled={!attachProgramCode || attachOptionsLoading}
+                                                >
+                                                  <option value="">
+                                                    {attachOptionsLoading ? "Loading batches..." : "Select batch"}
+                                                  </option>
+                                                  {attachBatchOptions.map((item) => (
+                                                    <option key={`attach-linked-${item.id}`} value={item.batchCode}>
+                                                      {item.batchCode}
+                                                    </option>
+                                                  ))}
+                                                </select>
+                                              </div>
+                                            </div>
+
+                                            <div className="mt-3 flex gap-2">
+                                              <button
+                                                type="button"
+                                                onClick={saveAttachBatch}
+                                                disabled={savingAttach || !attachProgramCode || !attachBatchCode}
+                                                className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                                              >
+                                                {savingAttach ? "Saving..." : "Save Batch"}
+                                              </button>
+
+                                              <button
+                                                type="button"
+                                                onClick={closeAttachEditor}
+                                                className="rounded-lg bg-slate-200 px-3 py-2 text-xs font-medium text-slate-800 hover:bg-slate-300"
+                                              >
+                                                Cancel
+                                              </button>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                             </td>
 
-                            <td className="border-b px-3 py-2">{course.section}</td>
-
-                            <td className="border-b px-3 py-2">
-                              {course.offered_course_batches.map((b) => b.batches.batch_code).join(", ")}
+                            <td className="border-b px-3 py-3 align-top">
+                              {group.section_batch_codes.join(", ") || "-"}
                             </td>
 
-                            <td className="border-b px-3 py-2">
-                              {course.offered_course_teachers.length === 0
+                            <td className="border-b px-3 py-3 align-top">
+                              {group.primary_course.offered_course_teachers.length === 0
                                 ? "-"
-                                : course.offered_course_teachers
+                                : group.primary_course.offered_course_teachers
                                     .map((t) => t.teachers?.teacher_code || "-")
                                     .join(", ")}
                             </td>
 
-                            <td className="border-b px-3 py-2">
-                              {course.offered_course_slots.length === 0 ? (
+                            <td className="border-b px-3 py-3 align-top">
+                              {group.primary_course.offered_course_slots.length === 0 ? (
                                 "-"
                               ) : (
                                 <div className="space-y-2">
-                                  {course.offered_course_slots.map((slot) => (
+                                  {group.primary_course.offered_course_slots.map((slot) => (
                                     <div
                                       key={slot.id}
                                       className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
@@ -817,7 +1242,9 @@ export default function OfferingDraftsPageClient() {
                                       <div className="mt-2 flex gap-2">
                                         <button
                                           type="button"
-                                          onClick={() => openSlotEditorForEdit(course.id, slot)}
+                                          onClick={() =>
+                                            openSlotEditorForEdit(group.primary_course.id, slot)
+                                          }
                                           className="rounded-lg border px-2 py-1 text-xs font-medium text-slate-700 hover:bg-white"
                                         >
                                           Edit
@@ -838,11 +1265,11 @@ export default function OfferingDraftsPageClient() {
                               )}
                             </td>
 
-                            <td className="border-b px-3 py-2">
+                            <td className="border-b px-3 py-3 align-top">
                               <div className="flex flex-wrap gap-2">
                                 <button
                                   type="button"
-                                  onClick={() => openSlotEditorForNew(course.id)}
+                                  onClick={() => openSlotEditorForNew(group.primary_course.id)}
                                   disabled={currentSlotCount >= 3}
                                   className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
                                 >
@@ -855,19 +1282,19 @@ export default function OfferingDraftsPageClient() {
 
                                 <button
                                   type="button"
-                                  onClick={() => deleteDraftCourse(course.id)}
-                                  disabled={deletingCourseId === course.id}
+                                  onClick={() => deleteDraftCourse(group.primary_course.id)}
+                                  disabled={deletingCourseId === group.primary_course.id}
                                   className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60"
                                 >
-                                  {deletingCourseId === course.id ? "Deleting..." : "Delete Course"}
+                                  {deletingCourseId === group.primary_course.id ? "Deleting..." : "Delete Section"}
                                 </button>
                               </div>
                             </td>
                           </tr>
 
-                          {slotEditorCourseId === course.id && (
+                          {slotEditorCourseId === group.primary_course.id && (
                             <tr>
-                              <td colSpan={6} className="bg-slate-50 px-4 py-4">
+                              <td colSpan={5} className="bg-slate-50 px-4 py-4">
                                 <div className="mb-4 grid gap-4 md:grid-cols-3">
                                   <div>
                                     <label className="mb-2 block text-sm font-medium text-slate-700">
@@ -1037,7 +1464,10 @@ export default function OfferingDraftsPageClient() {
                                       savingSlot ||
                                       slotRows.length === 0 ||
                                       slotRows.some(
-                                        (row) => row.loadingRooms || row.availableRooms.length === 0 || !row.roomId
+                                        (row) =>
+                                          row.loadingRooms ||
+                                          row.availableRooms.length === 0 ||
+                                          !row.roomId
                                       )
                                     }
                                     className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
@@ -1068,10 +1498,10 @@ export default function OfferingDraftsPageClient() {
                       );
                     })}
 
-                    {draft.offered_courses.length === 0 && (
+                    {draft.section_groups.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
-                          No courses found in this draft.
+                        <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
+                          No section groups found in this draft.
                         </td>
                       </tr>
                     )}

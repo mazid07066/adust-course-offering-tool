@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { canDelete } from "@/lib/offering-status";
 
 export async function DELETE(
   _request: NextRequest,
@@ -22,7 +23,12 @@ export async function DELETE(
     const offering = await prisma.offerings.findFirst({
       where: { id: offeringId },
       include: {
-        offered_courses: true,
+        offered_courses: {
+          select: {
+            id: true,
+            primary_offered_course_id: true,
+          },
+        },
       },
     });
 
@@ -33,39 +39,63 @@ export async function DELETE(
       );
     }
 
-    if (offering.status !== "DRAFT") {
+    if (!canDelete(offering.status)) {
       return NextResponse.json(
-        { error: "Only DRAFT offerings can be deleted." },
+        { error: "Only deletable offerings can be deleted." },
         { status: 400 }
       );
     }
 
-    const offeredCourseIds = offering.offered_courses.map((c) => c.id);
+    const secondaryIds = offering.offered_courses
+      .filter((c) => Boolean(c.primary_offered_course_id))
+      .map((c) => c.id);
 
-    if (offeredCourseIds.length > 0) {
+    const primaryIds = offering.offered_courses
+      .filter((c) => !c.primary_offered_course_id)
+      .map((c) => c.id);
+
+    const deleteOrder = [...secondaryIds, ...primaryIds];
+
+    if (deleteOrder.length > 0) {
+      await prisma.faculty_course_selections.deleteMany({
+        where: {
+          offered_course_id: { in: deleteOrder },
+        },
+      });
+
       await prisma.offered_course_slots.deleteMany({
         where: {
-          offered_course_id: { in: offeredCourseIds },
+          offered_course_id: { in: deleteOrder },
         },
       });
 
       await prisma.offered_course_teachers.deleteMany({
         where: {
-          offered_course_id: { in: offeredCourseIds },
+          offered_course_id: { in: deleteOrder },
         },
       });
 
       await prisma.offered_course_batches.deleteMany({
         where: {
-          offered_course_id: { in: offeredCourseIds },
+          offered_course_id: { in: deleteOrder },
         },
       });
 
-      await prisma.offered_courses.deleteMany({
-        where: {
-          id: { in: offeredCourseIds },
-        },
-      });
+      if (secondaryIds.length > 0) {
+        await prisma.offered_courses.deleteMany({
+          where: {
+            id: { in: secondaryIds },
+          },
+        });
+      }
+
+      if (primaryIds.length > 0) {
+        await prisma.offered_courses.deleteMany({
+          where: {
+            id: { in: primaryIds },
+          },
+        });
+      }
     }
 
     await prisma.offerings.delete({
@@ -84,7 +114,9 @@ export async function DELETE(
     return NextResponse.json(
       {
         error:
-          error instanceof Error ? error.message : "Failed to delete draft offering.",
+          error instanceof Error
+            ? error.message
+            : "Failed to delete draft offering.",
       },
       { status: 500 }
     );

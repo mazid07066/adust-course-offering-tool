@@ -128,8 +128,8 @@ model offered_courses {
   offering_id               Int
   master_course_id          Int
   section                   String                      @db.VarChar(20)
-  is_cooffered              Boolean?                    @default(false)
   primary_offered_course_id Int?
+  is_cooffered              Boolean?                    @default(false)
   notes                     String?
   faculty_course_selections faculty_course_selections[]
   offered_course_batches    offered_course_batches[]
@@ -137,11 +137,12 @@ model offered_courses {
   offered_course_teachers   offered_course_teachers[]
   master_courses            master_courses              @relation(fields: [master_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   offerings                 offerings                   @relation(fields: [offering_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  primary_offered_course    offered_courses?            @relation("offered_course_cooffer_links", fields: [primary_offered_course_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  secondary_offered_courses offered_courses[]           @relation("offered_course_cooffer_links")
 
-  @@index([offering_id, section], map: "ix_offered_courses_offering_section")
+  primary_offered_course   offered_courses?  @relation("offered_course_group", fields: [primary_offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  linked_secondary_courses offered_courses[] @relation("offered_course_group")
+
   @@index([primary_offered_course_id], map: "ix_offered_courses_primary_offered_course_id")
+  @@index([offering_id, section], map: "ix_offered_courses_offering_section")
 }
 
 model offerings {

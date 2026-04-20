@@ -63,16 +63,18 @@ export async function POST(
         );
       }
 
-      if (course.offered_course_teachers.length === 0) {
+      const isPrimary = !course.primary_offered_course_id;
+
+      if (isPrimary && course.offered_course_teachers.length === 0) {
         return NextResponse.json(
-          { error: `Course ID ${course.id} has no assigned faculty.` },
+          { error: `Primary course ID ${course.id} has no assigned faculty.` },
           { status: 400 }
         );
       }
 
-      if (course.offered_course_slots.length === 0) {
+      if (isPrimary && course.offered_course_slots.length === 0) {
         return NextResponse.json(
-          { error: `Course ID ${course.id} has no assigned meeting slot.` },
+          { error: `Primary course ID ${course.id} has no assigned meeting slot.` },
           { status: 400 }
         );
       }

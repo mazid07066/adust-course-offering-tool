@@ -119,6 +119,8 @@ export async function POST(req: NextRequest) {
         offering_id: draftId,
         master_course_id: courseId,
         section,
+        primary_offered_course_id: null,
+        is_cooffered: false,
       },
       select: {
         id: true,

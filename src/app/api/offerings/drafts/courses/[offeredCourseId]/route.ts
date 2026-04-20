@@ -1,32 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
-
-async function deleteOfferedCourseCascade(offeredCourseId: number, tx: typeof prisma) {
-  await tx.offered_course_slots.deleteMany({
-    where: {
-      offered_course_id: offeredCourseId,
-    },
-  });
-
-  await tx.offered_course_teachers.deleteMany({
-    where: {
-      offered_course_id: offeredCourseId,
-    },
-  });
-
-  await tx.offered_course_batches.deleteMany({
-    where: {
-      offered_course_id: offeredCourseId,
-    },
-  });
-
-  await tx.offered_courses.delete({
-    where: {
-      id: offeredCourseId,
-    },
-  });
-}
+import { deleteOfferedCourseCascade } from "@/lib/offering-section-group";
 
 export async function DELETE(
   _req: NextRequest,
@@ -68,7 +43,7 @@ export async function DELETE(
     }
 
     await prisma.$transaction(async (tx) => {
-      await deleteOfferedCourseCascade(offeredCourseId, tx);
+      await deleteOfferedCourseCascade(tx, offeredCourseId);
     });
 
     return NextResponse.json({

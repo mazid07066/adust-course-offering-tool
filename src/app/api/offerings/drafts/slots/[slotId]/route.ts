@@ -159,6 +159,13 @@ export async function PATCH(req: NextRequest, context: Context) {
     return NextResponse.json({ error: "Slot not found." }, { status: 404 });
   }
 
+  if (existing.offered_courses.primary_offered_course_id) {
+    return NextResponse.json(
+      { error: "Only the primary section schedule can be edited." },
+      { status: 400 }
+    );
+  }
+
   const validationError = await validateSlotUpdate({
     slotId: parsedSlotId,
     offeredCourseId: existing.offered_course_id,
@@ -212,10 +219,20 @@ export async function DELETE(_req: NextRequest, context: Context) {
 
   const existing = await prisma.offered_course_slots.findUnique({
     where: { id: parsedSlotId },
+    include: {
+      offered_courses: true,
+    },
   });
 
   if (!existing) {
     return NextResponse.json({ error: "Slot not found." }, { status: 404 });
+  }
+
+  if (existing.offered_courses.primary_offered_course_id) {
+    return NextResponse.json(
+      { error: "Only the primary section schedule can be edited." },
+      { status: 400 }
+    );
   }
 
   await prisma.offered_course_slots.delete({

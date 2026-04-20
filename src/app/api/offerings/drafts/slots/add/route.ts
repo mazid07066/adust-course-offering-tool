@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { getSectionGroupBatchIds, getSectionGroupCourseIds } from "@/lib/offering-section-group";
+import { canModifySlots } from "@/lib/offering-status";
 
 const ALLOWED_DAYS = ["THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY", "MONDAY"];
 const ALLOWED_DURATIONS_MINUTES = [60, 90, 120, 180];
@@ -100,16 +102,8 @@ export async function POST(req: NextRequest) {
       },
       select: {
         id: true,
-        offered_course_batches: {
-          select: {
-            batch_id: true,
-            batches: {
-              select: {
-                batch_code: true,
-              },
-            },
-          },
-        },
+        offering_id: true,
+        primary_offered_course_id: true,
         offered_course_slots: {
           select: {
             id: true,
@@ -122,6 +116,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { ok: false, error: "Offered course not found." },
         { status: 404 }
+      );
+    }
+
+    const offeringStatus = await prisma.offerings.findFirst({
+      where: {
+        id: offeredCourse.offering_id,
+      },
+      select: {
+        status: true,
+      },
+    });
+
+    if (!offeringStatus || !canModifySlots(offeringStatus.status)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Slot modification not allowed in current offering stage.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (offeredCourse.primary_offered_course_id) {
+      return NextResponse.json(
+        { ok: false, error: "Slots can only be managed from the primary section row." },
+        { status: 400 }
       );
     }
 
@@ -153,8 +173,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const batchIds = offeredCourse.offered_course_batches.map((x) => x.batch_id);
-    const batchCodes = offeredCourse.offered_course_batches.map((x) => x.batches.batch_code);
+    const groupCourseIds = await prisma.$transaction((tx) =>
+      getSectionGroupCourseIds(tx, offeredCourseId)
+    );
+
+    const batchIds = await prisma.$transaction((tx) =>
+      getSectionGroupBatchIds(tx, offeredCourseId)
+    );
+
+    const batchRows = await prisma.batches.findMany({
+      where: {
+        id: {
+          in: batchIds,
+        },
+      },
+      select: {
+        batch_code: true,
+      },
+    });
+
+    const batchCodes = batchRows.map((x) => x.batch_code);
 
     const overlappingBatchSlot = await prisma.offered_course_slots.findFirst({
       where: {
@@ -166,7 +204,7 @@ export async function POST(req: NextRequest) {
           gt: startTime,
         },
         offered_course_id: {
-          not: offeredCourseId,
+          notIn: groupCourseIds,
         },
         offered_courses: {
           offerings: {
@@ -209,7 +247,7 @@ export async function POST(req: NextRequest) {
           gt: startTime,
         },
         offered_course_id: {
-          not: offeredCourseId,
+          notIn: groupCourseIds,
         },
         offered_courses: {
           offerings: {

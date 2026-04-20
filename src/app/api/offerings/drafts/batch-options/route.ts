@@ -8,10 +8,6 @@ type ProgramCandidate = {
   id: number;
   short_name: string;
   name: string;
-  source:
-    | "EXACT_PROGRAM_CODE"
-    | "CANONICAL_PROGRAM"
-    | "CURRICULUM_RELATED_PROGRAM";
 };
 
 function uniqueById<T extends { id: number }>(rows: T[]): T[] {
@@ -44,11 +40,11 @@ async function getProgramCandidates(programCode: string): Promise<ProgramCandida
       program_code: normalizedProgramCode,
     },
     select: {
-      curriculum_key: true,
       department_code: true,
       department_name: true,
       program_title: true,
       study_shift: true,
+      curriculum_key: true,
     },
   });
 
@@ -66,10 +62,7 @@ async function getProgramCandidates(programCode: string): Promise<ProgramCandida
   });
 
   if (exactProgram) {
-    candidates.push({
-      ...exactProgram,
-      source: "EXACT_PROGRAM_CODE",
-    });
+    candidates.push(exactProgram);
   }
 
   const canonicalProgram = await resolveCanonicalProgram({
@@ -85,7 +78,6 @@ async function getProgramCandidates(programCode: string): Promise<ProgramCandida
       id: canonicalProgram.id,
       short_name: canonicalProgram.short_name,
       name: canonicalProgram.name,
-      source: "CANONICAL_PROGRAM",
     });
   }
 
@@ -122,10 +114,7 @@ async function getProgramCandidates(programCode: string): Promise<ProgramCandida
 
       for (const item of relatedPrograms) {
         if (!candidates.some((row) => row.id === item.id)) {
-          candidates.push({
-            ...item,
-            source: "CURRICULUM_RELATED_PROGRAM",
-          });
+          candidates.push(item);
         }
       }
     }
@@ -139,112 +128,49 @@ export async function GET(req: NextRequest) {
     await requireCoordinatorOrAdminApi();
 
     const { searchParams } = new URL(req.url);
-    const programCode = String(searchParams.get("programCode") || "").trim();
-    const termName = String(searchParams.get("termName") || "").trim().toUpperCase();
-    const batchCode = String(searchParams.get("batchCode") || "").trim();
+    const programCode = String(searchParams.get("programCode") || "").trim().toUpperCase();
 
-    if (!programCode || !termName || !batchCode) {
+    if (!programCode) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "programCode, termName, and batchCode are required.",
-        },
+        { ok: false, error: "programCode is required." },
         { status: 400 }
       );
     }
 
     const candidates = await getProgramCandidates(programCode);
-    const candidateProgramIds = candidates.map((item) => item.id);
 
-    const drafts = await prisma.offerings.findMany({
+    const rows = await prisma.batches.findMany({
       where: {
-        status: {
-          in: ["DRAFT", "BUFFER_READY"],
-        },
-        academic_terms: {
-          name: termName,
-        },
         program_id: {
-          in: candidateProgramIds,
+          in: candidates.map((item) => item.id),
         },
-      },
-      orderBy: {
-        id: "desc",
       },
       select: {
         id: true,
-        status: true,
+        batch_code: true,
         program_id: true,
-        offered_courses: {
+        programs: {
           select: {
-            id: true,
-            master_course_id: true,
-            master_courses: {
-              select: {
-                credit: true,
-                program_id: true,
-              },
-            },
-            offered_course_batches: {
-              select: {
-                batches: {
-                  select: {
-                    batch_code: true,
-                  },
-                },
-              },
-            },
+            short_name: true,
+            name: true,
           },
         },
       },
+      orderBy: [{ batch_code: "asc" }],
     });
-
-    const matchingDraft =
-      drafts.find((draft) =>
-        draft.offered_courses.some((course) =>
-          course.offered_course_batches.some(
-            (b) => String(b.batches.batch_code || "").trim() === batchCode
-          )
-        )
-      ) ||
-      drafts[0] ||
-      null;
-
-    if (!matchingDraft) {
-      return NextResponse.json({
-        ok: true,
-        draftId: null,
-        hiddenCourseIds: [],
-        totalDraftCredits: 0,
-        draftStatus: null,
-      });
-    }
-
-    const offeredForBatchAndProgram = matchingDraft.offered_courses.filter((course) => {
-      const sameBatch = course.offered_course_batches.some(
-        (b) => String(b.batches.batch_code || "").trim() === batchCode
-      );
-      const sameProgramFamily = candidateProgramIds.includes(course.master_courses.program_id);
-
-      return sameBatch && sameProgramFamily;
-    });
-
-    const hiddenCourseIds = [...new Set(offeredForBatchAndProgram.map((c) => c.master_course_id))];
-
-    const totalDraftCredits = offeredForBatchAndProgram.reduce((sum, row) => {
-      return sum + Number(row.master_courses?.credit || 0);
-    }, 0);
 
     return NextResponse.json({
       ok: true,
-      draftId: matchingDraft.id,
-      hiddenCourseIds,
-      totalDraftCredits,
-      draftStatus: matchingDraft.status,
+      batches: rows.map((row) => ({
+        id: row.id,
+        batch_code: row.batch_code,
+        program_code: row.programs.short_name,
+        program_name: row.programs.name,
+      })),
     });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to load draft context.";
+      error instanceof Error ? error.message : "Failed to load batch options.";
 
     return NextResponse.json(
       {

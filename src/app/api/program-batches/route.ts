@@ -139,112 +139,56 @@ export async function GET(req: NextRequest) {
     await requireCoordinatorOrAdminApi();
 
     const { searchParams } = new URL(req.url);
-    const programCode = String(searchParams.get("programCode") || "").trim();
-    const termName = String(searchParams.get("termName") || "").trim().toUpperCase();
-    const batchCode = String(searchParams.get("batchCode") || "").trim();
+    const programCode = String(searchParams.get("programCode") || "").trim().toUpperCase();
 
-    if (!programCode || !termName || !batchCode) {
+    if (!programCode) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "programCode, termName, and batchCode are required.",
-        },
+        { ok: false, error: "programCode is required." },
         { status: 400 }
       );
     }
 
     const candidates = await getProgramCandidates(programCode);
-    const candidateProgramIds = candidates.map((item) => item.id);
 
-    const drafts = await prisma.offerings.findMany({
+    if (candidates.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: "No program candidate found." },
+        { status: 404 }
+      );
+    }
+
+    const batches = await prisma.batches.findMany({
       where: {
-        status: {
-          in: ["DRAFT", "BUFFER_READY"],
-        },
-        academic_terms: {
-          name: termName,
-        },
         program_id: {
-          in: candidateProgramIds,
+          in: candidates.map((item) => item.id),
         },
       },
-      orderBy: {
-        id: "desc",
-      },
+      orderBy: [{ batch_code: "asc" }],
       select: {
         id: true,
-        status: true,
+        batch_code: true,
         program_id: true,
-        offered_courses: {
+        programs: {
           select: {
-            id: true,
-            master_course_id: true,
-            master_courses: {
-              select: {
-                credit: true,
-                program_id: true,
-              },
-            },
-            offered_course_batches: {
-              select: {
-                batches: {
-                  select: {
-                    batch_code: true,
-                  },
-                },
-              },
-            },
+            short_name: true,
+            name: true,
           },
         },
       },
     });
 
-    const matchingDraft =
-      drafts.find((draft) =>
-        draft.offered_courses.some((course) =>
-          course.offered_course_batches.some(
-            (b) => String(b.batches.batch_code || "").trim() === batchCode
-          )
-        )
-      ) ||
-      drafts[0] ||
-      null;
-
-    if (!matchingDraft) {
-      return NextResponse.json({
-        ok: true,
-        draftId: null,
-        hiddenCourseIds: [],
-        totalDraftCredits: 0,
-        draftStatus: null,
-      });
-    }
-
-    const offeredForBatchAndProgram = matchingDraft.offered_courses.filter((course) => {
-      const sameBatch = course.offered_course_batches.some(
-        (b) => String(b.batches.batch_code || "").trim() === batchCode
-      );
-      const sameProgramFamily = candidateProgramIds.includes(course.master_courses.program_id);
-
-      return sameBatch && sameProgramFamily;
-    });
-
-    const hiddenCourseIds = [...new Set(offeredForBatchAndProgram.map((c) => c.master_course_id))];
-
-    const totalDraftCredits = offeredForBatchAndProgram.reduce((sum, row) => {
-      return sum + Number(row.master_courses?.credit || 0);
-    }, 0);
-
     return NextResponse.json({
       ok: true,
-      draftId: matchingDraft.id,
-      hiddenCourseIds,
-      totalDraftCredits,
-      draftStatus: matchingDraft.status,
+      batchOptions: batches.map((b) => ({
+        id: b.id,
+        batchCode: b.batch_code,
+        programCode: b.programs.short_name,
+        programName: b.programs.name,
+      })),
     });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to load draft context.";
+      error instanceof Error ? error.message : "Failed to load batch options.";
 
     return NextResponse.json(
       {
