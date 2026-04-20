@@ -242,6 +242,9 @@ model users {
   student_report_logs student_report_logs[]
   teachers            teachers?             @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  // ✅ ADD THIS LINE ONLY
+  faculty_login_sessions FacultyLoginSession[]
+
   @@index([id], map: "ix_users_id")
 }
 
@@ -266,4 +269,24 @@ model academic_catalog_entries {
   @@index([study_shift])
   @@index([curriculum_version])
   @@index([curriculum_key])
+}
+model SystemSetting {
+  id               Int      @id @default(autoincrement())
+  settingKey       String   @unique
+  settingValue     String
+  updatedByUserId  Int?
+  updatedAt        DateTime @updatedAt
+}
+
+model FacultyLoginSession {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  sessionToken  String   @unique
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+
+  user          users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
