@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 
 export async function GET() {
-  await requireCoordinatorOrAdminApi();
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
 
   try {
     const departments = await prisma.departments.findMany({
@@ -20,7 +21,7 @@ export async function GET() {
     return NextResponse.json(
       {
         error:
-          error instanceof Error ? error.message : "Failed to load departments",
+          error instanceof Error ? error.message : "Failed to load departments.",
       },
       { status: 500 }
     );

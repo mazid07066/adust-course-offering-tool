@@ -21,7 +21,25 @@ export async function requireCoordinatorOrAdminApi() {
 export async function requireSuperAdminApi() {
   const user = await getSessionUser();
 
-  if (!user || user.role !== "SUPER_ADMIN") {
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (user.role !== "SUPER_ADMIN") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  return user;
+}
+
+export async function requireFacultyApi() {
+  const user = await getSessionUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (user.role !== "FACULTY") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -47,7 +65,25 @@ export async function requireCoordinatorOrAdmin() {
 export async function requireSuperAdmin() {
   const user = await getSessionUser();
 
-  if (!user || user.role !== "SUPER_ADMIN") {
+  if (!user) {
+    redirect("/auth/login");
+  }
+
+  if (user.role !== "SUPER_ADMIN") {
+    redirect("/auth/login");
+  }
+
+  return user;
+}
+
+export async function requireFaculty() {
+  const user = await getSessionUser();
+
+  if (!user) {
+    redirect("/auth/login");
+  }
+
+  if (user.role !== "FACULTY") {
     redirect("/auth/login");
   }
 

@@ -16,6 +16,9 @@ export async function GET() {
     });
 
     const faculties = await prisma.teachers.findMany({
+      where: {
+        is_active: true,
+      },
       orderBy: [{ teacher_code: "asc" }],
     });
 
@@ -56,9 +59,9 @@ export async function POST(request: NextRequest) {
       is_active?: boolean;
     } = body;
 
-    const cleanUsername = username?.trim();
-    const cleanFullName = full_name?.trim();
-    const cleanRole = role?.trim().toUpperCase();
+    const cleanUsername = String(username || "").trim();
+    const cleanFullName = String(full_name || "").trim();
+    const cleanRole = String(role || "").trim().toUpperCase();
 
     if (!cleanUsername || !cleanFullName || !password || !cleanRole) {
       return NextResponse.json(
@@ -68,10 +71,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!["SUPER_ADMIN", "COORDINATOR", "FACULTY"].includes(cleanRole)) {
-      return NextResponse.json(
-        { error: "Invalid role." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid role." }, { status: 400 });
     }
 
     if (password.length < 6) {
@@ -101,9 +101,7 @@ export async function POST(request: NextRequest) {
       }
 
       const existingLinkedUser = await prisma.users.findFirst({
-        where: {
-          teacher_id,
-        },
+        where: { teacher_id },
       });
 
       if (existingLinkedUser) {
