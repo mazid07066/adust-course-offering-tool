@@ -65,6 +65,19 @@ type ApiResponse = {
   selections?: SelectionRow[];
 };
 
+function statusBadgeClasses(status: string) {
+  if (status === "OPEN") {
+    return "bg-green-100 text-green-700";
+  }
+  if (status === "CLOSED") {
+    return "bg-red-100 text-red-700";
+  }
+  if (status === "FINAL_LOCKED") {
+    return "bg-purple-100 text-purple-700";
+  }
+  return "bg-slate-100 text-slate-700";
+}
+
 export default function FacultyCourseChoicePageClient() {
   const { terms, termName, setTermName, loadingTerms, termError } = useAcademicTerms();
 
@@ -327,9 +340,16 @@ export default function FacultyCourseChoicePageClient() {
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Choice Control</h2>
-            <div className="mt-4 space-y-2 text-sm text-slate-700">
+            <div className="mt-4 space-y-3 text-sm text-slate-700">
               <div>
-                <span className="font-medium">Window Status:</span> {windowStatus}
+                <span className="font-medium">Window Status:</span>{" "}
+                <span
+                  className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses(
+                    windowStatus
+                  )}`}
+                >
+                  {windowStatus}
+                </span>
               </div>
               <div>
                 <span className="font-medium">Session Remaining:</span>{" "}
@@ -367,6 +387,16 @@ export default function FacultyCourseChoicePageClient() {
             </div>
           </div>
         </div>
+
+        {(windowStatus === "CLOSED" || windowStatus === "FINAL_LOCKED" || hasFinalized) && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {hasFinalized
+              ? "Your final choices have already been submitted. Editing is locked unless coordinator/admin reopens them."
+              : windowStatus === "FINAL_LOCKED"
+              ? "Faculty choice is final locked by admin/coordinator. You can view only."
+              : "Faculty choice window is currently closed. You can view only."}
+          </div>
+        )}
 
         {(error || termError) && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -463,7 +493,7 @@ export default function FacultyCourseChoicePageClient() {
                           type="button"
                           onClick={() => addCourse(course.id)}
                           disabled={!canEdit || hasFinalized || alreadySelected}
-                          className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
+                          className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {alreadySelected ? "Added" : "Add to Preference"}
                         </button>
@@ -492,7 +522,7 @@ export default function FacultyCourseChoicePageClient() {
                   type="button"
                   onClick={saveBuffer}
                   disabled={!canEdit || hasFinalized || saving || !termName}
-                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {saving ? "Saving..." : "Save Draft Buffer"}
                 </button>
@@ -507,7 +537,7 @@ export default function FacultyCourseChoicePageClient() {
                     !termName ||
                     selectedCourseIds.length === 0
                   }
-                  className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-60"
+                  className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {finalizing ? "Submitting..." : "Final Submit"}
                 </button>
@@ -545,7 +575,7 @@ export default function FacultyCourseChoicePageClient() {
                         type="button"
                         onClick={() => moveUp(index)}
                         disabled={!canEdit || hasFinalized || index === 0}
-                        className="rounded-lg border px-3 py-2 text-sm text-slate-700 hover:bg-white disabled:opacity-60"
+                        className="rounded-lg border px-3 py-2 text-sm text-slate-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Move Up
                       </button>
@@ -558,7 +588,7 @@ export default function FacultyCourseChoicePageClient() {
                           hasFinalized ||
                           index === selectedCourses.length - 1
                         }
-                        className="rounded-lg border px-3 py-2 text-sm text-slate-700 hover:bg-white disabled:opacity-60"
+                        className="rounded-lg border px-3 py-2 text-sm text-slate-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Move Down
                       </button>
@@ -567,7 +597,7 @@ export default function FacultyCourseChoicePageClient() {
                         type="button"
                         onClick={() => removeCourse(course.id)}
                         disabled={!canEdit || hasFinalized}
-                        className="rounded-lg bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700 disabled:opacity-60"
+                        className="rounded-lg bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Remove
                       </button>
