@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 
 const ALLOWED_OFFERING_STATUSES = [
+  "DRAFT",
   "BUFFER_READY",
   "FACULTY_CHOICE_BUFFER",
   "FACULTY_CHOICE_FINALIZED",

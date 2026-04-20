@@ -2,11 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 
+const ALLOWED_SOURCE_STATUSES = [
+  "DRAFT",
+  "BUFFER_READY",
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+];
+
 export async function POST(
   _request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  await requireCoordinatorOrAdminApi();
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
 
   try {
     const { id } = await context.params;
@@ -26,8 +34,13 @@ export async function POST(
       include: {
         offered_courses: {
           include: {
+            master_courses: true,
             offered_course_batches: true,
-            offered_course_teachers: true,
+            offered_course_teachers: {
+              include: {
+                teachers: true,
+              },
+            },
             offered_course_slots: true,
           },
         },
@@ -41,9 +54,11 @@ export async function POST(
       );
     }
 
-    if (offering.status !== "DRAFT") {
+    if (!ALLOWED_SOURCE_STATUSES.includes(offering.status)) {
       return NextResponse.json(
-        { error: "Only DRAFT offerings can be published." },
+        {
+          error: `Only ${ALLOWED_SOURCE_STATUSES.join(", ")} offerings can be published.`,
+        },
         { status: 400 }
       );
     }
@@ -55,29 +70,58 @@ export async function POST(
       );
     }
 
-    for (const course of offering.offered_courses) {
-      if (course.offered_course_batches.length === 0) {
-        return NextResponse.json(
-          { error: `Course ID ${course.id} has no assigned batch.` },
-          { status: 400 }
-        );
-      }
+    const blockers: string[] = [];
 
+    for (const course of offering.offered_courses) {
       const isPrimary = !course.primary_offered_course_id;
 
-      if (isPrimary && course.offered_course_teachers.length === 0) {
-        return NextResponse.json(
-          { error: `Primary course ID ${course.id} has no assigned faculty.` },
-          { status: 400 }
+      if (course.offered_course_batches.length === 0) {
+        blockers.push(
+          `${course.master_courses.course_code} Sec-${course.section}: no batch assigned.`
         );
       }
 
-      if (isPrimary && course.offered_course_slots.length === 0) {
-        return NextResponse.json(
-          { error: `Primary course ID ${course.id} has no assigned meeting slot.` },
-          { status: 400 }
+      if (!isPrimary) {
+        continue;
+      }
+
+      if (course.offered_course_slots.length === 0) {
+        blockers.push(
+          `${course.master_courses.course_code} Sec-${course.section}: no meeting slot assigned.`
         );
       }
+
+      if (course.offered_course_teachers.length === 0) {
+        blockers.push(
+          `${course.master_courses.course_code} Sec-${course.section}: no faculty assigned.`
+        );
+      }
+
+      if (course.offered_course_teachers.length > 1) {
+        blockers.push(
+          `${course.master_courses.course_code} Sec-${course.section}: multiple faculty assignments found.`
+        );
+      }
+
+      const inactiveAssignedTeacher = course.offered_course_teachers.find(
+        (row) => !row.teachers.is_active
+      );
+
+      if (inactiveAssignedTeacher) {
+        blockers.push(
+          `${course.master_courses.course_code} Sec-${course.section}: assigned faculty is inactive.`
+        );
+      }
+    }
+
+    if (blockers.length > 0) {
+      return NextResponse.json(
+        {
+          error: "Publishing blocked due to assignment/schedule incompleteness.",
+          blockers,
+        },
+        { status: 400 }
+      );
     }
 
     await prisma.offerings.update({
@@ -91,7 +135,7 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      message: "Draft offering published successfully.",
+      message: "Offering published successfully with assignment completeness checks passed.",
     });
   } catch (error) {
     console.error(error);
@@ -101,7 +145,7 @@ export async function POST(
         error:
           error instanceof Error
             ? error.message
-            : "Failed to publish draft offering.",
+            : "Failed to publish offering.",
       },
       { status: 500 }
     );

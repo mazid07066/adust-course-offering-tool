@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import {
+  getFacultyLoadLevel,
+  getFacultyLoadMessage,
+} from "@/lib/faculty-assignment-policy";
 
 const ALLOWED_OFFERING_STATUSES = [
+  "DRAFT",
   "BUFFER_READY",
   "FACULTY_CHOICE_BUFFER",
   "FACULTY_CHOICE_FINALIZED",
@@ -97,9 +102,34 @@ export async function POST(req: NextRequest) {
       });
     });
 
+    const teacherLoadRows = await prisma.offered_course_teachers.findMany({
+      where: {
+        teacher_id: teacherId,
+        offered_courses: {
+          offerings: {
+            academic_term_id: term.id,
+          },
+        },
+      },
+      select: {
+        assigned_credit: true,
+      },
+    });
+
+    const totalAssignedCredits = teacherLoadRows.reduce(
+      (sum, row) => sum + Number(row.assigned_credit || 0),
+      0
+    );
+
+    const loadLevel = getFacultyLoadLevel(totalAssignedCredits);
+    const loadMessage = getFacultyLoadMessage(totalAssignedCredits);
+
     return NextResponse.json({
       success: true,
       message: `Assigned ${teacher.teacher_code} - ${teacher.full_name} to ${course.master_courses.course_code} section ${course.section}.`,
+      loadLevel,
+      totalAssignedCredits,
+      loadMessage,
     });
   } catch (error) {
     console.error(error);

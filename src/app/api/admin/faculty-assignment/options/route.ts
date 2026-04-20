@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import {
+  getFacultyLoadLevel,
+  getFacultyLoadMessage,
+} from "@/lib/faculty-assignment-policy";
 
 const ALLOWED_OFFERING_STATUSES = [
+  "DRAFT",
   "BUFFER_READY",
   "FACULTY_CHOICE_BUFFER",
   "FACULTY_CHOICE_FINALIZED",
@@ -181,7 +186,21 @@ export async function GET(req: NextRequest) {
       item.totalAssignedSections += 1;
     }
 
+    const teacherLoadSummary = Array.from(teacherLoadMap.values())
+      .sort((a, b) => a.teacherCode.localeCompare(b.teacherCode))
+      .map((item) => ({
+        ...item,
+        loadLevel: getFacultyLoadLevel(item.totalAssignedCredits),
+        loadMessage: getFacultyLoadMessage(item.totalAssignedCredits),
+      }));
+
+    let totalSections = 0;
+    let readySections = 0;
+    let blockedSections = 0;
+
     const payload = courses.map((course) => {
+      totalSections += 1;
+
       const selectedRows = selectionMap.get(course.id) || [];
 
       const sortedSelections = [...selectedRows].sort((a, b) => {
@@ -192,6 +211,32 @@ export async function GET(req: NextRequest) {
         if (a.status !== "FINAL" && b.status === "FINAL") return 1;
         return 0;
       });
+
+      const publishWarnings: string[] = [];
+
+      if (course.offered_course_batches.length === 0) {
+        publishWarnings.push("No batch attached.");
+      }
+
+      if (course.offered_course_slots.length === 0) {
+        publishWarnings.push("No meeting slot assigned.");
+      }
+
+      if (course.offered_course_teachers.length === 0) {
+        publishWarnings.push("No faculty assigned.");
+      }
+
+      if (course.offered_course_teachers.length > 1) {
+        publishWarnings.push("Multiple faculty assignments found. Only one should remain.");
+      }
+
+      const isReadyForPublish = publishWarnings.length === 0;
+
+      if (isReadyForPublish) {
+        readySections += 1;
+      } else {
+        blockedSections += 1;
+      }
 
       return {
         offeredCourseId: course.id,
@@ -237,21 +282,36 @@ export async function GET(req: NextRequest) {
           confirmedAt: row.confirmed_at ? row.confirmed_at.toISOString() : null,
           selectedAt: row.selected_at ? row.selected_at.toISOString() : null,
         })),
+        isReadyForPublish,
+        publishWarnings,
+        suggestedFaculty:
+          sortedSelections.length > 0
+            ? {
+                teacherId: sortedSelections[0].teacher_id,
+                teacherCode: sortedSelections[0].teachers.teacher_code,
+                teacherName: sortedSelections[0].teachers.full_name,
+                status: sortedSelections[0].status,
+                priorityOrder: sortedSelections[0].priority_order,
+              }
+            : null,
       };
     });
 
     return NextResponse.json({
       success: true,
       termName: term.name,
+      readinessSummary: {
+        totalSections,
+        readySections,
+        blockedSections,
+      },
       faculties: faculties.map((faculty) => ({
         id: faculty.id,
         teacherCode: faculty.teacher_code,
         fullName: faculty.full_name,
         designation: faculty.designation,
       })),
-      teacherLoadSummary: Array.from(teacherLoadMap.values()).sort((a, b) =>
-        a.teacherCode.localeCompare(b.teacherCode)
-      ),
+      teacherLoadSummary,
       courses: payload,
     });
   } catch (error) {

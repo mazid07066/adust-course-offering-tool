@@ -59,6 +59,15 @@ type CourseRow = {
   }>;
   assignedTeachers: AssignedTeacher[];
   selectedByFaculties: SelectedByFaculty[];
+  isReadyForPublish: boolean;
+  publishWarnings: string[];
+  suggestedFaculty: {
+    teacherId: number;
+    teacherCode: string;
+    teacherName: string;
+    status: string;
+    priorityOrder: number | null;
+  } | null;
 };
 
 type TeacherLoadSummary = {
@@ -68,6 +77,14 @@ type TeacherLoadSummary = {
   designation: string | null;
   totalAssignedCredits: number;
   totalAssignedSections: number;
+  loadLevel: string;
+  loadMessage: string;
+};
+
+type ReadinessSummary = {
+  totalSections: number;
+  readySections: number;
+  blockedSections: number;
 };
 
 type ApiResponse = {
@@ -77,8 +94,20 @@ type ApiResponse = {
   termName?: string;
   faculties?: FacultyOption[];
   teacherLoadSummary?: TeacherLoadSummary[];
+  readinessSummary?: ReadinessSummary;
   courses?: CourseRow[];
+  loadLevel?: string;
+  totalAssignedCredits?: number;
+  loadMessage?: string;
 };
+
+function badgeClass(level: string) {
+  if (level === "OVERLOAD") return "bg-red-100 text-red-700";
+  if (level === "WARNING") return "bg-amber-100 text-amber-700";
+  if (level === "READY") return "bg-green-100 text-green-700";
+  if (level === "BLOCKED") return "bg-red-100 text-red-700";
+  return "bg-slate-100 text-slate-700";
+}
 
 export default function FacultyAssignmentPageClient() {
   const { terms, termName, setTermName, loadingTerms, termError } = useAcademicTerms();
@@ -86,13 +115,18 @@ export default function FacultyAssignmentPageClient() {
   const [loading, setLoading] = useState(false);
   const [assigningKey, setAssigningKey] = useState("");
   const [unassigningKey, setUnassigningKey] = useState("");
+  const [bulkAssigning, setBulkAssigning] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   const [faculties, setFaculties] = useState<FacultyOption[]>([]);
   const [teacherLoadSummary, setTeacherLoadSummary] = useState<TeacherLoadSummary[]>([]);
   const [courses, setCourses] = useState<CourseRow[]>([]);
-  const [selectedFacultyByCourse, setSelectedFacultyByCourse] = useState<Record<number, string>>({});
+  const [readinessSummary, setReadinessSummary] = useState<ReadinessSummary | null>(null);
+  const [selectedFacultyByCourse, setSelectedFacultyByCourse] = useState<Record<number, string>>(
+    {}
+  );
+  const [bulkMode, setBulkMode] = useState("FINAL_ONLY");
 
   async function loadBoard() {
     if (!termName) return;
@@ -117,11 +151,14 @@ export default function FacultyAssignmentPageClient() {
       setFaculties(json.faculties || []);
       setTeacherLoadSummary(json.teacherLoadSummary || []);
       setCourses(json.courses || []);
+      setReadinessSummary(json.readinessSummary || null);
 
       const defaults: Record<number, string> = {};
       for (const course of json.courses || []) {
         if (course.assignedTeachers.length > 0) {
           defaults[course.offeredCourseId] = String(course.assignedTeachers[0].teacherId);
+        } else if (course.suggestedFaculty) {
+          defaults[course.offeredCourseId] = String(course.suggestedFaculty.teacherId);
         } else if (course.selectedByFaculties.length > 0) {
           defaults[course.offeredCourseId] = String(course.selectedByFaculties[0].teacherId);
         } else {
@@ -136,6 +173,7 @@ export default function FacultyAssignmentPageClient() {
       setFaculties([]);
       setTeacherLoadSummary([]);
       setCourses([]);
+      setReadinessSummary(null);
       setSelectedFacultyByCourse({});
     } finally {
       setLoading(false);
@@ -201,7 +239,12 @@ export default function FacultyAssignmentPageClient() {
         throw new Error(json.error || "Failed to assign faculty.");
       }
 
-      setMessage(json.message || "Faculty assigned successfully.");
+      const extra =
+        json.loadMessage && json.loadLevel && json.loadLevel !== "NORMAL"
+          ? ` ${json.loadMessage}`
+          : "";
+
+      setMessage((json.message || "Faculty assigned successfully.") + extra);
       await loadBoard();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to assign faculty.");
@@ -252,6 +295,48 @@ export default function FacultyAssignmentPageClient() {
     }
   }
 
+  async function runBulkAssign() {
+    if (!termName) {
+      setError("Please select a term first.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Run bulk assignment for ${termName} using mode ${bulkMode}?`
+    );
+    if (!ok) return;
+
+    setBulkAssigning(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/faculty-assignment/bulk-assign", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          termName,
+          mode: bulkMode,
+        }),
+      });
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to execute bulk assignment.");
+      }
+
+      setMessage(json.message || "Bulk assignment completed successfully.");
+      await loadBoard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to execute bulk assignment.");
+    } finally {
+      setBulkAssigning(false);
+    }
+  }
+
   return (
     <AdminLayout title="Faculty Assignment">
       <div className="space-y-6">
@@ -278,14 +363,34 @@ export default function FacultyAssignmentPageClient() {
               </select>
             </div>
 
-            <button
-              type="button"
-              onClick={loadBoard}
-              disabled={!termName || loading}
-              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-            >
-              {loading ? "Loading..." : "Refresh Assignment Board"}
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <select
+                value={bulkMode}
+                onChange={(e) => setBulkMode(e.target.value)}
+                className="rounded-xl border px-4 py-3"
+              >
+                <option value="FINAL_ONLY">Bulk Assign: FINAL_ONLY</option>
+                <option value="FINAL_THEN_BUFFER">Bulk Assign: FINAL_THEN_BUFFER</option>
+              </select>
+
+              <button
+                type="button"
+                onClick={runBulkAssign}
+                disabled={!termName || bulkAssigning || loading}
+                className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {bulkAssigning ? "Running..." : "Run Bulk Assignment"}
+              </button>
+
+              <button
+                type="button"
+                onClick={loadBoard}
+                disabled={!termName || loading}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+              >
+                {loading ? "Loading..." : "Refresh Assignment Board"}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -298,6 +403,26 @@ export default function FacultyAssignmentPageClient() {
         {message && (
           <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
             {message}
+          </div>
+        )}
+
+        {readinessSummary && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">
+              Publish Readiness Summary
+            </h2>
+
+            <div className="mt-4 flex flex-wrap gap-3 text-sm">
+              <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700">
+                Total Sections: {readinessSummary.totalSections}
+              </span>
+              <span className="rounded-full bg-green-100 px-3 py-1 font-medium text-green-700">
+                Ready: {readinessSummary.readySections}
+              </span>
+              <span className="rounded-full bg-red-100 px-3 py-1 font-medium text-red-700">
+                Blocked: {readinessSummary.blockedSections}
+              </span>
+            </div>
           </div>
         )}
 
@@ -314,6 +439,7 @@ export default function FacultyAssignmentPageClient() {
                   <th className="border-b px-3 py-3 text-left">Designation</th>
                   <th className="border-b px-3 py-3 text-left">Assigned Sections</th>
                   <th className="border-b px-3 py-3 text-left">Assigned Credits</th>
+                  <th className="border-b px-3 py-3 text-left">Load Level</th>
                 </tr>
               </thead>
               <tbody>
@@ -325,11 +451,21 @@ export default function FacultyAssignmentPageClient() {
                     <td className="border-b px-3 py-2">{teacher.designation || "-"}</td>
                     <td className="border-b px-3 py-2">{teacher.totalAssignedSections}</td>
                     <td className="border-b px-3 py-2">{teacher.totalAssignedCredits}</td>
+                    <td className="border-b px-3 py-2">
+                      <span
+                        className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${badgeClass(
+                          teacher.loadLevel
+                        )}`}
+                        title={teacher.loadMessage}
+                      >
+                        {teacher.loadLevel}
+                      </span>
+                    </td>
                   </tr>
                 ))}
                 {teacherLoadSummary.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
+                    <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
                       No faculty load summary found for this term.
                     </td>
                   </tr>
@@ -350,6 +486,38 @@ export default function FacultyAssignmentPageClient() {
                 key={course.offeredCourseId}
                 className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
               >
+                <div className="mb-4 flex flex-wrap gap-2 text-sm">
+                  <span
+                    className={`inline-flex rounded-full px-3 py-1 font-medium ${badgeClass(
+                      course.isReadyForPublish ? "READY" : "BLOCKED"
+                    )}`}
+                  >
+                    {course.isReadyForPublish ? "READY TO PUBLISH" : "PUBLISH BLOCKED"}
+                  </span>
+
+                  {course.suggestedFaculty && (
+                    <span className="rounded-full bg-blue-100 px-3 py-1 font-medium text-blue-700">
+                      Suggested: {course.suggestedFaculty.teacherCode} (
+                      {course.suggestedFaculty.status}
+                      {course.suggestedFaculty.priorityOrder
+                        ? `, Priority ${course.suggestedFaculty.priorityOrder}`
+                        : ""}
+                      )
+                    </span>
+                  )}
+                </div>
+
+                {!course.isReadyForPublish && course.publishWarnings.length > 0 && (
+                  <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    <div className="font-semibold">Publish blockers:</div>
+                    <ul className="mt-2 list-disc pl-5">
+                      {course.publishWarnings.map((warning, index) => (
+                        <li key={index}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                   <div className="space-y-2">
                     <h3 className="text-lg font-semibold text-slate-900">
