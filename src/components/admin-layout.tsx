@@ -30,6 +30,7 @@ const navItems = [
   { href: "/admin/co-offering-setup", label: "Co-offering Setup" },
   { href: "/admin/faculty-choice-control", label: "Faculty Choice Control" },
   { href: "/admin/faculty-course-choices", label: "Faculty Course Choices" },
+  { href: "/admin/faculty-assignment", label: "Faculty Assignment" },
   { href: "/admin/offering-reports", label: "Confirmed Offering Reports" },
   { href: "/admin/faculty-load", label: "Faculty Load Report" },
   { href: "/admin/schedule", label: "Schedule" },
