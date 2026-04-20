@@ -10,9 +10,7 @@ export async function GET() {
       include: {
         departments: true,
       },
-      orderBy: [
-        { teacher_code: "asc" },
-      ],
+      orderBy: [{ teacher_code: "asc" }],
     });
 
     return NextResponse.json({
@@ -21,12 +19,8 @@ export async function GET() {
     });
   } catch (error) {
     console.error(error);
-
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Failed to load faculties",
-      },
+      { error: "Failed to load faculties" },
       { status: 500 }
     );
   }
@@ -44,17 +38,12 @@ export async function POST(request: NextRequest) {
       full_name,
       designation,
       email,
-    }: {
-      department_id: number;
-      teacher_code: string;
-      full_name: string;
-      designation?: string | null;
-      email?: string | null;
+      phone,
     } = body;
 
     if (!department_id || !teacher_code || !full_name) {
       return NextResponse.json(
-        { error: "department_id, teacher_code, and full_name are required" },
+        { error: "department_id, teacher_code, full_name required" },
         { status: 400 }
       );
     }
@@ -66,6 +55,7 @@ export async function POST(request: NextRequest) {
         full_name: full_name.trim(),
         designation: designation?.trim() || null,
         email: email?.trim() || null,
+        phone: phone?.trim() || null,
         is_active: true,
       },
     });
@@ -76,12 +66,8 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error(error);
-
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Failed to create faculty",
-      },
+      { error: "Failed to create faculty" },
       { status: 500 }
     );
   }

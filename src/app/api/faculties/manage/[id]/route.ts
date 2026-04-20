@@ -2,6 +2,50 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 
+export async function PATCH(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  await requireCoordinatorOrAdminApi();
+
+  try {
+    const { id } = await context.params;
+    const facultyId = Number(id);
+
+    const body = await request.json();
+
+    const {
+      full_name,
+      designation,
+      email,
+      phone,
+      is_active,
+    } = body;
+
+    const updated = await prisma.teachers.update({
+      where: { id: facultyId },
+      data: {
+        full_name: full_name?.trim(),
+        designation: designation?.trim() || null,
+        email: email?.trim() || null,
+        phone: phone?.trim() || null,
+        is_active: typeof is_active === "boolean" ? is_active : undefined,
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      faculty: updated,
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      { error: "Failed to update faculty" },
+      { status: 500 }
+    );
+  }
+}
+
 export async function DELETE(
   _request: NextRequest,
   context: { params: Promise<{ id: string }> }
@@ -12,26 +56,17 @@ export async function DELETE(
     const { id } = await context.params;
     const facultyId = Number(id);
 
-    if (!facultyId) {
-      return NextResponse.json({ error: "Invalid faculty id" }, { status: 400 });
-    }
-
     await prisma.teachers.delete({
       where: { id: facultyId },
     });
 
     return NextResponse.json({
       success: true,
-      message: "Faculty deleted successfully",
     });
   } catch (error) {
     console.error(error);
-
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Failed to delete faculty",
-      },
+      { error: "Delete failed" },
       { status: 500 }
     );
   }
