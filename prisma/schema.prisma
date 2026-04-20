@@ -162,8 +162,10 @@ model faculty_course_selections {
   offered_course_id Int
   teacher_id        Int
   academic_term_id  Int
+  priority_order    Int?
   status            String          @db.VarChar(30)
   selected_at       DateTime?       @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?       @default(now()) @updatedAt @db.Timestamptz(6)
   confirmed_at      DateTime?       @db.Timestamptz(6)
   academic_terms    academic_terms  @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -172,6 +174,8 @@ model faculty_course_selections {
   @@unique([offered_course_id, teacher_id], map: "uq_faculty_course_selection")
   @@index([teacher_id], map: "ix_faculty_course_selections_teacher_id")
   @@index([academic_term_id], map: "ix_faculty_course_selections_term_id")
+  @@index([status], map: "ix_faculty_course_selections_status")
+  @@index([teacher_id, academic_term_id], map: "ix_faculty_course_selections_teacher_term")
 }
 
 model programs {

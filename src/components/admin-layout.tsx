@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 type AdminLayoutProps = {
-  title?: string; // ✅ FIX: made optional
+  title?: string;
   children: ReactNode;
 };
 
@@ -17,10 +17,7 @@ const navItems = [
   { href: "/admin/courses", label: "Courses" },
   { href: "/admin/batch-curriculum-assignment", label: "Batch Curriculum Assignment" },
   { href: "/admin/faculties", label: "Faculties" },
-
-  // ✅ NEW (USER MANAGEMENT)
   { href: "/admin/users", label: "User Accounts" },
-
   { href: "/admin/rooms", label: "Rooms" },
   { href: "/admin/academic-terms", label: "Academic Terms" },
   { href: "/admin/semesters", label: "Academic Terms Management" },
@@ -30,10 +27,12 @@ const navItems = [
   { href: "/admin/offering-context", label: "Offering Context" },
   { href: "/admin/offerings", label: "Offerings" },
   { href: "/admin/offering-drafts", label: "Draft Offerings" },
+  { href: "/admin/co-offering-setup", label: "Co-offering Setup" },
+  { href: "/admin/faculty-choice-control", label: "Faculty Choice Control" },
+  { href: "/admin/faculty-course-choices", label: "Faculty Course Choices" },
   { href: "/admin/offering-reports", label: "Confirmed Offering Reports" },
   { href: "/admin/faculty-load", label: "Faculty Load Report" },
   { href: "/admin/schedule", label: "Schedule" },
-  { href: "/admin/faculty-choice-control", label: "Faculty Choice Control" },
   { href: "/admin/system-reset", label: "System Reset" },
 ];
 
@@ -42,7 +41,10 @@ function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export default function AdminLayout({ title = "Admin Panel", children }: AdminLayoutProps) {
+export default function AdminLayout({
+  title = "Admin Panel",
+  children,
+}: AdminLayoutProps) {
   const pathname = usePathname();
 
   async function handleLogout() {
@@ -129,9 +131,7 @@ export default function AdminLayout({ title = "Admin Panel", children }: AdminLa
             </div>
           </header>
 
-          <section className="px-4 py-6 sm:px-6 lg:px-8">
-            {children}
-          </section>
+          <section className="px-4 py-6 sm:px-6 lg:px-8">{children}</section>
         </main>
       </div>
     </div>
