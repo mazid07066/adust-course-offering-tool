@@ -666,7 +666,7 @@ export default function OfferingDraftsPageClient() {
     }
   }
 
-  async function publishDraft(id: number) {
+    async function publishDraft(id: number) {
     const ok = window.confirm("Publish this draft offering?");
     if (!ok) return;
 
@@ -681,7 +681,14 @@ export default function OfferingDraftsPageClient() {
       const json = await res.json();
 
       if (!res.ok) {
-        throw new Error(json.error || "Failed to publish draft offering.");
+        const blockerText =
+          Array.isArray(json.blockers) && json.blockers.length > 0
+            ? `\n\nBlockers:\n- ${json.blockers.join("\n- ")}`
+            : "";
+
+        throw new Error(
+          (json.error || "Failed to publish draft offering.") + blockerText
+        );
       }
 
       setMessage("Draft offering published successfully.");

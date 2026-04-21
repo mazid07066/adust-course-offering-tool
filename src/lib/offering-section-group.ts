@@ -11,6 +11,13 @@ export type DraftSlotView = {
   } | null;
 };
 
+export type DraftManualCoofferView = {
+  id: number;
+  target_program_code: string | null;
+  manual_course_code: string;
+  note: string | null;
+};
+
 export type DraftCourseForGrouping = {
   id: number;
   section: string;
@@ -38,6 +45,7 @@ export type DraftCourseForGrouping = {
     } | null;
   }>;
   offered_course_slots: DraftSlotView[];
+  offered_course_manual_cooffers?: DraftManualCoofferView[];
 };
 
 function formatRoomLabel(room: { room_code: string; room_type: string | null } | null) {
@@ -90,29 +98,27 @@ export function buildDraftSectionGroups(courses: DraftCourseForGrouping[]) {
             : null,
         })),
         offered_course_slots: primary.offered_course_slots.map((slot) => ({
-          id: slot.id,
-          day_of_week: slot.day_of_week,
-          start_time: slot.start_time,
-          end_time: slot.end_time,
-          room_id: slot.room_id,
-          slot_type: slot.slot_type,
-          rooms: slot.rooms
-            ? {
-                room_code: slot.rooms.room_code,
-                room_type: slot.rooms.room_type,
-              }
-            : null,
+          ...slot,
+          schedule_label: `${slot.day_of_week} ${slot.start_time}-${slot.end_time} | ${formatRoomLabel(slot.rooms)}`,
         })),
+        offered_course_manual_cooffers: (primary.offered_course_manual_cooffers || []).map(
+          (item) => ({
+            id: item.id,
+            target_program_code: item.target_program_code,
+            manual_course_code: item.manual_course_code,
+            note: item.note,
+          })
+        ),
         schedule_text:
           primary.offered_course_slots.length > 0
             ? primary.offered_course_slots
                 .map(
                   (slot) =>
-                    `${slot.day_of_week} ${slot.start_time}-${slot.end_time} (${formatRoomLabel(
+                    `${slot.day_of_week} ${slot.start_time}-${slot.end_time} | ${formatRoomLabel(
                       slot.rooms
-                    )})`
+                    )}`
                 )
-                .join(" | ")
+                .join(" || ")
             : "-",
       },
       linked_courses: linkedCourses.map((course) => ({

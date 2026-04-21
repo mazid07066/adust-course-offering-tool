@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import AdminLayout from "@/components/admin-layout";
 
 type ProgramOption = {
   id: number;
@@ -18,7 +19,9 @@ type ProgramOption = {
 };
 
 type BatchOption = {
+  id: number;
   batchCode: string;
+  admissionTerm: string | null;
 };
 
 type BatchStatusResponse = {
@@ -67,6 +70,16 @@ type BatchStatusResponse = {
   }>;
 };
 
+type ProgramBatchesApiResponse = {
+  ok?: boolean;
+  error?: string;
+  batches?: Array<{
+    id: number;
+    batchCode: string;
+    admissionTerm: string | null;
+  }>;
+};
+
 export default function BatchStatusPageClient() {
   const [programs, setPrograms] = useState<ProgramOption[]>([]);
   const [batches, setBatches] = useState<BatchOption[]>([]);
@@ -79,7 +92,9 @@ export default function BatchStatusPageClient() {
   useEffect(() => {
     async function loadPrograms() {
       try {
-        const res = await fetch("/api/academic-catalog/options", { cache: "no-store" });
+        const res = await fetch("/api/academic-catalog/options", {
+          cache: "no-store",
+        });
         const data = await res.json();
         setPrograms(data.programs || []);
       } catch {
@@ -103,8 +118,13 @@ export default function BatchStatusPageClient() {
           `/api/program-batches/options?programCode=${encodeURIComponent(programCode)}`,
           { cache: "no-store" }
         );
-        const data = await res.json();
-        setBatches((data.batches || []).map((b: string) => ({ batchCode: b })));
+        const data: ProgramBatchesApiResponse = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to load batch options.");
+        }
+
+        setBatches(data.batches || []);
         setBatchCode("");
       } catch {
         setBatches([]);
@@ -126,6 +146,7 @@ export default function BatchStatusPageClient() {
         `/api/batch-status?programCode=${encodeURIComponent(programCode)}&batchCode=${encodeURIComponent(batchCode)}`,
         { cache: "no-store" }
       );
+
       const data = await res.json();
 
       if (!res.ok) {
@@ -135,35 +156,35 @@ export default function BatchStatusPageClient() {
       setResult(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load batch status.");
+      setResult(null);
     } finally {
       setLoading(false);
     }
   }
 
-  function badgeClass(color: string) {
-    if (color === "green") return "bg-green-100 text-green-700";
-    if (color === "blue") return "bg-blue-100 text-blue-700";
-    return "bg-amber-100 text-amber-700";
-  }
-
   return (
-    <div className="space-y-6">
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-xl font-bold text-slate-900">Batch Academic Status</h2>
-        <p className="mt-2 text-sm text-slate-600">
-          Load saved batch-wise completed, ongoing, and remaining course status.
-        </p>
+    <AdminLayout title="Batch Status">
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900">
+            Batch Academic Status
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Review completed, ongoing, remaining, and full curriculum status for a selected batch.
+          </p>
+        </div>
 
-        <form onSubmit={handleLoad} className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+        <form onSubmit={handleLoad} className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:grid-cols-3">
           <div>
-            <label className="mb-1 block text-sm font-medium">Program / Curriculum</label>
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              Program / Curriculum
+            </label>
             <select
               value={programCode}
               onChange={(e) => setProgramCode(e.target.value)}
-              className="w-full rounded-2xl border px-3 py-2"
-              required
+              className="w-full rounded-xl border px-4 py-3"
             >
-              <option value="">Select program</option>
+              <option value="">Select Academic Identity</option>
               {programs.map((program) => (
                 <option key={program.programCode} value={program.programCode}>
                   {program.displayLabel}
@@ -173,27 +194,32 @@ export default function BatchStatusPageClient() {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium">Batch</label>
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              Batch
+            </label>
             <select
               value={batchCode}
               onChange={(e) => setBatchCode(e.target.value)}
-              className="w-full rounded-2xl border px-3 py-2"
-              required
+              className="w-full rounded-xl border px-4 py-3"
+              disabled={!programCode}
             >
-              <option value="">Select batch</option>
+              <option value="">
+                {programCode ? "Select Batch" : "Choose Academic Identity First"}
+              </option>
               {batches.map((batch) => (
-                <option key={batch.batchCode} value={batch.batchCode}>
+                <option key={batch.id} value={batch.batchCode}>
                   {batch.batchCode}
+                  {batch.admissionTerm ? ` | ${batch.admissionTerm}` : ""}
                 </option>
               ))}
             </select>
           </div>
 
-          <div className="md:col-span-2">
+          <div className="flex items-end">
             <button
               type="submit"
-              disabled={loading}
-              className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+              disabled={!programCode || !batchCode || loading}
+              className="w-full rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
             >
               {loading ? "Loading..." : "Load Batch Status"}
             </button>
@@ -201,148 +227,120 @@ export default function BatchStatusPageClient() {
         </form>
 
         {error ? (
-          <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        ) : null}
+
+        {result ? (
+          <>
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Completed
+                </div>
+                <div className="mt-2 text-2xl font-bold text-emerald-700">
+                  {result.counts.completed}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Ongoing
+                </div>
+                <div className="mt-2 text-2xl font-bold text-blue-700">
+                  {result.counts.ongoing}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Remaining
+                </div>
+                <div className="mt-2 text-2xl font-bold text-amber-700">
+                  {result.counts.remaining}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Master Courses
+                </div>
+                <div className="mt-2 text-2xl font-bold text-slate-900">
+                  {result.counts.masterCourses}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 className="text-base font-semibold text-slate-900">
+                Selected Batch
+              </h3>
+              <p className="mt-2 text-sm text-slate-600">
+                {result.selectedProgram.displayLabel} | Batch {result.batchCode}
+              </p>
+              <p className="mt-1 text-sm text-slate-500">
+                Curriculum Key: {result.selectedProgram.curriculumKey || "-"}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 className="mb-4 text-base font-semibold text-slate-900">
+                Full Course Status Table
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50">
+                      <th className="border-b px-3 py-3 text-left">Code</th>
+                      <th className="border-b px-3 py-3 text-left">Title</th>
+                      <th className="border-b px-3 py-3 text-left">Credits</th>
+                      <th className="border-b px-3 py-3 text-left">Type</th>
+                      <th className="border-b px-3 py-3 text-left">Group</th>
+                      <th className="border-b px-3 py-3 text-left">Level / Term</th>
+                      <th className="border-b px-3 py-3 text-left">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.statusRows.map((row) => (
+                      <tr key={`${row.code}-${row.status}`}>
+                        <td className="border-b px-3 py-2">{row.code}</td>
+                        <td className="border-b px-3 py-2">{row.title}</td>
+                        <td className="border-b px-3 py-2">{row.credits}</td>
+                        <td className="border-b px-3 py-2">{row.type}</td>
+                        <td className="border-b px-3 py-2">{row.group || "-"}</td>
+                        <td className="border-b px-3 py-2">{row.levelTerm || "-"}</td>
+                        <td className="border-b px-3 py-2">
+                          <span
+                            className="rounded-full px-2 py-1 text-xs font-medium"
+                            style={{
+                              backgroundColor: row.color || "#e5e7eb",
+                              color: "#111827",
+                            }}
+                          >
+                            {row.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+
+                    {result.statusRows.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={7}
+                          className="px-4 py-8 text-center text-slate-500"
+                        >
+                          No status rows found.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
         ) : null}
       </div>
-
-      {result ? (
-        <>
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Completed
-              </p>
-              <h4 className="mt-2 text-3xl font-bold text-green-700">
-                {result.counts.completed}
-              </h4>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Ongoing
-              </p>
-              <h4 className="mt-2 text-3xl font-bold text-blue-700">
-                {result.counts.ongoing}
-              </h4>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Remaining
-              </p>
-              <h4 className="mt-2 text-3xl font-bold text-amber-700">
-                {result.counts.remaining}
-              </h4>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Curriculum Rows
-              </p>
-              <h4 className="mt-2 text-3xl font-bold text-slate-900">
-                {result.counts.masterCourses}
-              </h4>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="text-xl font-bold text-slate-900">Full Course Status Table</h3>
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full border-collapse text-sm">
-                <thead>
-                  <tr className="border-b bg-slate-50 text-left">
-                    <th className="px-3 py-2">Code</th>
-                    <th className="px-3 py-2">Title</th>
-                    <th className="px-3 py-2">Credits</th>
-                    <th className="px-3 py-2">Type</th>
-                    <th className="px-3 py-2">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.statusRows.map((row) => (
-                    <tr key={row.code} className="border-b">
-                      <td className="px-3 py-2">{row.code}</td>
-                      <td className="px-3 py-2">{row.title}</td>
-                      <td className="px-3 py-2">{row.credits}</td>
-                      <td className="px-3 py-2">{row.type}</td>
-                      <td className="px-3 py-2">
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-semibold ${badgeClass(
-                            row.color
-                          )}`}
-                        >
-                          {row.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                  {!result.statusRows.length ? (
-                    <tr>
-                      <td className="px-3 py-4 text-slate-500" colSpan={5}>
-                        No saved batch status found.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="text-xl font-bold text-slate-900">Completed Courses</h3>
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full border-collapse text-sm">
-                <thead>
-                  <tr className="border-b bg-slate-50 text-left">
-                    <th className="px-3 py-2">Semester</th>
-                    <th className="px-3 py-2">Code</th>
-                    <th className="px-3 py-2">Title</th>
-                    <th className="px-3 py-2">Credits</th>
-                    <th className="px-3 py-2">Grade</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.completedCourses.map((row) => (
-                    <tr key={`${row.semester}-${row.code}`} className="border-b">
-                      <td className="px-3 py-2">{row.semester}</td>
-                      <td className="px-3 py-2">{row.code}</td>
-                      <td className="px-3 py-2">{row.title}</td>
-                      <td className="px-3 py-2">{row.credits}</td>
-                      <td className="px-3 py-2">{row.grade}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="text-xl font-bold text-slate-900">Ongoing Courses</h3>
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full border-collapse text-sm">
-                <thead>
-                  <tr className="border-b bg-slate-50 text-left">
-                    <th className="px-3 py-2">Semester</th>
-                    <th className="px-3 py-2">Code</th>
-                    <th className="px-3 py-2">Title</th>
-                    <th className="px-3 py-2">Credits</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.ongoingCourses.map((row) => (
-                    <tr key={`${row.semester}-${row.code}`} className="border-b">
-                      <td className="px-3 py-2">{row.semester}</td>
-                      <td className="px-3 py-2">{row.code}</td>
-                      <td className="px-3 py-2">{row.title}</td>
-                      <td className="px-3 py-2">{row.credits}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
-      ) : null}
-    </div>
+    </AdminLayout>
   );
 }

@@ -25,6 +25,7 @@ const navItems = [
   { href: "/admin/batch-status", label: "Batch Status" },
   { href: "/admin/batch-status-cleanup", label: "Batch Status Cleanup" },
   { href: "/admin/offering-context", label: "Offering Context" },
+  { href: "/admin/offering-template-import", label: "Offering Template Import" },
   { href: "/admin/offerings", label: "Offerings" },
   { href: "/admin/offering-drafts", label: "Draft Offerings" },
   { href: "/admin/co-offering-setup", label: "Co-offering Setup" },

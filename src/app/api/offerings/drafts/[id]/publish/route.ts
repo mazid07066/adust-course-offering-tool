@@ -9,6 +9,41 @@ const ALLOWED_SOURCE_STATUSES = [
   "FACULTY_CHOICE_FINALIZED",
 ];
 
+function normalizeText(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().toUpperCase();
+}
+
+function isSlotOptionalCourse(course: {
+  master_courses: {
+    course_title?: string | null;
+    course_type?: string | null;
+  };
+}) {
+  const title = normalizeText(course.master_courses.course_title);
+  const type = normalizeText(course.master_courses.course_type);
+
+  if (
+    type.includes("PROJECT") ||
+    type.includes("INTERNSHIP") ||
+    type.includes("THESIS") ||
+    type.includes("VIVA")
+  ) {
+    return true;
+  }
+
+  if (
+    title.includes("FINAL YEAR DESIGN PROJECT") ||
+    title.includes("FYDP") ||
+    title.includes("INTERNSHIP") ||
+    title.includes("THESIS") ||
+    title.includes("VIVA")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export async function POST(
   _request: NextRequest,
   context: { params: Promise<{ id: string }> }
@@ -74,6 +109,7 @@ export async function POST(
 
     for (const course of offering.offered_courses) {
       const isPrimary = !course.primary_offered_course_id;
+      const slotOptional = isSlotOptionalCourse(course);
 
       if (course.offered_course_batches.length === 0) {
         blockers.push(
@@ -85,7 +121,7 @@ export async function POST(
         continue;
       }
 
-      if (course.offered_course_slots.length === 0) {
+      if (!slotOptional && course.offered_course_slots.length === 0) {
         blockers.push(
           `${course.master_courses.course_code} Sec-${course.section}: no meeting slot assigned.`
         );
