@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
-
-const ALLOWED_SOURCE_STATUSES = [
-  "DRAFT",
-  "BUFFER_READY",
-  "FACULTY_CHOICE_BUFFER",
-  "FACULTY_CHOICE_FINALIZED",
-];
+import { OFFERING_STATUS } from "@/lib/offering-status";
 
 function normalizeText(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim().toUpperCase();
@@ -63,19 +57,12 @@ export async function POST(
     }
 
     const offering = await prisma.offerings.findFirst({
-      where: {
-        id: offeringId,
-      },
+      where: { id: offeringId },
       include: {
         offered_courses: {
           include: {
             master_courses: true,
             offered_course_batches: true,
-            offered_course_teachers: {
-              include: {
-                teachers: true,
-              },
-            },
             offered_course_slots: true,
           },
         },
@@ -89,23 +76,23 @@ export async function POST(
       );
     }
 
-    if (!ALLOWED_SOURCE_STATUSES.includes(offering.status)) {
+    if (
+      offering.status !== OFFERING_STATUS.DRAFT &&
+      offering.status !== OFFERING_STATUS.BUFFER_READY
+    ) {
       return NextResponse.json(
         {
-          error: `Only ${ALLOWED_SOURCE_STATUSES.join(", ")} offerings can be published.`,
+          error: "Only DRAFT or BUFFER_READY offerings can be opened for faculty choice.",
         },
         { status: 400 }
       );
     }
 
-    if (offering.offered_courses.length === 0) {
-      return NextResponse.json(
-        { error: "Cannot publish an empty offering." },
-        { status: 400 }
-      );
-    }
-
     const blockers: string[] = [];
+
+    if (offering.offered_courses.length === 0) {
+      blockers.push("Cannot move empty offering to BUFFER_READY.");
+    }
 
     for (const course of offering.offered_courses) {
       const isPrimary = !course.primary_offered_course_id;
@@ -117,35 +104,11 @@ export async function POST(
         );
       }
 
-      if (!isPrimary) {
-        continue;
-      }
+      if (!isPrimary) continue;
 
       if (!slotOptional && course.offered_course_slots.length === 0) {
         blockers.push(
           `${course.master_courses.course_code} Sec-${course.section}: no meeting slot assigned.`
-        );
-      }
-
-      if (course.offered_course_teachers.length === 0) {
-        blockers.push(
-          `${course.master_courses.course_code} Sec-${course.section}: no faculty assigned.`
-        );
-      }
-
-      if (course.offered_course_teachers.length > 1) {
-        blockers.push(
-          `${course.master_courses.course_code} Sec-${course.section}: multiple faculty assignments found.`
-        );
-      }
-
-      const inactiveAssignedTeacher = course.offered_course_teachers.find(
-        (row) => !row.teachers.is_active
-      );
-
-      if (inactiveAssignedTeacher) {
-        blockers.push(
-          `${course.master_courses.course_code} Sec-${course.section}: assigned faculty is inactive.`
         );
       }
     }
@@ -153,35 +116,36 @@ export async function POST(
     if (blockers.length > 0) {
       return NextResponse.json(
         {
-          error: "Publishing blocked due to assignment/schedule incompleteness.",
+          error: "Move to BUFFER_READY blocked.",
           blockers,
         },
         { status: 400 }
       );
     }
 
-    await prisma.offerings.update({
-      where: {
-        id: offeringId,
-      },
+    const updated = await prisma.offerings.update({
+      where: { id: offeringId },
       data: {
-        status: "CONFIRMED",
+        status: OFFERING_STATUS.BUFFER_READY,
+      },
+      select: {
+        id: true,
+        status: true,
       },
     });
 
     return NextResponse.json({
       success: true,
-      message: "Offering published successfully with assignment completeness checks passed.",
+      message: "Offering is now BUFFER_READY and ready for later faculty-choice stage.",
+      offering: updated,
     });
   } catch (error) {
-    console.error(error);
-
     return NextResponse.json(
       {
         error:
           error instanceof Error
             ? error.message
-            : "Failed to publish offering.",
+            : "Failed to move offering to BUFFER_READY.",
       },
       { status: 500 }
     );

@@ -505,7 +505,7 @@ export default function OfferingDraftsPageClient() {
   }
 
   useEffect(() => {
-    loadAllRooms();
+    void loadAllRooms();
   }, []);
 
   useEffect(() => {
@@ -654,7 +654,7 @@ export default function OfferingDraftsPageClient() {
       }
 
       if (editingSlotId === slotId) {
-        setEditingSlotId(null);
+        closeSlotEditor();
       }
 
       setMessage("Slot deleted successfully.");
@@ -666,8 +666,10 @@ export default function OfferingDraftsPageClient() {
     }
   }
 
-    async function publishDraft(id: number) {
-    const ok = window.confirm("Publish this draft offering?");
+  async function publishDraft(id: number) {
+    const ok = window.confirm(
+      "Move this offering to BUFFER_READY so it becomes ready for the faculty-choice phase?"
+    );
     if (!ok) return;
 
     setError("");
@@ -687,14 +689,20 @@ export default function OfferingDraftsPageClient() {
             : "";
 
         throw new Error(
-          (json.error || "Failed to publish draft offering.") + blockerText
+          (json.error || "Failed to move offering to BUFFER_READY.") + blockerText
         );
       }
 
-      setMessage("Draft offering published successfully.");
+      setMessage(
+        "Offering moved to BUFFER_READY. It is now prepared for the upcoming faculty-choice phase."
+      );
       await loadDrafts();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to publish draft offering.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to move offering to BUFFER_READY."
+      );
     }
   }
 
@@ -863,7 +871,7 @@ export default function OfferingDraftsPageClient() {
 
             <button
               type="button"
-              onClick={loadAllRooms}
+              onClick={() => void loadAllRooms()}
               disabled={roomsLoading}
               className="rounded-xl bg-slate-200 px-4 py-3 text-sm font-medium text-slate-800 hover:bg-slate-300 disabled:opacity-60"
             >
@@ -893,7 +901,7 @@ export default function OfferingDraftsPageClient() {
         )}
 
         {combinedError && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 whitespace-pre-wrap">
             {combinedError}
           </div>
         )}
@@ -937,7 +945,7 @@ export default function OfferingDraftsPageClient() {
                     onClick={() => publishDraft(draft.id)}
                     className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
                   >
-                    Publish Draft
+                    Open for Faculty Choice
                   </button>
 
                   <button
@@ -1283,8 +1291,8 @@ export default function OfferingDraftsPageClient() {
                                   {currentSlotCount >= 3
                                     ? "Max 3 Reached"
                                     : currentSlotCount > 0
-                                    ? "Add Remaining Slot(s)"
-                                    : "Add Slot(s)"}
+                                      ? "Add Remaining Slot(s)"
+                                      : "Add Slot(s)"}
                                 </button>
 
                                 <button
@@ -1455,8 +1463,8 @@ export default function OfferingDraftsPageClient() {
                                           {row.loadingRooms
                                             ? "Checking room availability..."
                                             : row.availableRooms.length === 0
-                                            ? "No room available for this day/time."
-                                            : `${row.availableRooms.length} room(s) available for this slot.`}
+                                              ? "No room available for this day/time."
+                                              : `${row.availableRooms.length} room(s) available for this slot.`}
                                         </div>
                                       </div>
                                     );
@@ -1484,10 +1492,10 @@ export default function OfferingDraftsPageClient() {
                                         ? "Updating..."
                                         : "Saving..."
                                       : editingSlotId
-                                      ? "Update Slot"
-                                      : slotRows.length > 1
-                                      ? "Save All Slots"
-                                      : "Save Slot"}
+                                        ? "Update Slot"
+                                        : slotRows.length > 1
+                                          ? "Save All Slots"
+                                          : "Save Slot"}
                                   </button>
 
                                   <button
