@@ -4,7 +4,7 @@ import { validateFacultySession, getRemainingMinutes } from "@/lib/faculty-sessi
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { sessionToken } = body;
+    const sessionToken = String(body.sessionToken || "").trim();
 
     if (!sessionToken) {
       return NextResponse.json({ valid: false });
@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
 
     const result = await validateFacultySession(sessionToken);
 
-    if (!result.valid) {
+    if (!result.valid || !result.session) {
       return NextResponse.json({
         valid: false,
         message: result.message,
@@ -21,9 +21,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       valid: true,
-      remainingMinutes: getRemainingMinutes(result.session.expiresAt),
+      remainingMinutes: getRemainingMinutes(result.session.expires_at),
     });
-  } catch {
+  } catch (error) {
+    console.error(error);
     return NextResponse.json({ valid: false });
   }
 }

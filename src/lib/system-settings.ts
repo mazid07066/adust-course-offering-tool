@@ -133,7 +133,7 @@ export async function getFacultyLevelCreditPolicy(
 }
 
 export async function getAllFacultyLevelCreditPolicies(
-  levels = [1, 2, 3, 4, 5, 6, 7]
+  levels = Array.from({ length: 20 }, (_, i) => i + 1)
 ): Promise<FacultyLevelCreditPolicy[]> {
   const items = await Promise.all(
     levels.map(async (level) => {

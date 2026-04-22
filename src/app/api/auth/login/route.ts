@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
-import { createFacultySession } from "@/lib/faculty-session";
+import {
+  createFacultyLoginSession,
+  sendFacultyQueueNotification,
+  sendFacultyTurnNotification,
+} from "@/lib/faculty-session";
+import { getCurrentActiveFacultyTurn } from "@/lib/faculty-turn";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const username = String(body?.username || "").trim();
-    const password = String(body?.password || "");
+    const username = String(body.username || "").trim();
+    const password = String(body.password || "");
 
     if (!username || !password) {
       return NextResponse.json(
@@ -21,6 +26,7 @@ export async function POST(req: NextRequest) {
       select: {
         id: true,
         username: true,
+        full_name: true,
         password_hash: true,
         role: true,
         is_active: true,
@@ -29,40 +35,55 @@ export async function POST(req: NextRequest) {
     });
 
     if (!user || !user.is_active) {
-      return NextResponse.json(
-        { error: "Invalid credentials" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Invalid credentials." }, { status: 401 });
     }
 
     const valid = await bcrypt.compare(password, user.password_hash);
 
     if (!valid) {
-      return NextResponse.json(
-        { error: "Invalid credentials" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Invalid credentials." }, { status: 401 });
     }
 
-    const session = await createFacultySession({
-      userId: user.id,
-      teacherId: user.teacher_id ?? null,
-    });
+    let sessionToken: string | null = null;
+    let expiresAt: Date | null = null;
+
+    if (user.role === "FACULTY") {
+      const facultySession = await createFacultyLoginSession({
+        userId: user.id,
+        teacherId: user.teacher_id ?? null,
+      });
+
+      sessionToken = facultySession.session_token;
+      expiresAt = facultySession.expires_at;
+
+      if (user.teacher_id) {
+        const activeTurn = await getCurrentActiveFacultyTurn();
+
+        if (activeTurn?.teacherId === user.teacher_id) {
+          await sendFacultyTurnNotification(user.teacher_id);
+        } else {
+          await sendFacultyQueueNotification(user.teacher_id);
+        }
+      }
+    }
 
     const res = NextResponse.json({
       success: true,
       role: user.role,
+      expiresAt,
     });
 
-    res.cookies.set("sessionToken", session.session_token, {
-      httpOnly: true,
-      path: "/",
-      sameSite: "lax",
-    });
+    if (sessionToken) {
+      res.cookies.set("sessionToken", sessionToken, {
+        httpOnly: true,
+        path: "/",
+        sameSite: "lax",
+      });
+    }
 
     return res;
-  } catch (err) {
-    console.error(err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ error: "Server error." }, { status: 500 });
   }
 }

@@ -23,9 +23,9 @@ export async function POST(req: NextRequest) {
           ? null
           : Number(body.maxCredits);
 
-      if (!level || level < 1 || level > 7) {
+      if (!level || level < 1 || level > 20) {
         return NextResponse.json(
-          { error: "Level must be between 1 and 7." },
+          { error: "Level must be between 1 and 20." },
           { status: 400 }
         );
       }

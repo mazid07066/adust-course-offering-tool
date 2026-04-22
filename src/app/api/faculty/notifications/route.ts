@@ -10,19 +10,20 @@ export async function GET() {
     const items = await prisma.notifications.findMany({
       where: {
         OR: [
-          guard.id ? { recipient_user_id: Number(guard.id) } : undefined,
-          guard.teacher_id ? { recipient_teacher_id: Number(guard.teacher_id) } : undefined,
+          { recipient_user_id: guard.id },
+          guard.teacher_id ? { recipient_teacher_id: guard.teacher_id } : undefined,
         ].filter(Boolean) as any,
       },
       orderBy: [{ created_at: "desc" }],
-      take: 30,
+      take: 50,
     });
 
     return NextResponse.json({
       success: true,
       notifications: items,
     });
-  } catch {
+  } catch (error) {
+    console.error(error);
     return NextResponse.json(
       { error: "Failed to load notifications." },
       { status: 500 }

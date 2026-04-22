@@ -9,27 +9,23 @@ type LevelPolicy = {
   maxCredits: number | null;
 };
 
+const SENIORITY_LEVELS = Array.from({ length: 20 }, (_, i) => i + 1);
+
 export default function PageClient() {
   const [sessionMinutes, setSessionMinutes] = useState(30);
   const [warningMinutes, setWarningMinutes] = useState(10);
   const [windowStatus, setWindowStatus] = useState("CLOSED");
-  const [activeSeniorityLevel, setActiveSeniorityLevel] = useState("");
-  const [activeTeacherId, setActiveTeacherId] = useState("");
   const [autoAdvanceOnExpiry, setAutoAdvanceOnExpiry] = useState("true");
   const [levelPolicies, setLevelPolicies] = useState<LevelPolicy[]>([]);
-  const [facultyOptions, setFacultyOptions] = useState<
-    Array<{ id: number; teacher_code: string; full_name: string; seniority_level: number | null }>
-  >([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     loadSettings();
-    loadFaculties();
   }, []);
 
-      async function loadSettings() {
+  async function loadSettings() {
     setError("");
     try {
       const res = await fetch("/api/system-settings", { cache: "no-store" });
@@ -43,21 +39,11 @@ export default function PageClient() {
       setSessionMinutes(data.sessionMinutes ?? 30);
       setWarningMinutes(data.warningMinutes ?? 10);
       setWindowStatus(data.windowStatus ?? "CLOSED");
-      setActiveSeniorityLevel(
-        data.activeSeniorityLevel === null || data.activeSeniorityLevel === undefined
-          ? ""
-          : String(data.activeSeniorityLevel)
-      );
-      setActiveTeacherId(
-        data.activeTeacherId === null || data.activeTeacherId === undefined
-          ? ""
-          : String(data.activeTeacherId)
-      );
       setAutoAdvanceOnExpiry(String(data.autoAdvanceOnExpiry ?? true));
       setLevelPolicies(
         Array.isArray(data.levelCreditPolicies)
           ? data.levelCreditPolicies
-          : [1, 2, 3, 4, 5, 6, 7].map((level) => ({
+          : SENIORITY_LEVELS.map((level) => ({
               level,
               minCredits: null,
               maxCredits: null,
@@ -65,27 +51,6 @@ export default function PageClient() {
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load settings.");
-    }
-  }
-
-  async function loadFaculties() {
-    try {
-      const res = await fetch("/api/faculties/manage", { cache: "no-store" });
-      const json = await res.json();
-
-      if (!res.ok) return;
-
-      const rows = Array.isArray(json.faculties) ? json.faculties : [];
-      setFacultyOptions(
-        rows.map((row: any) => ({
-          id: row.id,
-          teacher_code: row.teacher_code,
-          full_name: row.full_name,
-          seniority_level: row.seniority_level ?? null,
-        }))
-      );
-    } catch {
-      // keep silent
     }
   }
 
@@ -118,7 +83,11 @@ export default function PageClient() {
     }
   }
 
-  async function saveLevelPolicy(level: number, minCredits: number | null, maxCredits: number | null) {
+  async function saveLevelPolicy(
+    level: number,
+    minCredits: number | null,
+    maxCredits: number | null
+  ) {
     setLoading(true);
     setError("");
     setMessage("");
@@ -146,7 +115,9 @@ export default function PageClient() {
       await loadSettings();
       setMessage(`Level ${level} credit policy saved successfully.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save level credit policy.");
+      setError(
+        err instanceof Error ? err.message : "Failed to save level credit policy."
+      );
     } finally {
       setLoading(false);
     }
@@ -178,13 +149,13 @@ export default function PageClient() {
           </h1>
           <div className="mt-3 space-y-2 text-sm text-slate-700">
             <div>
-              All faculty may log in and view the open pool, but only the currently active faculty turn may edit and finalize.
+              All faculty may log in and view the open offered pool.
             </div>
             <div>
-              Faculty visibility still depends on offering stages
-              <span className="mx-1 font-semibold">FACULTY_CHOICE_BUFFER</span>
-              and
-              <span className="mx-1 font-semibold">FACULTY_CHOICE_FINALIZED</span>.
+              The system automatically grants edit access to the highest-seniority valid simultaneous session.
+            </div>
+            <div>
+              Seniority scale: <span className="font-semibold">1 = highest</span>, <span className="font-semibold">20 = lowest</span>.
             </div>
           </div>
         </div>
@@ -202,9 +173,7 @@ export default function PageClient() {
         ) : null}
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-          <h2 className="text-lg font-medium text-slate-900">
-            Session Timing
-          </h2>
+          <h2 className="text-lg font-medium text-slate-900">Session Timing</h2>
 
           <div className="grid gap-4 md:grid-cols-2">
             <div>
@@ -288,101 +257,28 @@ export default function PageClient() {
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
           <h2 className="text-lg font-medium text-slate-900">
-            Active Seniority Phase
+            Auto Advance On Expiry
           </h2>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">
-                Active Seniority Level
-              </label>
-              <div className="flex gap-3">
-                <select
-                  value={activeSeniorityLevel}
-                  onChange={(e) => setActiveSeniorityLevel(e.target.value)}
-                  className="w-52 rounded-xl border px-3 py-2"
-                >
-                  <option value="">All Levels</option>
-                  {[1, 2, 3, 4, 5, 6, 7].map((level) => (
-                    <option key={level} value={String(level)}>
-                      Level {level}
-                    </option>
-                  ))}
-                </select>
+          <div className="flex gap-3">
+            <select
+              value={autoAdvanceOnExpiry}
+              onChange={(e) => setAutoAdvanceOnExpiry(e.target.value)}
+              className="w-40 rounded-xl border px-3 py-2"
+            >
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </select>
 
-                <button
-                  onClick={() =>
-                    updateSetting(
-                      "FACULTY_ACTIVE_SENIORITY_LEVEL",
-                      activeSeniorityLevel
-                    )
-                  }
-                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-                  disabled={loading}
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">
-                Active Faculty Turn
-              </label>
-              <div className="flex gap-3">
-                <select
-                  value={activeTeacherId}
-                  onChange={(e) => setActiveTeacherId(e.target.value)}
-                  className="w-full rounded-xl border px-3 py-2"
-                >
-                  <option value="">None Selected</option>
-                  {facultyOptions.map((faculty) => (
-                    <option key={faculty.id} value={String(faculty.id)}>
-                      {faculty.teacher_code} — {faculty.full_name} | Level {faculty.seniority_level ?? "-"}
-                    </option>
-                  ))}
-                </select>
-
-                <button
-                  onClick={() =>
-                    updateSetting("FACULTY_ACTIVE_TEACHER_ID", activeTeacherId)
-                  }
-                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-                  disabled={loading}
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium text-slate-700">
-              Auto Advance On Expiry
-            </label>
-            <div className="flex gap-3">
-              <select
-                value={autoAdvanceOnExpiry}
-                onChange={(e) => setAutoAdvanceOnExpiry(e.target.value)}
-                className="w-40 rounded-xl border px-3 py-2"
-              >
-                <option value="true">true</option>
-                <option value="false">false</option>
-              </select>
-
-              <button
-                onClick={() =>
-                  updateSetting(
-                    "FACULTY_AUTO_ADVANCE_ON_EXPIRY",
-                    autoAdvanceOnExpiry
-                  )
-                }
-                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-                disabled={loading}
-              >
-                Save
-              </button>
-            </div>
+            <button
+              onClick={() =>
+                updateSetting("FACULTY_AUTO_ADVANCE_ON_EXPIRY", autoAdvanceOnExpiry)
+              }
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+              disabled={loading}
+            >
+              Save
+            </button>
           </div>
         </div>
 
@@ -391,7 +287,7 @@ export default function PageClient() {
             Seniority Level Credit Rules
           </h2>
           <p className="mt-2 text-sm text-slate-500">
-            Define optional minimum and maximum allowed credits for faculty levels 1 to 7.
+            Define optional minimum and maximum allowed credits for faculty levels 1 to 20.
           </p>
 
           <div className="mt-4 overflow-x-auto">

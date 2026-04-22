@@ -3,13 +3,13 @@
 import { useEffect, useState } from "react";
 import AdminLayout from "@/components/admin-layout";
 
-type DepartmentRow = {
+type Department = {
   id: number;
-  short_name: string;
   name: string;
+  short_name: string;
 };
 
-type FacultyRow = {
+type Faculty = {
   id: number;
   department_id: number;
   teacher_code: string;
@@ -19,264 +19,335 @@ type FacultyRow = {
   phone: string | null;
   seniority_level: number | null;
   is_active: boolean | null;
-  departments: {
-    id: number;
-    short_name: string;
-    name: string;
-  };
+  departments: Department;
 };
 
-export default function FacultiesPageClient() {
-  const [faculties, setFaculties] = useState<FacultyRow[]>([]);
-  const [departments, setDepartments] = useState<DepartmentRow[]>([]);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const [editingId, setEditingId] = useState<number | null>(null);
+type FacultyResponse = {
+  success?: boolean;
+  faculties?: Faculty[];
+  faculty?: Faculty;
+  message?: string;
+  error?: string;
+};
 
-  const [form, setForm] = useState({
-    department_id: "",
-    teacher_code: "",
-    full_name: "",
-    designation: "",
-    email: "",
-    phone: "",
-    seniority_level: "",
-  });
+type DepartmentResponse = {
+  success?: boolean;
+  departments?: Department[];
+  error?: string;
+};
+
+type CreateForm = {
+  department_id: string;
+  teacher_code: string;
+  full_name: string;
+  designation: string;
+  email: string;
+  phone: string;
+  seniority_level: string;
+};
+
+type EditForm = {
+  full_name: string;
+  designation: string;
+  email: string;
+  phone: string;
+  seniority_level: string;
+};
+
+const emptyCreateForm: CreateForm = {
+  department_id: "",
+  teacher_code: "",
+  full_name: "",
+  designation: "",
+  email: "",
+  phone: "",
+  seniority_level: "",
+};
+
+const emptyEditForm: EditForm = {
+  full_name: "",
+  designation: "",
+  email: "",
+  phone: "",
+  seniority_level: "",
+};
+
+const SENIORITY_LEVELS = Array.from({ length: 20 }, (_, i) => i + 1);
+
+export default function FacultiesPageClient() {
+  const [faculties, setFaculties] = useState<Faculty[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [createForm, setCreateForm] = useState<CreateForm>(emptyCreateForm);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<EditForm>(emptyEditForm);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
   async function loadAll() {
+    setLoading(true);
     setError("");
 
-    const [f, d] = await Promise.all([
-      fetch("/api/faculties/manage", { cache: "no-store" }),
-      fetch("/api/departments/options", { cache: "no-store" }),
-    ]);
+    try {
+      const [facultyRes, deptRes] = await Promise.all([
+        fetch("/api/faculties/manage", { cache: "no-store" }),
+        fetch("/api/departments/options", { cache: "no-store" }),
+      ]);
 
-    const fJson = await f.json();
-    const dJson = await d.json();
+      const facultyJson: FacultyResponse = await facultyRes.json();
+      const deptJson: DepartmentResponse = await deptRes.json();
 
-    setFaculties(fJson.faculties || []);
-    setDepartments(dJson.departments || []);
+      if (!facultyRes.ok) {
+        throw new Error(facultyJson.error || "Failed to load faculties.");
+      }
+
+      if (!deptRes.ok) {
+        throw new Error(deptJson.error || "Failed to load departments.");
+      }
+
+      setFaculties(facultyJson.faculties || []);
+      setDepartments(deptJson.departments || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load faculty data.");
+      setFaculties([]);
+      setDepartments([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
     loadAll();
   }, []);
 
-  function startEdit(f: FacultyRow) {
-    setEditingId(f.id);
-    setForm({
-      department_id: String(f.department_id),
-      teacher_code: f.teacher_code,
-      full_name: f.full_name,
-      designation: f.designation || "",
-      email: f.email || "",
-      phone: f.phone || "",
-      seniority_level:
-        f.seniority_level === null || f.seniority_level === undefined
-          ? ""
-          : String(f.seniority_level),
-    });
-    setMessage("");
-    setError("");
-  }
-
-  function resetForm() {
-    setEditingId(null);
-    setForm({
-      department_id: "",
-      teacher_code: "",
-      full_name: "",
-      designation: "",
-      email: "",
-      phone: "",
-      seniority_level: "",
-    });
-  }
-
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    setMessage("");
     setError("");
+    setMessage("");
 
-    const res = await fetch("/api/faculties/manage", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(form),
-    });
+    try {
+      const res = await fetch("/api/faculties/manage", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(createForm),
+      });
 
-    const json = await res.json();
+      const json: FacultyResponse = await res.json();
 
-    if (!res.ok) {
-      setError(json.error || "Failed to create faculty.");
-      return;
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to create faculty.");
+      }
+
+      setCreateForm(emptyCreateForm);
+      setMessage(json.message || "Faculty created successfully.");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create faculty.");
     }
+  }
 
-    setMessage("Faculty created successfully.");
-    resetForm();
-    await loadAll();
+  function startEdit(faculty: Faculty) {
+    setEditingId(faculty.id);
+    setEditForm({
+      full_name: faculty.full_name,
+      designation: faculty.designation || "",
+      email: faculty.email || "",
+      phone: faculty.phone || "",
+      seniority_level:
+        faculty.seniority_level === null || faculty.seniority_level === undefined
+          ? ""
+          : String(faculty.seniority_level),
+    });
+    setError("");
+    setMessage("");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditForm(emptyEditForm);
   }
 
   async function handleUpdate(id: number) {
-    setMessage("");
     setError("");
+    setMessage("");
 
-    const res = await fetch(`/api/faculties/manage/${id}`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        full_name: form.full_name,
-        designation: form.designation,
-        email: form.email,
-        phone: form.phone,
-        seniority_level: form.seniority_level,
-      }),
-    });
+    try {
+      const res = await fetch(`/api/faculties/manage/${id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(editForm),
+      });
 
-    const json = await res.json();
+      const json: FacultyResponse = await res.json();
 
-    if (!res.ok) {
-      setError(json.error || "Failed to update faculty.");
-      return;
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to update faculty.");
+      }
+
+      setEditingId(null);
+      setEditForm(emptyEditForm);
+      setMessage(json.message || "Faculty updated successfully.");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update faculty.");
     }
-
-    setMessage("Faculty updated successfully.");
-    resetForm();
-    await loadAll();
   }
 
-  async function toggleActive(f: FacultyRow) {
-    setMessage("");
+  async function toggleActive(faculty: Faculty) {
     setError("");
+    setMessage("");
 
-    const res = await fetch(`/api/faculties/manage/${f.id}`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        is_active: !f.is_active,
-      }),
-    });
+    try {
+      const res = await fetch(`/api/faculties/manage/${faculty.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          is_active: !faculty.is_active,
+        }),
+      });
 
-    const json = await res.json();
+      const json: FacultyResponse = await res.json();
 
-    if (!res.ok) {
-      setError(json.error || "Failed to update faculty status.");
-      return;
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to update faculty status.");
+      }
+
+      setMessage(
+        faculty.is_active
+          ? "Faculty deactivated successfully."
+          : "Faculty activated successfully."
+      );
+      await loadAll();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to update faculty status."
+      );
     }
-
-    setMessage("Faculty status updated successfully.");
-    await loadAll();
   }
 
   async function handleDelete(id: number) {
-    const ok = window.confirm("Delete this faculty record?");
+    const ok = window.confirm("Delete this faculty?");
     if (!ok) return;
 
-    setMessage("");
     setError("");
+    setMessage("");
 
-    const res = await fetch(`/api/faculties/manage/${id}`, {
-      method: "DELETE",
-    });
+    try {
+      const res = await fetch(`/api/faculties/manage/${id}`, {
+        method: "DELETE",
+      });
 
-    const json = await res.json();
+      const json: FacultyResponse = await res.json();
 
-    if (!res.ok) {
-      setError(json.error || "Failed to delete faculty.");
-      return;
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to delete faculty.");
+      }
+
+      setMessage(json.message || "Faculty deleted successfully.");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete faculty.");
     }
-
-    setMessage("Faculty deleted successfully.");
-    await loadAll();
   }
 
   return (
     <AdminLayout title="Faculties">
       <div className="space-y-6">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-xl font-semibold text-slate-900">
-            Create Faculty
-          </h2>
+          <h2 className="text-lg font-semibold text-slate-900">Create Faculty</h2>
 
-          <form onSubmit={handleCreate} className="mt-4 grid gap-3 md:grid-cols-3">
+          <form
+            onSubmit={handleCreate}
+            className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3"
+          >
             <select
-              value={form.department_id}
+              value={createForm.department_id}
               onChange={(e) =>
-                setForm({ ...form, department_id: e.target.value })
+                setCreateForm({ ...createForm, department_id: e.target.value })
               }
-              className="rounded-xl border px-3 py-2"
+              className="rounded-xl border px-4 py-3"
             >
               <option value="">Select Department</option>
               {departments.map((d) => (
                 <option key={d.id} value={d.id}>
-                  {d.short_name}
+                  {d.short_name} - {d.name}
                 </option>
               ))}
             </select>
 
             <input
               placeholder="Faculty Code"
-              value={form.teacher_code}
+              value={createForm.teacher_code}
               onChange={(e) =>
-                setForm({ ...form, teacher_code: e.target.value.toUpperCase() })
+                setCreateForm({
+                  ...createForm,
+                  teacher_code: e.target.value.toUpperCase(),
+                })
               }
-              className="rounded-xl border px-3 py-2"
+              className="rounded-xl border px-4 py-3"
             />
 
             <input
               placeholder="Full Name"
-              value={form.full_name}
+              value={createForm.full_name}
               onChange={(e) =>
-                setForm({ ...form, full_name: e.target.value })
+                setCreateForm({ ...createForm, full_name: e.target.value })
               }
-              className="rounded-xl border px-3 py-2"
+              className="rounded-xl border px-4 py-3"
             />
 
             <input
               placeholder="Designation"
-              value={form.designation}
+              value={createForm.designation}
               onChange={(e) =>
-                setForm({ ...form, designation: e.target.value })
+                setCreateForm({ ...createForm, designation: e.target.value })
               }
-              className="rounded-xl border px-3 py-2"
+              className="rounded-xl border px-4 py-3"
             />
 
             <input
               placeholder="Email"
-              value={form.email}
+              value={createForm.email}
               onChange={(e) =>
-                setForm({ ...form, email: e.target.value })
+                setCreateForm({ ...createForm, email: e.target.value })
               }
-              className="rounded-xl border px-3 py-2"
+              className="rounded-xl border px-4 py-3"
             />
 
             <input
               placeholder="Phone"
-              value={form.phone}
+              value={createForm.phone}
               onChange={(e) =>
-                setForm({ ...form, phone: e.target.value })
+                setCreateForm({ ...createForm, phone: e.target.value })
               }
-              className="rounded-xl border px-3 py-2"
+              className="rounded-xl border px-4 py-3"
             />
 
-            <input
-              type="number"
-              min={1}
-              max={7}
-              placeholder="Seniority Level (1-7)"
-              value={form.seniority_level}
+            <select
+              value={createForm.seniority_level}
               onChange={(e) =>
-                setForm({ ...form, seniority_level: e.target.value })
+                setCreateForm({ ...createForm, seniority_level: e.target.value })
               }
-              className="rounded-xl border px-3 py-2"
-            />
+              className="rounded-xl border px-4 py-3"
+            >
+              <option value="">Seniority Level (optional)</option>
+              {SENIORITY_LEVELS.map((level) => (
+                <option key={level} value={String(level)}>
+                  Level {level}
+                </option>
+              ))}
+            </select>
 
-            <button className="rounded-xl bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 md:col-span-3">
+            <button
+              type="submit"
+              className="rounded-xl bg-blue-600 px-4 py-3 font-medium text-white hover:bg-blue-700 xl:col-span-3"
+            >
               Add Faculty
             </button>
           </form>
@@ -296,65 +367,68 @@ export default function FacultiesPageClient() {
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold text-slate-900">
-              Faculty Records
-            </h2>
-            <div className="text-sm text-slate-500">Total: {faculties.length}</div>
+            <h2 className="text-lg font-semibold text-slate-900">Faculty Records</h2>
+            <div className="text-sm text-slate-500">
+              {loading ? "Loading..." : `Total: ${faculties.length}`}
+            </div>
           </div>
 
           <div className="mt-4 space-y-4">
-            {faculties.map((f) => (
-              <div key={f.id} className="rounded-xl border border-slate-200 p-4">
+            {faculties.map((faculty) => (
+              <div
+                key={faculty.id}
+                className="rounded-xl border border-slate-200 p-4"
+              >
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="space-y-1">
+                  <div>
                     <div className="text-base font-semibold text-slate-900">
-                      {f.teacher_code} — {f.full_name}
+                      {faculty.teacher_code} — {faculty.full_name}
+                    </div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Department: {faculty.departments?.short_name || "-"}
                     </div>
                     <div className="text-sm text-slate-600">
-                      Department: {f.departments?.short_name || "-"}
+                      Designation: {faculty.designation || "-"}
                     </div>
                     <div className="text-sm text-slate-600">
-                      Designation: {f.designation || "-"}
+                      Email: {faculty.email || "-"}
                     </div>
                     <div className="text-sm text-slate-600">
-                      Email: {f.email || "-"}
+                      Phone: {faculty.phone || "-"}
                     </div>
                     <div className="text-sm text-slate-600">
-                      Phone: {f.phone || "-"}
+                      Seniority Level: {faculty.seniority_level ?? "-"}
                     </div>
-                    <div className="text-sm text-slate-600">
-                      Seniority Level: {f.seniority_level ?? "-"}
-                    </div>
-                    <div className="text-sm">
+                    <div className="mt-2">
                       <span
                         className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                          f.is_active
+                          faculty.is_active
                             ? "bg-green-100 text-green-700"
                             : "bg-red-100 text-red-700"
                         }`}
                       >
-                        {f.is_active ? "Active" : "Inactive"}
+                        {faculty.is_active ? "Active" : "Inactive"}
                       </span>
                     </div>
                   </div>
 
                   <div className="flex flex-wrap gap-2">
                     <button
-                      onClick={() => toggleActive(f)}
+                      onClick={() => toggleActive(faculty)}
                       className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50"
                     >
-                      {f.is_active ? "Deactivate" : "Activate"}
+                      {faculty.is_active ? "Deactivate" : "Activate"}
                     </button>
 
                     <button
-                      onClick={() => startEdit(f)}
+                      onClick={() => startEdit(faculty)}
                       className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50"
                     >
                       Edit
                     </button>
 
                     <button
-                      onClick={() => handleDelete(f.id)}
+                      onClick={() => handleDelete(faculty.id)}
                       className="rounded-lg border border-red-300 px-3 py-2 text-sm text-red-700 hover:bg-red-50"
                     >
                       Delete
@@ -362,62 +436,71 @@ export default function FacultiesPageClient() {
                   </div>
                 </div>
 
-                {editingId === f.id ? (
-                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                {editingId === faculty.id ? (
+                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                     <input
                       placeholder="Full Name"
-                      value={form.full_name}
+                      value={editForm.full_name}
                       onChange={(e) =>
-                        setForm({ ...form, full_name: e.target.value })
+                        setEditForm({ ...editForm, full_name: e.target.value })
                       }
-                      className="rounded-xl border px-3 py-2"
-                    />
-                    <input
-                      placeholder="Designation"
-                      value={form.designation}
-                      onChange={(e) =>
-                        setForm({ ...form, designation: e.target.value })
-                      }
-                      className="rounded-xl border px-3 py-2"
-                    />
-                    <input
-                      placeholder="Email"
-                      value={form.email}
-                      onChange={(e) =>
-                        setForm({ ...form, email: e.target.value })
-                      }
-                      className="rounded-xl border px-3 py-2"
-                    />
-                    <input
-                      placeholder="Phone"
-                      value={form.phone}
-                      onChange={(e) =>
-                        setForm({ ...form, phone: e.target.value })
-                      }
-                      className="rounded-xl border px-3 py-2"
-                    />
-                    <input
-                      type="number"
-                      min={1}
-                      max={7}
-                      placeholder="Seniority Level (1-7)"
-                      value={form.seniority_level}
-                      onChange={(e) =>
-                        setForm({ ...form, seniority_level: e.target.value })
-                      }
-                      className="rounded-xl border px-3 py-2"
+                      className="rounded-xl border px-4 py-3"
                     />
 
-                    <div className="flex gap-2 md:col-span-3">
+                    <input
+                      placeholder="Designation"
+                      value={editForm.designation}
+                      onChange={(e) =>
+                        setEditForm({ ...editForm, designation: e.target.value })
+                      }
+                      className="rounded-xl border px-4 py-3"
+                    />
+
+                    <input
+                      placeholder="Email"
+                      value={editForm.email}
+                      onChange={(e) =>
+                        setEditForm({ ...editForm, email: e.target.value })
+                      }
+                      className="rounded-xl border px-4 py-3"
+                    />
+
+                    <input
+                      placeholder="Phone"
+                      value={editForm.phone}
+                      onChange={(e) =>
+                        setEditForm({ ...editForm, phone: e.target.value })
+                      }
+                      className="rounded-xl border px-4 py-3"
+                    />
+
+                    <select
+                      value={editForm.seniority_level}
+                      onChange={(e) =>
+                        setEditForm({
+                          ...editForm,
+                          seniority_level: e.target.value,
+                        })
+                      }
+                      className="rounded-xl border px-4 py-3"
+                    >
+                      <option value="">Seniority Level (optional)</option>
+                      {SENIORITY_LEVELS.map((level) => (
+                        <option key={level} value={String(level)}>
+                          Level {level}
+                        </option>
+                      ))}
+                    </select>
+
+                    <div className="flex gap-2 xl:col-span-3">
                       <button
-                        onClick={() => handleUpdate(f.id)}
+                        onClick={() => handleUpdate(faculty.id)}
                         className="rounded-xl bg-green-600 px-4 py-2 text-white hover:bg-green-700"
                       >
                         Save Changes
                       </button>
-
                       <button
-                        onClick={resetForm}
+                        onClick={cancelEdit}
                         className="rounded-xl border px-4 py-2 hover:bg-slate-50"
                       >
                         Cancel
@@ -428,7 +511,7 @@ export default function FacultiesPageClient() {
               </div>
             ))}
 
-            {faculties.length === 0 ? (
+            {faculties.length === 0 && !loading ? (
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-slate-500">
                 No faculty records found.
               </div>

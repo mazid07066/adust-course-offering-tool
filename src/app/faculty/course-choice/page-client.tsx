@@ -62,9 +62,9 @@ type ApiResponse = {
   };
   windowStatus?: string;
   activeSeniorityLevel?: number | null;
-  seniorityAllowed?: boolean;
-  sessionRemainingMinutes?: number;
+  activeTeacherId?: number | null;
   canEdit?: boolean;
+  editMessage?: string;
   hasFinalized?: boolean;
   creditPolicy?: {
     level: number;
@@ -72,6 +72,7 @@ type ApiResponse = {
     maxCredits: number | null;
   } | null;
   currentSelectedCredits?: number;
+  sessionRemainingMinutes?: number;
   availableCourses?: AvailableCourse[];
   selections?: SelectionRow[];
 };
@@ -89,7 +90,6 @@ export default function FacultyCourseChoicePageClient() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
-
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -101,17 +101,17 @@ export default function FacultyCourseChoicePageClient() {
 
   const [windowStatus, setWindowStatus] = useState("CLOSED");
   const [activeSeniorityLevel, setActiveSeniorityLevel] = useState<number | null>(null);
-  const [seniorityAllowed, setSeniorityAllowed] = useState(true);
-  const [sessionRemainingMinutes, setSessionRemainingMinutes] = useState(0);
+  const [activeTeacherId, setActiveTeacherId] = useState<number | null>(null);
   const [canEdit, setCanEdit] = useState(false);
+  const [editMessage, setEditMessage] = useState("");
   const [hasFinalized, setHasFinalized] = useState(false);
+  const [sessionRemainingMinutes, setSessionRemainingMinutes] = useState(0);
 
   const [creditPolicy, setCreditPolicy] = useState<{
     level: number;
     minCredits: number | null;
     maxCredits: number | null;
   } | null>(null);
-  const [currentSelectedCredits, setCurrentSelectedCredits] = useState(0);
 
   const [availableCourses, setAvailableCourses] = useState<AvailableCourse[]>([]);
   const [selectedCourseIds, setSelectedCourseIds] = useState<number[]>([]);
@@ -126,15 +126,13 @@ export default function FacultyCourseChoicePageClient() {
     try {
       const res = await fetch(
         `/api/faculty/course-choices/options?termName=${encodeURIComponent(termName)}`,
-        {
-          cache: "no-store",
-        }
+        { cache: "no-store" }
       );
 
       const json: ApiResponse = await res.json();
 
       if (!res.ok) {
-        throw new Error(json.error || "Failed to load faculty choices.");
+        throw new Error(json.error || "Failed to load faculty choice page.");
       }
 
       setTeacherName(json.teacher?.full_name || "");
@@ -145,12 +143,12 @@ export default function FacultyCourseChoicePageClient() {
 
       setWindowStatus(json.windowStatus || "CLOSED");
       setActiveSeniorityLevel(json.activeSeniorityLevel ?? null);
-      setSeniorityAllowed(Boolean(json.seniorityAllowed ?? true));
-      setSessionRemainingMinutes(Number(json.sessionRemainingMinutes || 0));
+      setActiveTeacherId(json.activeTeacherId ?? null);
       setCanEdit(Boolean(json.canEdit));
+      setEditMessage(json.editMessage || "");
       setHasFinalized(Boolean(json.hasFinalized));
       setCreditPolicy(json.creditPolicy || null);
-      setCurrentSelectedCredits(Number(json.currentSelectedCredits || 0));
+      setSessionRemainingMinutes(Number(json.sessionRemainingMinutes || 0));
 
       const rows = json.availableCourses || [];
       setAvailableCourses(rows);
@@ -161,7 +159,7 @@ export default function FacultyCourseChoicePageClient() {
 
       setSelectedCourseIds(selected);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load faculty choices.");
+      setError(err instanceof Error ? err.message : "Failed to load faculty choice page.");
       setAvailableCourses([]);
       setSelectedCourseIds([]);
     } finally {
@@ -177,9 +175,7 @@ export default function FacultyCourseChoicePageClient() {
 
   const selectedCourses = useMemo(() => {
     const map = new Map(availableCourses.map((course) => [course.id, course]));
-    return selectedCourseIds
-      .map((id) => map.get(id))
-      .filter(Boolean) as AvailableCourse[];
+    return selectedCourseIds.map((id) => map.get(id)).filter(Boolean) as AvailableCourse[];
   }, [availableCourses, selectedCourseIds]);
 
   const liveSelectedCredits = useMemo(() => {
@@ -199,7 +195,6 @@ export default function FacultyCourseChoicePageClient() {
 
   function moveUp(index: number) {
     if (!canEdit || hasFinalized || index <= 0) return;
-
     setSelectedCourseIds((prev) => {
       const next = [...prev];
       [next[index - 1], next[index]] = [next[index], next[index - 1]];
@@ -209,7 +204,6 @@ export default function FacultyCourseChoicePageClient() {
 
   function moveDown(index: number) {
     if (!canEdit || hasFinalized || index >= selectedCourseIds.length - 1) return;
-
     setSelectedCourseIds((prev) => {
       const next = [...prev];
       [next[index], next[index + 1]] = [next[index + 1], next[index]];
@@ -239,7 +233,7 @@ export default function FacultyCourseChoicePageClient() {
         }),
       });
 
-      const json: ApiResponse = await res.json();
+      const json = await res.json();
 
       if (!res.ok) {
         throw new Error(json.error || "Failed to save choice buffer.");
@@ -257,11 +251,6 @@ export default function FacultyCourseChoicePageClient() {
   async function finalizeChoices() {
     if (!termName) {
       setError("Please select a term.");
-      return;
-    }
-
-    if (selectedCourseIds.length === 0) {
-      setError("Please add at least one preferred course before final submit.");
       return;
     }
 
@@ -286,10 +275,10 @@ export default function FacultyCourseChoicePageClient() {
         }),
       });
 
-      const saveJson: ApiResponse = await saveRes.json();
+      const saveJson = await saveRes.json();
 
       if (!saveRes.ok) {
-        throw new Error(saveJson.error || "Failed to save final buffer before submission.");
+        throw new Error(saveJson.error || "Failed to save before final submit.");
       }
 
       const res = await fetch("/api/faculty/course-choices/finalize", {
@@ -297,12 +286,10 @@ export default function FacultyCourseChoicePageClient() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          termName,
-        }),
+        body: JSON.stringify({ termName }),
       });
 
-      const json: ApiResponse = await res.json();
+      const json = await res.json();
 
       if (!res.ok) {
         throw new Error(json.error || "Failed to finalize faculty choices.");
@@ -325,16 +312,16 @@ export default function FacultyCourseChoicePageClient() {
             <div>
               <h1 className="text-2xl font-bold text-slate-900">Faculty Course Choice</h1>
               <p className="mt-1 text-sm text-slate-600">
-                Read offered courses, prepare priority list, save buffer, and submit final choices.
+                All faculty may view the open offered pool. Only the active turn may edit and finalize choices.
               </p>
             </div>
 
             <div className="flex flex-wrap gap-3">
               <a
-                href="/auth/login"
+                href="/faculty/dashboard"
                 className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
-                Login Page
+                Back to Dashboard
               </a>
 
               <button
@@ -397,14 +384,14 @@ export default function FacultyCourseChoicePageClient() {
             </div>
 
             <div className="rounded-xl bg-slate-50 p-4">
-              <div className="text-sm text-slate-500">Your Access</div>
+              <div className="text-sm text-slate-500">Active Faculty Turn</div>
               <div className="mt-1 font-semibold text-slate-900">
-                {seniorityAllowed ? "Allowed" : "Not Active Yet"}
+                {activeTeacherId ? `Teacher ID ${activeTeacherId}` : "Not fixed"}
               </div>
             </div>
 
             <div className="rounded-xl bg-slate-50 p-4">
-              <div className="text-sm text-slate-500">Policy</div>
+              <div className="text-sm text-slate-500">Credit Rule</div>
               <div className="mt-1 font-semibold text-slate-900">
                 Min {creditPolicy?.minCredits ?? "-"} | Max {creditPolicy?.maxCredits ?? "-"}
               </div>
@@ -452,17 +439,17 @@ export default function FacultyCourseChoicePageClient() {
           </div>
         )}
 
-        {!seniorityAllowed && (
+        {!canEdit && editMessage ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Your seniority level is not active for course choice right now. Please wait until your level is opened by admin/coordinator.
+            {editMessage}
           </div>
-        )}
+        ) : null}
 
         <div className="grid gap-6 xl:grid-cols-2">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900">
-                Available Offered Sections
+                Visible Offered Pool
               </h2>
               <span className="text-sm text-slate-500">
                 {availableCourses.length} section(s)
@@ -536,7 +523,7 @@ export default function FacultyCourseChoicePageClient() {
 
               {availableCourses.length === 0 && !loading && (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-slate-500">
-                  No faculty-visible offered sections found for the selected term.
+                  No faculty-visible sections found for the selected term.
                 </div>
               )}
             </div>
@@ -545,7 +532,7 @@ export default function FacultyCourseChoicePageClient() {
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900">
-                Your Priority List
+                Your Priority Buffer
               </h2>
               <span className="text-sm text-slate-500">
                 {selectedCourseIds.length} selected

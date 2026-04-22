@@ -1,9 +1,9 @@
-import { validateFacultySession, processFacultySessionWarningsAndExpiry } from "@/lib/faculty-session";
 import {
-  getActiveFacultySeniorityLevel,
-  getActiveFacultyTeacherId,
-  getFacultyChoiceWindowStatus,
-} from "@/lib/system-settings";
+  validateFacultySession,
+  processFacultySessionWarningsAndExpiry,
+} from "@/lib/faculty-session";
+import { getFacultyChoiceWindowStatus } from "@/lib/system-settings";
+import { getCurrentActiveFacultyTurn } from "@/lib/faculty-turn";
 
 const FACULTY_VISIBLE_STATUSES = [
   "FACULTY_CHOICE_BUFFER",
@@ -11,13 +11,18 @@ const FACULTY_VISIBLE_STATUSES = [
 ];
 
 export function canFacultyViewOfferingStatus(status: string) {
-  return FACULTY_VISIBLE_STATUSES.includes(String(status || "").trim().toUpperCase());
+  return FACULTY_VISIBLE_STATUSES.includes(
+    String(status || "").trim().toUpperCase()
+  );
 }
 
-export async function canFacultyEdit(sessionToken: string, teacher?: {
-  id: number;
-  seniority_level: number | null;
-}) {
+export async function canFacultyEdit(
+  sessionToken: string,
+  teacher?: {
+    id: number;
+    seniority_level: number | null;
+  }
+) {
   const windowStatus = await getFacultyChoiceWindowStatus();
 
   if (windowStatus !== "OPEN") {
@@ -54,20 +59,19 @@ export async function canFacultyEdit(sessionToken: string, teacher?: {
     };
   }
 
-  const activeLevel = await getActiveFacultySeniorityLevel();
-  const activeTeacherId = await getActiveFacultyTeacherId();
+  const activeTurn = await getCurrentActiveFacultyTurn();
 
-  if (activeLevel && teacher.seniority_level !== activeLevel) {
+  if (!activeTurn) {
     return {
       allowed: false,
-      message: `Only Level ${activeLevel} is active for faculty choice right now.`,
+      message: "No active faculty turn is available right now.",
     };
   }
 
-  if (activeTeacherId && teacher.id !== activeTeacherId) {
+  if (activeTurn.teacherId !== teacher.id) {
     return {
       allowed: false,
-      message: "Another faculty member is currently active for editing.",
+      message: `Current active turn belongs to ${activeTurn.teacherCode} - ${activeTurn.fullName}.`,
     };
   }
 
