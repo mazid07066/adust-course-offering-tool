@@ -18,10 +18,9 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     return null;
   }
 
-  const session = await prisma.facultyLoginSession.findUnique({
-    where: { sessionToken },
-    include: {
-      user: true,
+  const session = await prisma.faculty_login_sessions.findUnique({
+    where: {
+      session_token: sessionToken,
     },
   });
 
@@ -29,24 +28,38 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     return null;
   }
 
-  if (session.revokedAt) {
+  if (session.revoked_at) {
     return null;
   }
 
-  if (new Date() > session.expiresAt) {
+  if (new Date(session.expires_at).getTime() <= Date.now()) {
     return null;
   }
 
-  if (!session.user || !session.user.is_active) {
+  const user = await prisma.users.findUnique({
+    where: {
+      id: session.user_id,
+    },
+    select: {
+      id: true,
+      username: true,
+      full_name: true,
+      role: true,
+      is_active: true,
+      teacher_id: true,
+    },
+  });
+
+  if (!user || !user.is_active) {
     return null;
   }
 
   return {
-    id: session.user.id,
-    username: session.user.username,
-    full_name: session.user.full_name,
-    role: session.user.role,
-    is_active: session.user.is_active,
-    teacher_id: session.user.teacher_id,
+    id: user.id,
+    username: user.username,
+    full_name: user.full_name,
+    role: user.role,
+    is_active: user.is_active,
+    teacher_id: user.teacher_id ?? null,
   };
 }

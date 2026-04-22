@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import {
-  setSetting,
   setFacultyLevelCreditPolicy,
+  setSetting,
 } from "@/lib/system-settings";
 
 export async function POST(req: NextRequest) {
@@ -54,13 +54,19 @@ export async function POST(req: NextRequest) {
     const { key, value } = body;
 
     if (!key || value === undefined) {
-      return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid payload." },
+        { status: 400 }
+      );
     }
 
     await setSetting(String(key), String(value), Number(guard.id));
 
     return NextResponse.json({ success: true });
-  } catch (err) {
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  } catch {
+    return NextResponse.json(
+      { error: "Server error." },
+      { status: 500 }
+    );
   }
 }

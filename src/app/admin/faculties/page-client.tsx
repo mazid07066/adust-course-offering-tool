@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import AdminLayout from "@/components/admin-layout";
 
-type Department = {
+type DepartmentRow = {
   id: number;
-  name: string;
   short_name: string;
+  name: string;
 };
 
-type Faculty = {
+type FacultyRow = {
   id: number;
   department_id: number;
   teacher_code: string;
@@ -17,352 +17,295 @@ type Faculty = {
   designation: string | null;
   email: string | null;
   phone: string | null;
+  seniority_level: number | null;
   is_active: boolean | null;
-  departments: Department;
-};
-
-type FacultyResponse = {
-  success?: boolean;
-  faculties?: Faculty[];
-  faculty?: Faculty;
-  message?: string;
-  error?: string;
-};
-
-type DepartmentResponse = {
-  success?: boolean;
-  departments?: Department[];
-  error?: string;
-};
-
-type CreateForm = {
-  department_id: string;
-  teacher_code: string;
-  full_name: string;
-  designation: string;
-  email: string;
-  phone: string;
-};
-
-type EditForm = {
-  department_id: string;
-  full_name: string;
-  designation: string;
-  email: string;
-  phone: string;
-};
-
-const emptyCreateForm: CreateForm = {
-  department_id: "",
-  teacher_code: "",
-  full_name: "",
-  designation: "",
-  email: "",
-  phone: "",
-};
-
-const emptyEditForm: EditForm = {
-  department_id: "",
-  full_name: "",
-  designation: "",
-  email: "",
-  phone: "",
+  departments: {
+    id: number;
+    short_name: string;
+    name: string;
+  };
 };
 
 export default function FacultiesPageClient() {
-  const [faculties, setFaculties] = useState<Faculty[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const [createForm, setCreateForm] = useState<CreateForm>(emptyCreateForm);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState<EditForm>(emptyEditForm);
-
+  const [faculties, setFaculties] = useState<FacultyRow[]>([]);
+  const [departments, setDepartments] = useState<DepartmentRow[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [editingId, setEditingId] = useState<number | null>(null);
+
+  const [form, setForm] = useState({
+    department_id: "",
+    teacher_code: "",
+    full_name: "",
+    designation: "",
+    email: "",
+    phone: "",
+    seniority_level: "",
+  });
 
   async function loadAll() {
-    setLoading(true);
     setError("");
 
-    try {
-      const [facultiesRes, departmentsRes] = await Promise.all([
-        fetch("/api/faculties/manage", { cache: "no-store" }),
-        fetch("/api/departments/options", { cache: "no-store" }),
-      ]);
+    const [f, d] = await Promise.all([
+      fetch("/api/faculties/manage", { cache: "no-store" }),
+      fetch("/api/departments/options", { cache: "no-store" }),
+    ]);
 
-      const facultiesJson: FacultyResponse = await facultiesRes.json();
-      const departmentsJson: DepartmentResponse = await departmentsRes.json();
+    const fJson = await f.json();
+    const dJson = await d.json();
 
-      if (!facultiesRes.ok) {
-        throw new Error(facultiesJson.error || "Failed to load faculties.");
-      }
-
-      if (!departmentsRes.ok) {
-        throw new Error(departmentsJson.error || "Failed to load departments.");
-      }
-
-      setFaculties(facultiesJson.faculties || []);
-      setDepartments(departmentsJson.departments || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load page.");
-    } finally {
-      setLoading(false);
-    }
+    setFaculties(fJson.faculties || []);
+    setDepartments(dJson.departments || []);
   }
 
   useEffect(() => {
     loadAll();
   }, []);
 
-  const sortedFaculties = useMemo(() => {
-    return [...faculties].sort((a, b) =>
-      a.teacher_code.localeCompare(b.teacher_code)
-    );
-  }, [faculties]);
+  function startEdit(f: FacultyRow) {
+    setEditingId(f.id);
+    setForm({
+      department_id: String(f.department_id),
+      teacher_code: f.teacher_code,
+      full_name: f.full_name,
+      designation: f.designation || "",
+      email: f.email || "",
+      phone: f.phone || "",
+      seniority_level:
+        f.seniority_level === null || f.seniority_level === undefined
+          ? ""
+          : String(f.seniority_level),
+    });
+    setMessage("");
+    setError("");
+  }
+
+  function resetForm() {
+    setEditingId(null);
+    setForm({
+      department_id: "",
+      teacher_code: "",
+      full_name: "",
+      designation: "",
+      email: "",
+      phone: "",
+      seniority_level: "",
+    });
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
     setMessage("");
+    setError("");
 
-    try {
-      const res = await fetch("/api/faculties/manage", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(createForm),
-      });
-
-      const json: FacultyResponse = await res.json();
-
-      if (!res.ok) {
-        throw new Error(json.error || "Failed to create faculty.");
-      }
-
-      setCreateForm(emptyCreateForm);
-      setMessage(json.message || "Faculty created successfully.");
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create faculty.");
-    }
-  }
-
-  function startEdit(faculty: Faculty) {
-    setEditingId(faculty.id);
-    setEditForm({
-      department_id: String(faculty.department_id),
-      full_name: faculty.full_name || "",
-      designation: faculty.designation || "",
-      email: faculty.email || "",
-      phone: faculty.phone || "",
+    const res = await fetch("/api/faculties/manage", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(form),
     });
-    setError("");
-    setMessage("");
-  }
 
-  function cancelEdit() {
-    setEditingId(null);
-    setEditForm(emptyEditForm);
+    const json = await res.json();
+
+    if (!res.ok) {
+      setError(json.error || "Failed to create faculty.");
+      return;
+    }
+
+    setMessage("Faculty created successfully.");
+    resetForm();
+    await loadAll();
   }
 
   async function handleUpdate(id: number) {
-    setError("");
     setMessage("");
+    setError("");
 
-    try {
-      const res = await fetch(`/api/faculties/manage/${id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(editForm),
-      });
+    const res = await fetch(`/api/faculties/manage/${id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        full_name: form.full_name,
+        designation: form.designation,
+        email: form.email,
+        phone: form.phone,
+        seniority_level: form.seniority_level,
+      }),
+    });
 
-      const json: FacultyResponse = await res.json();
+    const json = await res.json();
 
-      if (!res.ok) {
-        throw new Error(json.error || "Failed to update faculty.");
-      }
-
-      setEditingId(null);
-      setEditForm(emptyEditForm);
-      setMessage(json.message || "Faculty updated successfully.");
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update faculty.");
+    if (!res.ok) {
+      setError(json.error || "Failed to update faculty.");
+      return;
     }
+
+    setMessage("Faculty updated successfully.");
+    resetForm();
+    await loadAll();
   }
 
-  async function toggleActive(faculty: Faculty) {
-    setError("");
+  async function toggleActive(f: FacultyRow) {
     setMessage("");
+    setError("");
 
-    try {
-      const res = await fetch(`/api/faculties/manage/${faculty.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          is_active: !faculty.is_active,
-        }),
-      });
+    const res = await fetch(`/api/faculties/manage/${f.id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        is_active: !f.is_active,
+      }),
+    });
 
-      const json: FacultyResponse = await res.json();
+    const json = await res.json();
 
-      if (!res.ok) {
-        throw new Error(json.error || "Failed to update faculty status.");
-      }
-
-      setMessage(
-        faculty.is_active
-          ? "Faculty deactivated successfully."
-          : "Faculty activated successfully."
-      );
-      await loadAll();
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to update faculty status."
-      );
+    if (!res.ok) {
+      setError(json.error || "Failed to update faculty status.");
+      return;
     }
+
+    setMessage("Faculty status updated successfully.");
+    await loadAll();
   }
 
   async function handleDelete(id: number) {
-    const ok = window.confirm("Delete this faculty?");
+    const ok = window.confirm("Delete this faculty record?");
     if (!ok) return;
 
-    setError("");
     setMessage("");
+    setError("");
 
-    try {
-      const res = await fetch(`/api/faculties/manage/${id}`, {
-        method: "DELETE",
-      });
+    const res = await fetch(`/api/faculties/manage/${id}`, {
+      method: "DELETE",
+    });
 
-      const json: FacultyResponse = await res.json();
+    const json = await res.json();
 
-      if (!res.ok) {
-        throw new Error(json.error || "Failed to delete faculty.");
-      }
-
-      setMessage(json.message || "Faculty deleted successfully.");
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete faculty.");
+    if (!res.ok) {
+      setError(json.error || "Failed to delete faculty.");
+      return;
     }
+
+    setMessage("Faculty deleted successfully.");
+    await loadAll();
   }
 
   return (
     <AdminLayout title="Faculties">
       <div className="space-y-6">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">
+          <h2 className="text-xl font-semibold text-slate-900">
             Create Faculty
           </h2>
 
-          <form
-            onSubmit={handleCreate}
-            className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3"
-          >
+          <form onSubmit={handleCreate} className="mt-4 grid gap-3 md:grid-cols-3">
             <select
-              value={createForm.department_id}
+              value={form.department_id}
               onChange={(e) =>
-                setCreateForm({ ...createForm, department_id: e.target.value })
+                setForm({ ...form, department_id: e.target.value })
               }
-              className="rounded-xl border px-4 py-3"
+              className="rounded-xl border px-3 py-2"
             >
               <option value="">Select Department</option>
               {departments.map((d) => (
                 <option key={d.id} value={d.id}>
-                  {d.short_name} - {d.name}
+                  {d.short_name}
                 </option>
               ))}
             </select>
 
             <input
               placeholder="Faculty Code"
-              value={createForm.teacher_code}
+              value={form.teacher_code}
               onChange={(e) =>
-                setCreateForm({ ...createForm, teacher_code: e.target.value })
+                setForm({ ...form, teacher_code: e.target.value.toUpperCase() })
               }
-              className="rounded-xl border px-4 py-3"
+              className="rounded-xl border px-3 py-2"
             />
 
             <input
               placeholder="Full Name"
-              value={createForm.full_name}
+              value={form.full_name}
               onChange={(e) =>
-                setCreateForm({ ...createForm, full_name: e.target.value })
+                setForm({ ...form, full_name: e.target.value })
               }
-              className="rounded-xl border px-4 py-3"
+              className="rounded-xl border px-3 py-2"
             />
 
             <input
               placeholder="Designation"
-              value={createForm.designation}
+              value={form.designation}
               onChange={(e) =>
-                setCreateForm({ ...createForm, designation: e.target.value })
+                setForm({ ...form, designation: e.target.value })
               }
-              className="rounded-xl border px-4 py-3"
+              className="rounded-xl border px-3 py-2"
             />
 
             <input
               placeholder="Email"
-              value={createForm.email}
+              value={form.email}
               onChange={(e) =>
-                setCreateForm({ ...createForm, email: e.target.value })
+                setForm({ ...form, email: e.target.value })
               }
-              className="rounded-xl border px-4 py-3"
+              className="rounded-xl border px-3 py-2"
             />
 
             <input
               placeholder="Phone"
-              value={createForm.phone}
+              value={form.phone}
               onChange={(e) =>
-                setCreateForm({ ...createForm, phone: e.target.value })
+                setForm({ ...form, phone: e.target.value })
               }
-              className="rounded-xl border px-4 py-3"
+              className="rounded-xl border px-3 py-2"
             />
 
-            <div className="md:col-span-2 xl:col-span-3">
-              <button
-                type="submit"
-                className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700"
-              >
-                Add Faculty
-              </button>
-            </div>
+            <input
+              type="number"
+              min={1}
+              max={7}
+              placeholder="Seniority Level (1-7)"
+              value={form.seniority_level}
+              onChange={(e) =>
+                setForm({ ...form, seniority_level: e.target.value })
+              }
+              className="rounded-xl border px-3 py-2"
+            />
+
+            <button className="rounded-xl bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 md:col-span-3">
+              Add Faculty
+            </button>
           </form>
         </div>
 
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
-
-        {message && (
+        {message ? (
           <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
             {message}
           </div>
-        )}
+        ) : null}
 
-        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b px-5 py-4">
-            <h2 className="text-lg font-semibold text-slate-900">
+        {error ? (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-slate-900">
               Faculty Records
             </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Total: {sortedFaculties.length}
-            </p>
+            <div className="text-sm text-slate-500">Total: {faculties.length}</div>
           </div>
 
-          <div className="divide-y">
-            {sortedFaculties.map((f) => (
-              <div key={f.id} className="p-5">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div className="mt-4 space-y-4">
+            {faculties.map((f) => (
+              <div key={f.id} className="rounded-xl border border-slate-200 p-4">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="space-y-1">
                     <div className="text-base font-semibold text-slate-900">
                       {f.teacher_code} — {f.full_name}
@@ -379,9 +322,12 @@ export default function FacultiesPageClient() {
                     <div className="text-sm text-slate-600">
                       Phone: {f.phone || "-"}
                     </div>
+                    <div className="text-sm text-slate-600">
+                      Seniority Level: {f.seniority_level ?? "-"}
+                    </div>
                     <div className="text-sm">
                       <span
-                        className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${
+                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
                           f.is_active
                             ? "bg-green-100 text-green-700"
                             : "bg-red-100 text-red-700"
@@ -394,128 +340,99 @@ export default function FacultiesPageClient() {
 
                   <div className="flex flex-wrap gap-2">
                     <button
-                      type="button"
                       onClick={() => toggleActive(f)}
-                      className="rounded-lg bg-amber-600 px-3 py-2 text-sm text-white hover:bg-amber-700"
+                      className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50"
                     >
                       {f.is_active ? "Deactivate" : "Activate"}
                     </button>
 
                     <button
-                      type="button"
                       onClick={() => startEdit(f)}
-                      className="rounded-lg bg-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-800"
+                      className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50"
                     >
                       Edit
                     </button>
 
                     <button
-                      type="button"
                       onClick={() => handleDelete(f.id)}
-                      className="rounded-lg bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700"
+                      className="rounded-lg border border-red-300 px-3 py-2 text-sm text-red-700 hover:bg-red-50"
                     >
                       Delete
                     </button>
                   </div>
                 </div>
 
-                {editingId === f.id && (
-                  <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      <select
-                        value={editForm.department_id}
-                        onChange={(e) =>
-                          setEditForm({
-                            ...editForm,
-                            department_id: e.target.value,
-                          })
-                        }
-                        className="rounded-xl border px-4 py-3"
-                      >
-                        <option value="">Select Department</option>
-                        {departments.map((d) => (
-                          <option key={d.id} value={d.id}>
-                            {d.short_name} - {d.name}
-                          </option>
-                        ))}
-                      </select>
+                {editingId === f.id ? (
+                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    <input
+                      placeholder="Full Name"
+                      value={form.full_name}
+                      onChange={(e) =>
+                        setForm({ ...form, full_name: e.target.value })
+                      }
+                      className="rounded-xl border px-3 py-2"
+                    />
+                    <input
+                      placeholder="Designation"
+                      value={form.designation}
+                      onChange={(e) =>
+                        setForm({ ...form, designation: e.target.value })
+                      }
+                      className="rounded-xl border px-3 py-2"
+                    />
+                    <input
+                      placeholder="Email"
+                      value={form.email}
+                      onChange={(e) =>
+                        setForm({ ...form, email: e.target.value })
+                      }
+                      className="rounded-xl border px-3 py-2"
+                    />
+                    <input
+                      placeholder="Phone"
+                      value={form.phone}
+                      onChange={(e) =>
+                        setForm({ ...form, phone: e.target.value })
+                      }
+                      className="rounded-xl border px-3 py-2"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      max={7}
+                      placeholder="Seniority Level (1-7)"
+                      value={form.seniority_level}
+                      onChange={(e) =>
+                        setForm({ ...form, seniority_level: e.target.value })
+                      }
+                      className="rounded-xl border px-3 py-2"
+                    />
 
-                      <input
-                        placeholder="Full Name"
-                        value={editForm.full_name}
-                        onChange={(e) =>
-                          setEditForm({
-                            ...editForm,
-                            full_name: e.target.value,
-                          })
-                        }
-                        className="rounded-xl border px-4 py-3"
-                      />
-
-                      <input
-                        placeholder="Designation"
-                        value={editForm.designation}
-                        onChange={(e) =>
-                          setEditForm({
-                            ...editForm,
-                            designation: e.target.value,
-                          })
-                        }
-                        className="rounded-xl border px-4 py-3"
-                      />
-
-                      <input
-                        placeholder="Email"
-                        value={editForm.email}
-                        onChange={(e) =>
-                          setEditForm({
-                            ...editForm,
-                            email: e.target.value,
-                          })
-                        }
-                        className="rounded-xl border px-4 py-3"
-                      />
-
-                      <input
-                        placeholder="Phone"
-                        value={editForm.phone}
-                        onChange={(e) =>
-                          setEditForm({
-                            ...editForm,
-                            phone: e.target.value,
-                          })
-                        }
-                        className="rounded-xl border px-4 py-3"
-                      />
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap gap-2">
+                    <div className="flex gap-2 md:col-span-3">
                       <button
-                        type="button"
                         onClick={() => handleUpdate(f.id)}
-                        className="rounded-xl bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
+                        className="rounded-xl bg-green-600 px-4 py-2 text-white hover:bg-green-700"
                       >
                         Save Changes
                       </button>
 
                       <button
-                        type="button"
-                        onClick={cancelEdit}
-                        className="rounded-xl bg-slate-200 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-300"
+                        onClick={resetForm}
+                        className="rounded-xl border px-4 py-2 hover:bg-slate-50"
                       >
                         Cancel
                       </button>
                     </div>
                   </div>
-                )}
+                ) : null}
               </div>
             ))}
 
-            {sortedFaculties.length === 0 && !loading && (
-              <div className="p-8 text-center text-sm text-slate-500">
-                No faculties found.
+            {faculties.length === 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-slate-500">
+                No faculty records found.
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       </div>

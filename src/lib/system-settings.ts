@@ -2,7 +2,11 @@ import { prisma } from "@/lib/prisma";
 
 const DEFAULT_SETTINGS: Record<string, string> = {
   FACULTY_SESSION_MINUTES: "30",
+  FACULTY_WARNING_MINUTES: "10",
   FACULTY_CHOICE_WINDOW_STATUS: "CLOSED",
+  FACULTY_ACTIVE_SENIORITY_LEVEL: "",
+  FACULTY_ACTIVE_TEACHER_ID: "",
+  FACULTY_AUTO_ADVANCE_ON_EXPIRY: "true",
 };
 
 export type FacultyLevelCreditPolicy = {
@@ -12,19 +16,19 @@ export type FacultyLevelCreditPolicy = {
 };
 
 export async function getSetting(key: string): Promise<string> {
-  let setting = await prisma.systemSetting.findUnique({
-    where: { settingKey: key },
-  });
+  const defaultValue = DEFAULT_SETTINGS[key] ?? "";
 
-  if (!setting) {
-    const defaultValue = DEFAULT_SETTINGS[key] ?? "";
-    setting = await prisma.systemSetting.create({
-      data: {
-        settingKey: key,
-        settingValue: defaultValue,
-      },
-    });
-  }
+  const setting = await prisma.systemSetting.upsert({
+    where: { settingKey: key },
+    update: {},
+    create: {
+      settingKey: key,
+      settingValue: defaultValue,
+    },
+    select: {
+      settingValue: true,
+    },
+  });
 
   return setting.settingValue;
 }
@@ -32,26 +36,12 @@ export async function getSetting(key: string): Promise<string> {
 export async function getOptionalSetting(key: string): Promise<string | null> {
   const setting = await prisma.systemSetting.findUnique({
     where: { settingKey: key },
+    select: {
+      settingValue: true,
+    },
   });
 
   return setting?.settingValue ?? null;
-}
-
-export async function getSettingNumber(key: string): Promise<number> {
-  const value = await getSetting(key);
-  const num = Number(value);
-  return Number.isNaN(num) ? 0 : num;
-}
-
-export async function getOptionalSettingNumber(
-  key: string
-): Promise<number | null> {
-  const value = await getOptionalSetting(key);
-
-  if (value === null || value === "") return null;
-
-  const num = Number(value);
-  return Number.isNaN(num) ? null : num;
 }
 
 export async function setSetting(
@@ -73,12 +63,50 @@ export async function setSetting(
   });
 }
 
+export async function getSettingNumber(key: string): Promise<number> {
+  const value = await getSetting(key);
+  const num = Number(value);
+  return Number.isNaN(num) ? 0 : num;
+}
+
+export async function getOptionalSettingNumber(
+  key: string
+): Promise<number | null> {
+  const value = await getOptionalSetting(key);
+
+  if (value === null || value === "") {
+    return null;
+  }
+
+  const num = Number(value);
+  return Number.isNaN(num) ? null : num;
+}
+
 export async function getFacultySessionMinutes(): Promise<number> {
   return getSettingNumber("FACULTY_SESSION_MINUTES");
 }
 
+export async function getFacultyWarningMinutes(): Promise<number> {
+  return getSettingNumber("FACULTY_WARNING_MINUTES");
+}
+
 export async function getFacultyChoiceWindowStatus(): Promise<string> {
   return getSetting("FACULTY_CHOICE_WINDOW_STATUS");
+}
+
+export async function getActiveFacultySeniorityLevel(): Promise<number | null> {
+  return getOptionalSettingNumber("FACULTY_ACTIVE_SENIORITY_LEVEL");
+}
+
+export async function getActiveFacultyTeacherId(): Promise<number | null> {
+  return getOptionalSettingNumber("FACULTY_ACTIVE_TEACHER_ID");
+}
+
+export async function getFacultyAutoAdvanceOnExpiry(): Promise<boolean> {
+  const raw = (await getSetting("FACULTY_AUTO_ADVANCE_ON_EXPIRY"))
+    .trim()
+    .toLowerCase();
+  return raw === "true";
 }
 
 export function getFacultyLevelMinKey(level: number) {
@@ -90,8 +118,10 @@ export function getFacultyLevelMaxKey(level: number) {
 }
 
 export async function getFacultyLevelCreditPolicy(
-  level: number
-): Promise<FacultyLevelCreditPolicy> {
+  level: number | null | undefined
+): Promise<FacultyLevelCreditPolicy | null> {
+  if (!level) return null;
+
   const minCredits = await getOptionalSettingNumber(getFacultyLevelMinKey(level));
   const maxCredits = await getOptionalSettingNumber(getFacultyLevelMaxKey(level));
 
@@ -105,11 +135,20 @@ export async function getFacultyLevelCreditPolicy(
 export async function getAllFacultyLevelCreditPolicies(
   levels = [1, 2, 3, 4, 5, 6, 7]
 ): Promise<FacultyLevelCreditPolicy[]> {
-  const policies = await Promise.all(
-    levels.map((level) => getFacultyLevelCreditPolicy(level))
+  const items = await Promise.all(
+    levels.map(async (level) => {
+      const policy = await getFacultyLevelCreditPolicy(level);
+      return (
+        policy || {
+          level,
+          minCredits: null,
+          maxCredits: null,
+        }
+      );
+    })
   );
 
-  return policies;
+  return items;
 }
 
 export async function setFacultyLevelCreditPolicy(

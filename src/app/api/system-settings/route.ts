@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import {
+  getActiveFacultySeniorityLevel,
+  getActiveFacultyTeacherId,
+  getAllFacultyLevelCreditPolicies,
+  getFacultyAutoAdvanceOnExpiry,
   getFacultyChoiceWindowStatus,
   getFacultySessionMinutes,
-  getAllFacultyLevelCreditPolicies,
+  getFacultyWarningMinutes,
 } from "@/lib/system-settings";
 
 export async function GET() {
@@ -11,12 +15,20 @@ export async function GET() {
   if (guard instanceof Response) return guard;
 
   const sessionMinutes = await getFacultySessionMinutes();
+  const warningMinutes = await getFacultyWarningMinutes();
   const windowStatus = await getFacultyChoiceWindowStatus();
+  const activeSeniorityLevel = await getActiveFacultySeniorityLevel();
+  const activeTeacherId = await getActiveFacultyTeacherId();
+  const autoAdvanceOnExpiry = await getFacultyAutoAdvanceOnExpiry();
   const levelCreditPolicies = await getAllFacultyLevelCreditPolicies();
 
   return NextResponse.json({
     sessionMinutes,
+    warningMinutes,
     windowStatus,
+    activeSeniorityLevel,
+    activeTeacherId,
+    autoAdvanceOnExpiry,
     levelCreditPolicies,
   });
 }

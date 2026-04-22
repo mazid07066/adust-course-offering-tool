@@ -28,6 +28,7 @@ type AvailableCourse = {
   programName: string;
   courseCode: string;
   courseTitle: string;
+  credit: number;
   batchCodes: string[];
   teacherCodes: string[];
   schedule: CourseSchedule[];
@@ -52,29 +53,33 @@ type ApiResponse = {
     teacher_code: string;
     full_name: string;
     designation: string | null;
+    department_code: string | null;
+    seniority_level: number | null;
   };
   term?: {
     id: number;
     name: string;
   };
   windowStatus?: string;
+  activeSeniorityLevel?: number | null;
+  seniorityAllowed?: boolean;
   sessionRemainingMinutes?: number;
   canEdit?: boolean;
   hasFinalized?: boolean;
+  creditPolicy?: {
+    level: number;
+    minCredits: number | null;
+    maxCredits: number | null;
+  } | null;
+  currentSelectedCredits?: number;
   availableCourses?: AvailableCourse[];
   selections?: SelectionRow[];
 };
 
 function statusBadgeClasses(status: string) {
-  if (status === "OPEN") {
-    return "bg-green-100 text-green-700";
-  }
-  if (status === "CLOSED") {
-    return "bg-red-100 text-red-700";
-  }
-  if (status === "FINAL_LOCKED") {
-    return "bg-purple-100 text-purple-700";
-  }
+  if (status === "OPEN") return "bg-green-100 text-green-700";
+  if (status === "CLOSED") return "bg-red-100 text-red-700";
+  if (status === "FINAL_LOCKED") return "bg-purple-100 text-purple-700";
   return "bg-slate-100 text-slate-700";
 }
 
@@ -91,10 +96,22 @@ export default function FacultyCourseChoicePageClient() {
   const [teacherName, setTeacherName] = useState("");
   const [teacherCode, setTeacherCode] = useState("");
   const [designation, setDesignation] = useState("");
+  const [departmentCode, setDepartmentCode] = useState("");
+  const [seniorityLevel, setSeniorityLevel] = useState<number | null>(null);
+
   const [windowStatus, setWindowStatus] = useState("CLOSED");
+  const [activeSeniorityLevel, setActiveSeniorityLevel] = useState<number | null>(null);
+  const [seniorityAllowed, setSeniorityAllowed] = useState(true);
   const [sessionRemainingMinutes, setSessionRemainingMinutes] = useState(0);
   const [canEdit, setCanEdit] = useState(false);
   const [hasFinalized, setHasFinalized] = useState(false);
+
+  const [creditPolicy, setCreditPolicy] = useState<{
+    level: number;
+    minCredits: number | null;
+    maxCredits: number | null;
+  } | null>(null);
+  const [currentSelectedCredits, setCurrentSelectedCredits] = useState(0);
 
   const [availableCourses, setAvailableCourses] = useState<AvailableCourse[]>([]);
   const [selectedCourseIds, setSelectedCourseIds] = useState<number[]>([]);
@@ -123,16 +140,26 @@ export default function FacultyCourseChoicePageClient() {
       setTeacherName(json.teacher?.full_name || "");
       setTeacherCode(json.teacher?.teacher_code || "");
       setDesignation(json.teacher?.designation || "");
+      setDepartmentCode(json.teacher?.department_code || "");
+      setSeniorityLevel(json.teacher?.seniority_level ?? null);
+
       setWindowStatus(json.windowStatus || "CLOSED");
-      setSessionRemainingMinutes(json.sessionRemainingMinutes || 0);
+      setActiveSeniorityLevel(json.activeSeniorityLevel ?? null);
+      setSeniorityAllowed(Boolean(json.seniorityAllowed ?? true));
+      setSessionRemainingMinutes(Number(json.sessionRemainingMinutes || 0));
       setCanEdit(Boolean(json.canEdit));
       setHasFinalized(Boolean(json.hasFinalized));
-      setAvailableCourses(json.availableCourses || []);
-      setSelectedCourseIds(
-        (json.selections || [])
-          .sort((a, b) => (a.priorityOrder || 9999) - (b.priorityOrder || 9999))
-          .map((x) => x.offeredCourseId)
-      );
+      setCreditPolicy(json.creditPolicy || null);
+      setCurrentSelectedCredits(Number(json.currentSelectedCredits || 0));
+
+      const rows = json.availableCourses || [];
+      setAvailableCourses(rows);
+
+      const selected = (json.selections || [])
+        .sort((a, b) => (a.priorityOrder || 9999) - (b.priorityOrder || 9999))
+        .map((row) => row.offeredCourseId);
+
+      setSelectedCourseIds(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load faculty choices.");
       setAvailableCourses([]);
@@ -149,10 +176,15 @@ export default function FacultyCourseChoicePageClient() {
   }, [termName]);
 
   const selectedCourses = useMemo(() => {
+    const map = new Map(availableCourses.map((course) => [course.id, course]));
     return selectedCourseIds
-      .map((id) => availableCourses.find((course) => course.id === id))
+      .map((id) => map.get(id))
       .filter(Boolean) as AvailableCourse[];
-  }, [selectedCourseIds, availableCourses]);
+  }, [availableCourses, selectedCourseIds]);
+
+  const liveSelectedCredits = useMemo(() => {
+    return selectedCourses.reduce((sum, course) => sum + Number(course.credit || 0), 0);
+  }, [selectedCourses]);
 
   function addCourse(courseId: number) {
     if (!canEdit || hasFinalized) return;
@@ -322,81 +354,91 @@ export default function FacultyCourseChoicePageClient() {
           </div>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-3">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900">Faculty Info</h2>
-            <div className="mt-4 space-y-2 text-sm text-slate-700">
-              <div>
-                <span className="font-medium">Faculty:</span> {teacherName || "-"}
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div>
+              <div className="text-sm text-slate-500">Faculty</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {teacherCode} — {teacherName}
               </div>
-              <div>
-                <span className="font-medium">Code:</span> {teacherCode || "-"}
-              </div>
-              <div>
-                <span className="font-medium">Designation:</span> {designation || "-"}
+              <div className="text-sm text-slate-600">{designation || "-"}</div>
+            </div>
+
+            <div>
+              <div className="text-sm text-slate-500">Department / Level</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {departmentCode || "-"} | Level {seniorityLevel ?? "-"}
               </div>
             </div>
-          </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900">Choice Control</h2>
-            <div className="mt-4 space-y-3 text-sm text-slate-700">
-              <div>
-                <span className="font-medium">Window Status:</span>{" "}
-                <span
-                  className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses(
-                    windowStatus
-                  )}`}
-                >
+            <div>
+              <div className="text-sm text-slate-500">Window Status</div>
+              <div className="mt-2">
+                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses(windowStatus)}`}>
                   {windowStatus}
                 </span>
               </div>
-              <div>
-                <span className="font-medium">Session Remaining:</span>{" "}
+            </div>
+
+            <div>
+              <div className="text-sm text-slate-500">Session Remaining</div>
+              <div className="mt-1 font-semibold text-slate-900">
                 {sessionRemainingMinutes} minute(s)
               </div>
-              <div>
-                <span className="font-medium">Edit Permission:</span>{" "}
-                {canEdit ? "Editable" : "Read Only"}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Active Seniority Phase</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {activeSeniorityLevel ? `Level ${activeSeniorityLevel}` : "All Levels"}
               </div>
-              <div>
-                <span className="font-medium">Final Submit:</span>{" "}
-                {hasFinalized ? "Already Submitted" : "Not Submitted"}
+            </div>
+
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Your Access</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {seniorityAllowed ? "Allowed" : "Not Active Yet"}
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Policy</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                Min {creditPolicy?.minCredits ?? "-"} | Max {creditPolicy?.maxCredits ?? "-"}
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Selected Credits</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {liveSelectedCredits}
               </div>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900">Select Term</h2>
-            <div className="mt-4">
-              <select
-                value={termName}
-                onChange={(e) => setTermName(e.target.value)}
-                className="w-full rounded-xl border px-4 py-3"
-                disabled={loadingTerms}
-              >
-                <option value="">
-                  {loadingTerms ? "Loading terms..." : "Select Academic Term"}
+          <div className="mt-4">
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              Academic Term
+            </label>
+            <select
+              value={termName}
+              onChange={(e) => setTermName(e.target.value)}
+              className="w-full max-w-sm rounded-xl border px-4 py-3"
+              disabled={loadingTerms}
+            >
+              <option value="">
+                {loadingTerms ? "Loading terms..." : "Select Academic Term"}
+              </option>
+              {terms.map((term) => (
+                <option key={term.name} value={term.name}>
+                  {term.name}
                 </option>
-                {terms.map((term) => (
-                  <option key={term.name} value={term.name}>
-                    {term.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+              ))}
+            </select>
           </div>
         </div>
-
-        {(windowStatus === "CLOSED" || windowStatus === "FINAL_LOCKED" || hasFinalized) && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            {hasFinalized
-              ? "Your final choices have already been submitted. Editing is locked unless coordinator/admin reopens them."
-              : windowStatus === "FINAL_LOCKED"
-              ? "Faculty choice is final locked by admin/coordinator. You can view only."
-              : "Faculty choice window is currently closed. You can view only."}
-          </div>
-        )}
 
         {(error || termError) && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -410,194 +452,140 @@ export default function FacultyCourseChoicePageClient() {
           </div>
         )}
 
+        {!seniorityAllowed && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Your seniority level is not active for course choice right now. Please wait until your level is opened by admin/coordinator.
+          </div>
+        )}
+
         <div className="grid gap-6 xl:grid-cols-2">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900">
-                Offered Courses (Read Only)
+                Available Offered Sections
               </h2>
-              <button
-                type="button"
-                onClick={loadPage}
-                disabled={!termName || loading}
-                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-              >
-                {loading ? "Loading..." : "Refresh"}
-              </button>
+              <span className="text-sm text-slate-500">
+                {availableCourses.length} section(s)
+              </span>
             </div>
 
-            <div className="space-y-4">
+            <div className="mt-4 space-y-3">
               {availableCourses.map((course) => {
-                const alreadySelected = selectedCourseIds.includes(course.id);
+                const selected = selectedCourseIds.includes(course.id);
 
                 return (
-                  <div
-                    key={course.id}
-                    className="rounded-xl border border-slate-200 bg-slate-50 p-4"
-                  >
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="space-y-1">
-                        <div className="text-base font-semibold text-slate-900">
+                  <div key={course.id} className="rounded-xl border border-slate-200 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold text-slate-900">
                           {course.courseCode} — {course.courseTitle}
                         </div>
                         <div className="text-sm text-slate-600">
-                          Program: {course.programCode}
+                          {course.programCode} | Sec-{course.section} | {course.credit} credits
                         </div>
-                        <div className="text-sm text-slate-600">
-                          Section: {course.section}
-                        </div>
-                        <div className="text-sm text-slate-600">
+                        <div className="text-sm text-slate-500">
                           Batches: {course.batchCodes.join(", ") || "-"}
                         </div>
-                        <div className="text-sm text-slate-600">
-                          Assigned Faculty: {course.teacherCodes.join(", ") || "-"}
-                        </div>
-                        <div className="text-sm text-slate-600">
+                        <div className="text-sm text-slate-500">
                           Offering Status: {course.offeringStatus}
                         </div>
-
-                        <div className="pt-2 text-sm text-slate-700">
-                          <div className="font-medium">Schedule:</div>
-                          {course.schedule.length === 0 ? (
-                            <div className="text-slate-500">No slot assigned.</div>
-                          ) : (
-                            <div className="space-y-1">
-                              {course.schedule.map((slot) => (
-                                <div key={slot.id}>
-                                  {slot.dayOfWeek} {slot.startTime}-{slot.endTime} |{" "}
-                                  {slot.roomCode}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-
-                        {course.linkedSecondaryCourses.length > 0 && (
-                          <div className="pt-2 text-sm text-slate-700">
-                            <div className="font-medium">Linked Secondary Courses:</div>
-                            <div className="space-y-1">
-                              {course.linkedSecondaryCourses.map((secondary) => (
-                                <div key={secondary.id}>
-                                  {secondary.courseCode} — {secondary.courseTitle} | Sec-
-                                  {secondary.section} | {secondary.programCode} | Batches:{" "}
-                                  {secondary.batchCodes.join(", ") || "-"}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
                       </div>
 
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => addCourse(course.id)}
-                          disabled={!canEdit || hasFinalized || alreadySelected}
-                          className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {alreadySelected ? "Added" : "Add to Preference"}
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          selected ? removeCourse(course.id) : addCourse(course.id)
+                        }
+                        disabled={!canEdit || hasFinalized}
+                        className={`rounded-xl px-4 py-2 text-sm font-medium ${
+                          selected
+                            ? "bg-red-100 text-red-700"
+                            : "bg-blue-600 text-white hover:bg-blue-700"
+                        } disabled:opacity-50`}
+                      >
+                        {selected ? "Remove" : "Add"}
+                      </button>
                     </div>
+
+                    {course.schedule.length > 0 && (
+                      <div className="mt-3 text-sm text-slate-600">
+                        Schedule:{" "}
+                        {course.schedule
+                          .map(
+                            (slot) =>
+                              `${slot.dayOfWeek} ${slot.startTime}-${slot.endTime} | ${slot.roomCode}`
+                          )
+                          .join(" || ")}
+                      </div>
+                    )}
+
+                    {course.linkedSecondaryCourses.length > 0 && (
+                      <div className="mt-3 text-sm text-slate-600">
+                        Linked Co-offered:{" "}
+                        {course.linkedSecondaryCourses
+                          .map(
+                            (x) =>
+                              `${x.programCode} ${x.courseCode} Sec-${x.section}`
+                          )
+                          .join(", ")}
+                      </div>
+                    )}
                   </div>
                 );
               })}
 
               {availableCourses.length === 0 && !loading && (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                  No eligible offered course found for the selected term.
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-slate-500">
+                  No faculty-visible offered sections found for the selected term.
                 </div>
               )}
             </div>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900">
-                My Preference Buffer
+                Your Priority List
               </h2>
-
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={saveBuffer}
-                  disabled={!canEdit || hasFinalized || saving || !termName}
-                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {saving ? "Saving..." : "Save Draft Buffer"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={finalizeChoices}
-                  disabled={
-                    !canEdit ||
-                    hasFinalized ||
-                    finalizing ||
-                    !termName ||
-                    selectedCourseIds.length === 0
-                  }
-                  className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {finalizing ? "Submitting..." : "Final Submit"}
-                </button>
-              </div>
+              <span className="text-sm text-slate-500">
+                {selectedCourseIds.length} selected
+              </span>
             </div>
 
-            <div className="space-y-4">
+            <div className="mt-4 space-y-3">
               {selectedCourses.map((course, index) => (
-                <div
-                  key={course.id}
-                  className="rounded-xl border border-slate-200 bg-slate-50 p-4"
-                >
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="space-y-1">
-                      <div className="inline-flex rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
-                        Priority {index + 1}
-                      </div>
-
-                      <div className="text-base font-semibold text-slate-900">
-                        {course.courseCode} — {course.courseTitle}
+                <div key={course.id} className="rounded-xl border border-slate-200 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-semibold text-slate-900">
+                        #{index + 1} — {course.courseCode} — {course.courseTitle}
                       </div>
                       <div className="text-sm text-slate-600">
-                        Program: {course.programCode}
-                      </div>
-                      <div className="text-sm text-slate-600">
-                        Section: {course.section}
-                      </div>
-                      <div className="text-sm text-slate-600">
-                        Batches: {course.batchCodes.join(", ") || "-"}
+                        {course.programCode} | Sec-{course.section} | {course.credit} credits
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex gap-2">
                       <button
-                        type="button"
                         onClick={() => moveUp(index)}
                         disabled={!canEdit || hasFinalized || index === 0}
-                        className="rounded-lg border px-3 py-2 text-sm text-slate-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                       >
-                        Move Up
+                        ↑
                       </button>
-
                       <button
-                        type="button"
                         onClick={() => moveDown(index)}
                         disabled={
-                          !canEdit ||
-                          hasFinalized ||
-                          index === selectedCourses.length - 1
+                          !canEdit || hasFinalized || index === selectedCourseIds.length - 1
                         }
-                        className="rounded-lg border px-3 py-2 text-sm text-slate-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                       >
-                        Move Down
+                        ↓
                       </button>
-
                       <button
-                        type="button"
                         onClick={() => removeCourse(course.id)}
                         disabled={!canEdit || hasFinalized}
-                        className="rounded-lg bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-lg border border-red-300 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
                       >
                         Remove
                       </button>
@@ -607,10 +595,28 @@ export default function FacultyCourseChoicePageClient() {
               ))}
 
               {selectedCourses.length === 0 && (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                  No preference added yet.
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-slate-500">
+                  No courses selected yet.
                 </div>
               )}
+            </div>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button
+                onClick={saveBuffer}
+                disabled={!canEdit || hasFinalized || saving}
+                className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving ? "Saving..." : "Save Buffer"}
+              </button>
+
+              <button
+                onClick={finalizeChoices}
+                disabled={!canEdit || hasFinalized || finalizing}
+                className="rounded-xl bg-green-600 px-5 py-3 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {finalizing ? "Finalizing..." : "Final Submit"}
+              </button>
             </div>
           </div>
         </div>

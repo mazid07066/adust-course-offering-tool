@@ -3,14 +3,38 @@ import { prisma } from "@/lib/prisma";
 import { requireFacultyApi } from "@/lib/auth-guard";
 import { cookies } from "next/headers";
 import { validateFacultySession, getRemainingMinutes } from "@/lib/faculty-session";
-import { getFacultyChoiceWindowStatus } from "@/lib/system-settings";
+import {
+  getFacultyChoiceWindowStatus,
+  getFacultyLevelCreditPolicy,
+  getActiveFacultySeniorityLevel,
+} from "@/lib/system-settings";
 
-const ALLOWED_OFFERING_STATUSES = [
-  "BUFFER_READY",
+const FACULTY_VISIBLE_OFFERING_STATUSES = [
   "FACULTY_CHOICE_BUFFER",
   "FACULTY_CHOICE_FINALIZED",
-  "CONFIRMED",
 ];
+
+function sumDistinctCourseCredits(
+  rows: Array<{
+    offered_course_id: number;
+    offered_courses: {
+      master_courses: {
+        credit: number;
+      };
+    };
+  }>
+) {
+  const seen = new Set<number>();
+  let total = 0;
+
+  for (const row of rows) {
+    if (seen.has(row.offered_course_id)) continue;
+    seen.add(row.offered_course_id);
+    total += Number(row.offered_courses.master_courses.credit || 0);
+  }
+
+  return total;
+}
 
 export async function GET(req: NextRequest) {
   const guard = await requireFacultyApi();
@@ -35,27 +59,51 @@ export async function GET(req: NextRequest) {
     }
 
     const cookieStore = await cookies();
-    const sessionToken = cookieStore.get("sessionToken")?.value || "";
+    const sessionToken = cookieStore.get("sessionToken")?.value;
+
+    if (!sessionToken) {
+      return NextResponse.json(
+        { error: "Faculty session token is missing." },
+        { status: 401 }
+      );
+    }
 
     const sessionCheck = await validateFacultySession(sessionToken);
 
     if (!sessionCheck.valid) {
       return NextResponse.json(
-        { error: sessionCheck.message || "Session expired." },
+        { error: sessionCheck.message || "Session expired. Please login again." },
         { status: 401 }
       );
     }
 
-    const teacherId = guard.teacher_id;
-
-    const term = await prisma.academic_terms.findFirst({
-      where: {
-        name: termName,
-      },
+    const teacher = await prisma.teachers.findUnique({
+      where: { id: guard.teacher_id },
       select: {
         id: true,
-        name: true,
+        teacher_code: true,
+        full_name: true,
+        designation: true,
+        seniority_level: true,
+        departments: {
+          select: {
+            short_name: true,
+            name: true,
+          },
+        },
       },
+    });
+
+    if (!teacher) {
+      return NextResponse.json(
+        { error: "Faculty record not found." },
+        { status: 404 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: { name: termName },
+      select: { id: true, name: true },
     });
 
     if (!term) {
@@ -65,89 +113,34 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const teacher = await prisma.teachers.findUnique({
-      where: { id: teacherId },
-      select: {
-        id: true,
-        teacher_code: true,
-        full_name: true,
-        designation: true,
-      },
-    });
+    const windowStatus = await getFacultyChoiceWindowStatus();
+    const activeSeniorityLevel = await getActiveFacultySeniorityLevel();
+    const creditPolicy = await getFacultyLevelCreditPolicy(teacher.seniority_level);
 
-    const offeredCourses = await prisma.offered_courses.findMany({
-      where: {
-        primary_offered_course_id: null,
-        offerings: {
-          academic_term_id: term.id,
-          status: {
-            in: ALLOWED_OFFERING_STATUSES,
-          },
-        },
-      },
-      orderBy: [
-        { offerings: { program_id: "asc" } },
-        { section: "asc" },
-        { id: "asc" },
-      ],
-      include: {
-        offerings: {
-          include: {
-            programs: true,
-            academic_terms: true,
-          },
-        },
-        master_courses: {
-          include: {
-            program: true,
-          },
-        },
-        offered_course_batches: {
-          include: {
-            batches: true,
-          },
-        },
-        offered_course_slots: {
-          orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
-          include: {
-            rooms: true,
-          },
-        },
-        offered_course_teachers: {
-          include: {
-            teachers: true,
-          },
-        },
-        secondary_offered_courses: {
-          include: {
-            master_courses: {
-              include: {
-                program: true,
-              },
-            },
-            offered_course_batches: {
-              include: {
-                batches: true,
+    const seniorityAllowed =
+      !activeSeniorityLevel ||
+      teacher.seniority_level === null ||
+      teacher.seniority_level === activeSeniorityLevel;
+
+    const availableCourses = seniorityAllowed
+      ? await prisma.offered_courses.findMany({
+          where: {
+            primary_offered_course_id: null,
+            offerings: {
+              academic_term_id: term.id,
+              status: {
+                in: FACULTY_VISIBLE_OFFERING_STATUSES,
               },
             },
           },
-        },
-      },
-    });
-
-    const existingSelections = await prisma.faculty_course_selections.findMany({
-      where: {
-        teacher_id: teacherId,
-        academic_term_id: term.id,
-      },
-      orderBy: [{ priority_order: "asc" }, { id: "asc" }],
-      include: {
-        offered_courses: {
+          orderBy: [
+            { section: "asc" },
+            { id: "asc" },
+          ],
           include: {
             offerings: {
-              include: {
-                programs: true,
-                academic_terms: true,
+              select: {
+                status: true,
               },
             },
             master_courses: {
@@ -158,18 +151,67 @@ export async function GET(req: NextRequest) {
             offered_course_batches: {
               include: {
                 batches: true,
-              },
-            },
-            offered_course_slots: {
-              orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
-              include: {
-                rooms: true,
               },
             },
             offered_course_teachers: {
               include: {
                 teachers: true,
               },
+            },
+            offered_course_slots: {
+              include: {
+                rooms: true,
+              },
+              orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+            },
+            secondary_offered_courses: {
+              include: {
+                master_courses: {
+                  include: {
+                    program: true,
+                  },
+                },
+                offered_course_batches: {
+                  include: {
+                    batches: true,
+                  },
+                },
+              },
+            },
+          },
+        })
+      : [];
+
+    const selections = await prisma.faculty_course_selections.findMany({
+      where: {
+        teacher_id: teacher.id,
+        academic_term_id: term.id,
+      },
+      orderBy: [{ priority_order: "asc" }, { id: "asc" }],
+      include: {
+        offered_courses: {
+          include: {
+            offerings: true,
+            master_courses: {
+              include: {
+                program: true,
+              },
+            },
+            offered_course_batches: {
+              include: {
+                batches: true,
+              },
+            },
+            offered_course_teachers: {
+              include: {
+                teachers: true,
+              },
+            },
+            offered_course_slots: {
+              include: {
+                rooms: true,
+              },
+              orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
             },
             secondary_offered_courses: {
               include: {
@@ -190,91 +232,106 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    const windowStatus = await getFacultyChoiceWindowStatus();
-    const hasFinalized = existingSelections.some((x) => x.status === "FINAL");
+    const currentSelectedCredits = sumDistinctCourseCredits(selections);
+    const hasFinalized = selections.some((row) => row.status === "FINAL");
 
-    const availableCourses = offeredCourses.map((course) => ({
-      id: course.id,
-      section: course.section,
-      offeringStatus: course.offerings.status,
-      programCode: course.master_courses.program.short_name,
-      programName: course.master_courses.program.name,
-      courseCode: course.master_courses.course_code,
-      courseTitle: course.master_courses.course_title,
-      batchCodes: course.offered_course_batches.map((x) => x.batches.batch_code),
-      teacherCodes: course.offered_course_teachers.map(
-        (x) => x.teachers?.teacher_code || "-"
-      ),
-      schedule: course.offered_course_slots.map((slot) => ({
-        id: slot.id,
-        dayOfWeek: slot.day_of_week,
-        startTime: slot.start_time,
-        endTime: slot.end_time,
-        roomCode: slot.rooms?.room_code || "-",
-      })),
-      linkedSecondaryCourses: course.secondary_offered_courses.map((secondary) => ({
-        id: secondary.id,
-        courseCode: secondary.master_courses.course_code,
-        courseTitle: secondary.master_courses.course_title,
-        section: secondary.section,
-        programCode: secondary.master_courses.program.short_name,
-        batchCodes: secondary.offered_course_batches.map((x) => x.batches.batch_code),
-      })),
-    }));
-
-    const selections = existingSelections.map((selection) => ({
-      id: selection.id,
-      offeredCourseId: selection.offered_course_id,
-      priorityOrder: selection.priority_order,
-      status: selection.status,
-      selectedAt: selection.selected_at,
-      confirmedAt: selection.confirmed_at,
-      course: {
-        id: selection.offered_courses.id,
-        section: selection.offered_courses.section,
-        offeringStatus: selection.offered_courses.offerings.status,
-        programCode: selection.offered_courses.master_courses.program.short_name,
-        programName: selection.offered_courses.master_courses.program.name,
-        courseCode: selection.offered_courses.master_courses.course_code,
-        courseTitle: selection.offered_courses.master_courses.course_title,
-        batchCodes: selection.offered_courses.offered_course_batches.map(
-          (x) => x.batches.batch_code
+    return NextResponse.json({
+      success: true,
+      teacher: {
+        id: teacher.id,
+        teacher_code: teacher.teacher_code,
+        full_name: teacher.full_name,
+        designation: teacher.designation,
+        department_code: teacher.departments?.short_name || null,
+        seniority_level: teacher.seniority_level,
+      },
+      term: {
+        id: term.id,
+        name: term.name,
+      },
+      windowStatus,
+      activeSeniorityLevel,
+      seniorityAllowed,
+      sessionRemainingMinutes: getRemainingMinutes(sessionCheck.session.expiresAt),
+      canEdit:
+        seniorityAllowed &&
+        windowStatus === "OPEN" &&
+        !hasFinalized &&
+        availableCourses.some(
+          (row) => row.offerings.status === "FACULTY_CHOICE_BUFFER"
         ),
-        teacherCodes: selection.offered_courses.offered_course_teachers.map(
+      hasFinalized,
+      creditPolicy,
+      currentSelectedCredits,
+      availableCourses: availableCourses.map((course) => ({
+        id: course.id,
+        section: course.section,
+        offeringStatus: course.offerings.status,
+        programCode: course.master_courses.program.short_name,
+        programName: course.master_courses.program.name,
+        courseCode: course.master_courses.course_code,
+        courseTitle: course.master_courses.course_title,
+        credit: Number(course.master_courses.credit || 0),
+        batchCodes: course.offered_course_batches.map((x) => x.batches.batch_code),
+        teacherCodes: course.offered_course_teachers.map(
           (x) => x.teachers?.teacher_code || "-"
         ),
-        schedule: selection.offered_courses.offered_course_slots.map((slot) => ({
+        schedule: course.offered_course_slots.map((slot) => ({
           id: slot.id,
           dayOfWeek: slot.day_of_week,
           startTime: slot.start_time,
           endTime: slot.end_time,
           roomCode: slot.rooms?.room_code || "-",
         })),
-        linkedSecondaryCourses:
-          selection.offered_courses.secondary_offered_courses.map((secondary) => ({
-            id: secondary.id,
-            courseCode: secondary.master_courses.course_code,
-            courseTitle: secondary.master_courses.course_title,
-            section: secondary.section,
-            programCode: secondary.master_courses.program.short_name,
-            batchCodes: secondary.offered_course_batches.map((x) => x.batches.batch_code),
+        linkedSecondaryCourses: course.secondary_offered_courses.map((secondary) => ({
+          id: secondary.id,
+          courseCode: secondary.master_courses.course_code,
+          courseTitle: secondary.master_courses.course_title,
+          section: secondary.section,
+          programCode: secondary.master_courses.program.short_name,
+          batchCodes: secondary.offered_course_batches.map((x) => x.batches.batch_code),
+        })),
+      })),
+      selections: selections.map((selection) => ({
+        id: selection.id,
+        offeredCourseId: selection.offered_course_id,
+        priorityOrder: selection.priority_order,
+        status: selection.status,
+        selectedAt: selection.selected_at ? selection.selected_at.toISOString() : null,
+        confirmedAt: selection.confirmed_at ? selection.confirmed_at.toISOString() : null,
+        course: {
+          id: selection.offered_courses.id,
+          section: selection.offered_courses.section,
+          offeringStatus: selection.offered_courses.offerings.status,
+          programCode: selection.offered_courses.master_courses.program.short_name,
+          programName: selection.offered_courses.master_courses.program.name,
+          courseCode: selection.offered_courses.master_courses.course_code,
+          courseTitle: selection.offered_courses.master_courses.course_title,
+          credit: Number(selection.offered_courses.master_courses.credit || 0),
+          batchCodes: selection.offered_courses.offered_course_batches.map(
+            (x) => x.batches.batch_code
+          ),
+          teacherCodes: selection.offered_courses.offered_course_teachers.map(
+            (x) => x.teachers?.teacher_code || "-"
+          ),
+          schedule: selection.offered_courses.offered_course_slots.map((slot) => ({
+            id: slot.id,
+            dayOfWeek: slot.day_of_week,
+            startTime: slot.start_time,
+            endTime: slot.end_time,
+            roomCode: slot.rooms?.room_code || "-",
           })),
-      },
-    }));
-
-    return NextResponse.json({
-      success: true,
-      teacher,
-      term: {
-        id: term.id,
-        name: term.name,
-      },
-      windowStatus,
-      sessionRemainingMinutes: getRemainingMinutes(sessionCheck.session!.expiresAt),
-      canEdit: windowStatus === "OPEN" && !hasFinalized,
-      hasFinalized,
-      availableCourses,
-      selections,
+          linkedSecondaryCourses:
+            selection.offered_courses.secondary_offered_courses.map((secondary) => ({
+              id: secondary.id,
+              courseCode: secondary.master_courses.course_code,
+              courseTitle: secondary.master_courses.course_title,
+              section: secondary.section,
+              programCode: secondary.master_courses.program.short_name,
+              batchCodes: secondary.offered_course_batches.map((x) => x.batches.batch_code),
+            })),
+        },
+      })),
     });
   } catch (error) {
     console.error(error);
