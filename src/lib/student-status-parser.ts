@@ -27,7 +27,7 @@ export type ParsedStudentIdentity = {
 
 function normalizeInline(value: string) {
   return String(value || "")
-    .replace(/[￾�]/g, " ")
+    .replace(/[ï¿¾ï¿½]/g, " ")
     .replace(/\u00A0/g, " ")
     .replace(/[^\S\r\n]+/g, " ")
     .trim();
@@ -35,7 +35,7 @@ function normalizeInline(value: string) {
 
 function normalizeMultiline(value: string) {
   return String(value || "")
-    .replace(/[￾�]/g, " ")
+    .replace(/[ï¿¾ï¿½]/g, " ")
     .replace(/\u00A0/g, " ")
     .replace(/\r/g, "")
     .split("\n")
@@ -133,15 +133,13 @@ function cleanRegistrationTitle(value: string) {
 }
 
 export function normalizeComparableTitle(value: string) {
-  let cleaned = cleanRegistrationTitle(value)
+  return cleanRegistrationTitle(value)
     .toLowerCase()
     .replace(/&/g, " and ")
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\b(the|course|lab\s*course)\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-
-  return cleaned;
 }
 
 export async function extractPdfText(buffer: Buffer): Promise<string> {
@@ -253,7 +251,85 @@ function splitTranscriptIntoSegments(text: string) {
     .filter(Boolean);
 }
 
+function sanitizeTranscriptForParsing(text: string) {
+  let clean = collapseText(text);
+
+  clean = clean
+    .replace(/Semester\s*Code\s*Description\s*Credits\s*Grade/gi, " ")
+    .replace(/SemesterCodeDescriptionCreditsGrade/gi, " ")
+    .replace(/CreditsEarned/gi, " Credits Earned ")
+    .replace(/TransferedCredits/gi, " Transfered Credits ")
+    .replace(/Printedon:/gi, " Printed on: ")
+    .replace(/StudentID:/gi, " Student ID: ")
+    .replace(/\*\*\s*Printed\s*:.*?(?=(SPRING|SUMMER|FALL)\s*\d{4}\s*[A-Z]{2,6}\d{3,4}|Credits\s*Earned|$)/gi, " ")
+    .replace(/\bPage\s+\d+\s+of\s+\d+\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return clean;
+}
+
+function dedupeTranscriptRows(rows: ParsedTranscriptCourse[]) {
+  const seen = new Set<string>();
+  const output: ParsedTranscriptCourse[] = [];
+
+  for (const row of rows) {
+    const key = [
+      row.semester,
+      row.code,
+      row.title.toLowerCase(),
+      row.credits.toFixed(2),
+      row.grade,
+    ].join("|");
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(row);
+  }
+
+  return output;
+}
+
+function parseTranscriptCoursesGlobal(text: string): ParsedTranscriptCourse[] {
+  const clean = sanitizeTranscriptForParsing(text);
+  const rows: ParsedTranscriptCourse[] = [];
+
+  const fullRegex =
+    /(SPRING|SUMMER|FALL)\s*(\d{4})\s*([A-Z]{2,6}\d{3,4})\s+([\s\S]*?)\s+(\d+(?:\.\d+)?)\s+([A-F][+-]?|I|W)(?=\s+(?:SPRING|SUMMER|FALL)\s*\d{4}\s*[A-Z]{2,6}\d{3,4}|\s+Credits\s*Earned\b|\s+Transfered\s*Credits\b|\s+GPA\s*:|\s+\*\*\s*Printed|\s+Page\s+\d+\s+of\s+\d+|$)/gi;
+
+  for (const match of clean.matchAll(fullRegex)) {
+    const semester = `${String(match[1]).toUpperCase()} ${match[2]}`;
+    const code = normalizeInline(match[3]).toUpperCase();
+    const title = normalizeInline(match[4]);
+    const credits = Number(match[5]);
+    const grade = normalizeInline(match[6]).toUpperCase();
+
+    if (!code || !title || Number.isNaN(credits) || !grade) continue;
+
+    rows.push({
+      semester,
+      code,
+      comparableCode: normalizeComparableCourseCode(code),
+      comparableTitle: normalizeComparableTitle(title),
+      title,
+      credits,
+      grade,
+    });
+  }
+
+  if (rows.length > 0) {
+    return dedupeTranscriptRows(rows);
+  }
+
+  return [];
+}
+
 export function parseTranscriptCourses(text: string): ParsedTranscriptCourse[] {
+  const globalRows = parseTranscriptCoursesGlobal(text);
+  if (globalRows.length > 0) {
+    return globalRows;
+  }
+
   const segments = splitTranscriptIntoSegments(text);
   const rows: ParsedTranscriptCourse[] = [];
 
@@ -311,7 +387,17 @@ export function parseTranscriptCourses(text: string): ParsedTranscriptCourse[] {
     }
   }
 
-  return rows;
+  return dedupeTranscriptRows(rows);
+}
+
+export function parseTranscriptEarnedCredits(text: string): number | null {
+  const clean = sanitizeTranscriptForParsing(text);
+
+  const match = clean.match(/Credits\s*Earned\s*:\s*(\d+(?:\.\d+)?)/i);
+  if (!match) return null;
+
+  const value = Number(match[1]);
+  return Number.isNaN(value) ? null : value;
 }
 
 export function parseRegistrationSemester(text: string): string | null {
@@ -450,6 +536,15 @@ export function getFailedOnlyCodes(courses: ParsedTranscriptCourse[]) {
   );
 
   return [...failed].filter((code) => !passed.has(code));
+}
+
+export function sumCourseCredits(items: Array<{ credits: number }>) {
+  const total = items.reduce((sum, item) => {
+    const numeric = Number(item.credits || 0);
+    return sum + (Number.isNaN(numeric) ? 0 : numeric);
+  }, 0);
+
+  return Number(total.toFixed(2));
 }
 
 export function makeDebugTextSample(text: string, maxLength = 1500) {

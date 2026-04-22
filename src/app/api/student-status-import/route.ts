@@ -15,6 +15,8 @@ import {
   parseRegistrationSemester,
   parseStudentIdentity,
   parseTranscriptCourses,
+  parseTranscriptEarnedCredits,
+  sumCourseCredits,
 } from "@/lib/student-status-parser";
 
 export const runtime = "nodejs";
@@ -33,6 +35,11 @@ type CatalogProgramRow = {
   display_label: string;
   is_active: boolean;
 };
+
+function numbersClose(a: number | null, b: number | null, tolerance = 0.01) {
+  if (a === null || b === null) return false;
+  return Math.abs(a - b) <= tolerance;
+}
 
 export async function POST(request: NextRequest) {
   await requireCoordinatorOrAdminApi();
@@ -97,6 +104,9 @@ export async function POST(request: NextRequest) {
 
     const transcriptCourses = transcriptText ? parseTranscriptCourses(transcriptText) : [];
     const registrationCourses = registrationText ? parseRegistrationCourses(registrationText) : [];
+    const transcriptEarnedCredits = transcriptText
+      ? parseTranscriptEarnedCredits(transcriptText)
+      : null;
 
     const completedMap = getCompletedCourseMap(transcriptCourses);
 
@@ -113,6 +123,26 @@ export async function POST(request: NextRequest) {
         },
       ])
     );
+
+    const completedCourses = Array.from(completedMap.values()).sort((a, b) => {
+      const termCompare = compareTerms(a.semester, b.semester);
+      if (termCompare !== 0) return termCompare;
+      return a.code.localeCompare(b.code);
+    });
+
+    const ongoingCourses = Array.from(ongoingMap.values()).sort((a, b) =>
+      a.code.localeCompare(b.code)
+    );
+
+    const parsedCompletedCredits = sumCourseCredits(completedCourses);
+    const parsedOngoingCredits = sumCourseCredits(ongoingCourses);
+    const combinedAcademicLoad = Number(
+      (parsedCompletedCredits + parsedOngoingCredits).toFixed(2)
+    );
+
+    const completedCreditMismatch =
+      transcriptEarnedCredits !== null &&
+      !numbersClose(transcriptEarnedCredits, parsedCompletedCredits);
 
     const failedOnlyCodes = getFailedOnlyCodes(transcriptCourses);
 
@@ -218,6 +248,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (transcriptText && transcriptEarnedCredits === null) {
+      warningMessages.push(
+        "Transcript earned-credit total could not be detected. Save validation will be weaker for this file."
+      );
+    }
+
+    if (completedCreditMismatch) {
+      warningMessages.push(
+        `Transcript earned credits (${transcriptEarnedCredits}) do not match parsed completed credits (${parsedCompletedCredits}). Save is blocked until parsing is correct.`
+      );
+    }
+
     return NextResponse.json({
       success: true,
       selectedProgram: {
@@ -238,10 +280,14 @@ export async function POST(request: NextRequest) {
         parsedCount: transcriptCourses.length,
         latestCompletedTerm,
         failedOnlyCodes,
+        transcriptEarnedCredits,
+        parsedCompletedCredits,
+        completedCreditMismatch,
       },
       registrationSummary: {
         parsedCount: registrationCourses.length,
         currentRegistrationTerm,
+        parsedOngoingCredits,
       },
       offeringContext: {
         suggestedNextOfferingTerm,
@@ -252,14 +298,15 @@ export async function POST(request: NextRequest) {
         remaining: remainingCourses.length,
         masterCourses: masterCourses.length,
       },
-      completedCourses: Array.from(completedMap.values()).sort((a, b) => {
-        const termCompare = compareTerms(a.semester, b.semester);
-        if (termCompare !== 0) return termCompare;
-        return a.code.localeCompare(b.code);
-      }),
-      ongoingCourses: Array.from(ongoingMap.values()).sort((a, b) =>
-        a.code.localeCompare(b.code)
-      ),
+      creditSummary: {
+        transcriptEarnedCredits,
+        parsedCompletedCredits,
+        parsedOngoingCredits,
+        combinedAcademicLoad,
+        completedCreditMismatch,
+      },
+      completedCourses,
+      ongoingCourses,
       remainingCourses: remainingCourses.map((course) => ({
         code: course.course_code,
         title: course.course_title,

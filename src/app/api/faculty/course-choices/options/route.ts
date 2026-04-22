@@ -28,7 +28,9 @@ function timeToMinutes(value: string) {
 }
 
 function slotsOverlap(a: SlotLike, b: SlotLike) {
-  if (a.day_of_week !== b.day_of_week) return false;
+  if (String(a.day_of_week).toUpperCase() !== String(b.day_of_week).toUpperCase()) {
+    return false;
+  }
 
   const aStart = timeToMinutes(a.start_time);
   const aEnd = timeToMinutes(a.end_time);
@@ -137,62 +139,6 @@ export async function GET(req: NextRequest) {
       seniority_level: teacher.seniority_level,
     });
 
-    const offerings = await prisma.offered_courses.findMany({
-      where: {
-        primary_offered_course_id: null,
-        offerings: {
-          academic_term_id: term.id,
-          status: {
-            in: FACULTY_VISIBLE_OFFERING_STATUSES,
-          },
-        },
-      },
-      orderBy: [{ section: "asc" }, { id: "asc" }],
-      include: {
-        offerings: true,
-        master_courses: {
-          include: {
-            program: true,
-          },
-        },
-        offered_course_batches: {
-          include: {
-            batches: true,
-          },
-        },
-        offered_course_slots: {
-          include: {
-            rooms: true,
-          },
-          orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
-        },
-        offered_course_teachers: {
-          include: {
-            teachers: true,
-          },
-        },
-        secondary_offered_courses: {
-          include: {
-            master_courses: {
-              include: {
-                program: true,
-              },
-            },
-            offered_course_batches: {
-              include: {
-                batches: true,
-              },
-            },
-          },
-        },
-        faculty_course_selections: {
-          include: {
-            teachers: true,
-          },
-        },
-      },
-    });
-
     const selections = await prisma.faculty_course_selections.findMany({
       where: {
         teacher_id: teacher.id,
@@ -245,6 +191,66 @@ export async function GET(req: NextRequest) {
 
     const ownChosenCourses = selections.map((x) => x.offered_courses);
     const ownChosenSlots = ownChosenCourses.flatMap((x) => x.offered_course_slots);
+    const ownSelectedCourseIds = new Set(selections.map((x) => x.offered_course_id));
+
+    const offerings = await prisma.offered_courses.findMany({
+      where: {
+        primary_offered_course_id: null,
+        offerings: {
+          academic_term_id: term.id,
+          status: {
+            in: FACULTY_VISIBLE_OFFERING_STATUSES,
+          },
+        },
+      },
+      orderBy: [{ section: "asc" }, { id: "asc" }],
+      include: {
+        offerings: true,
+        master_courses: {
+          include: {
+            program: true,
+          },
+        },
+        offered_course_batches: {
+          include: {
+            batches: true,
+          },
+        },
+        offered_course_slots: {
+          include: {
+            rooms: true,
+          },
+          orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+        },
+        offered_course_teachers: {
+          include: {
+            teachers: true,
+          },
+        },
+        secondary_offered_courses: {
+          include: {
+            master_courses: {
+              include: {
+                program: true,
+              },
+            },
+            offered_course_batches: {
+              include: {
+                batches: true,
+              },
+            },
+          },
+        },
+        faculty_course_selections: {
+          where: {
+            academic_term_id: term.id,
+          },
+          include: {
+            teachers: true,
+          },
+        },
+      },
+    });
 
     const availableCourses = offerings
       .filter((row) => canFacultyViewOfferingStatus(row.offerings.status))
@@ -292,7 +298,7 @@ export async function GET(req: NextRequest) {
             dayOfWeek: slot.day_of_week,
             startTime: slot.start_time,
             endTime: slot.end_time,
-            roomCode: slot.rooms?.room_code || "-",
+            roomCode: slot.rooms?.room_code ?? "-",
           })),
           linkedSecondaryCourses: course.secondary_offered_courses.map((secondary) => ({
             id: secondary.id,
@@ -384,7 +390,7 @@ export async function GET(req: NextRequest) {
             dayOfWeek: slot.day_of_week,
             startTime: slot.start_time,
             endTime: slot.end_time,
-            roomCode: slot.rooms?.room_code || "-",
+            roomCode: slot.rooms?.room_code ?? "-",
           })),
           linkedSecondaryCourses:
             selection.offered_courses.secondary_offered_courses.map((secondary) => ({

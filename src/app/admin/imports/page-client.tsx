@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type ProgramOption = {
   id: number;
@@ -39,10 +39,14 @@ type PreviewResponse = {
     parsedCount: number;
     latestCompletedTerm: string | null;
     failedOnlyCodes: string[];
+    transcriptEarnedCredits: number | null;
+    parsedCompletedCredits: number | null;
+    completedCreditMismatch: boolean;
   };
   registrationSummary: {
     parsedCount: number;
     currentRegistrationTerm: string | null;
+    parsedOngoingCredits: number;
   };
   offeringContext: {
     suggestedNextOfferingTerm: string | null;
@@ -52,6 +56,13 @@ type PreviewResponse = {
     ongoing: number;
     remaining: number;
     masterCourses: number;
+  };
+  creditSummary: {
+    transcriptEarnedCredits: number | null;
+    parsedCompletedCredits: number | null;
+    parsedOngoingCredits: number;
+    combinedAcademicLoad: number;
+    completedCreditMismatch: boolean;
   };
   completedCourses: Array<{
     code: string;
@@ -107,6 +118,10 @@ export default function ImportsPageClient() {
 
     loadPrograms();
   }, []);
+
+  const saveBlocked = useMemo(() => {
+    return Boolean(result?.creditSummary.completedCreditMismatch);
+  }, [result]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -165,6 +180,8 @@ export default function ImportsPageClient() {
           studentId: result.studentIdentity.studentId,
           latestCompletedTerm: result.transcriptSummary.latestCompletedTerm,
           currentRegistrationTerm: result.registrationSummary.currentRegistrationTerm,
+          transcriptEarnedCredits: result.creditSummary.transcriptEarnedCredits,
+          parsedCompletedCredits: result.creditSummary.parsedCompletedCredits,
           completedCourses: result.completedCourses,
           ongoingCourses: result.ongoingCourses,
         }),
@@ -207,8 +224,9 @@ export default function ImportsPageClient() {
             Registration courses are treated as ongoing.
           </p>
           <p className="mt-2">
-            This screen is the safe parsing and validation preview step before final
-            persistence wiring.
+            Save is now protected by transcript earned-credit validation. If parsed
+            completed credits do not match the transcript earned-credit total, saving
+            will be blocked.
           </p>
         </div>
 
@@ -270,10 +288,10 @@ export default function ImportsPageClient() {
               <button
                 type="button"
                 onClick={handleSaveBatchStatus}
-                disabled={saving}
-                className="rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+                disabled={saving || saveBlocked}
+                className="rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {saving ? "Saving..." : "Save Batch Status"}
+                {saving ? "Saving..." : saveBlocked ? "Save Blocked" : "Save Batch Status"}
               </button>
             ) : null}
           </div>
@@ -396,6 +414,25 @@ export default function ImportsPageClient() {
                 </ul>
               </div>
             ) : null}
+
+            {result.creditSummary.completedCreditMismatch ? (
+              <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4">
+                <p className="text-sm font-semibold text-red-800">
+                  Save blocked due to transcript mismatch
+                </p>
+                <p className="mt-2 text-sm text-red-700">
+                  Transcript earned credits are{" "}
+                  <span className="font-semibold">
+                    {result.creditSummary.transcriptEarnedCredits ?? "-"}
+                  </span>
+                  , but parsed completed credits are{" "}
+                  <span className="font-semibold">
+                    {result.creditSummary.parsedCompletedCredits ?? "-"}
+                  </span>
+                  .
+                </p>
+              </div>
+            ) : null}
           </div>
 
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
@@ -432,6 +469,44 @@ export default function ImportsPageClient() {
               </p>
               <h4 className="mt-2 text-3xl font-bold text-slate-900">
                 {result.counts.masterCourses}
+              </h4>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Transcript Earned Credits
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-slate-900">
+                {result.creditSummary.transcriptEarnedCredits ?? "-"}
+              </h4>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Parsed Completed Credits
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-green-700">
+                {result.creditSummary.parsedCompletedCredits ?? "-"}
+              </h4>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Parsed Ongoing Credits
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-blue-700">
+                {result.creditSummary.parsedOngoingCredits}
+              </h4>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Combined Academic Load
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-indigo-700">
+                {result.creditSummary.combinedAcademicLoad}
               </h4>
             </div>
           </div>
@@ -487,7 +562,7 @@ export default function ImportsPageClient() {
                 </thead>
                 <tbody>
                   {result.ongoingCourses.map((row) => (
-                    <tr key={row.code} className="border-b">
+                    <tr key={`${row.code}-${row.section || ""}`} className="border-b">
                       <td className="px-3 py-2">{row.code}</td>
                       <td className="px-3 py-2">{row.title}</td>
                       <td className="px-3 py-2">{row.credits}</td>

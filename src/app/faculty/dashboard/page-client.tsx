@@ -62,6 +62,43 @@ type DashboardResponse = {
   };
 };
 
+type LoadSheetResponse = {
+  success?: boolean;
+  error?: string;
+  faculty?: {
+    teacherId: number;
+    departmentName: string;
+    departmentCode: string;
+    fullName: string;
+    designation: string;
+    initial: string;
+  };
+  termName?: string;
+  submittedAt?: string | null;
+  totals?: {
+    theoryCredits: number;
+    labCredits: number;
+    totalCredits: number;
+  };
+  programTallies?: Array<{
+    programCode: string;
+    theoryCredits: number;
+    labCredits: number;
+    totalCredits: number;
+  }>;
+  scheduleRows?: Array<{
+    courseCode: string;
+    courseTitle: string;
+    section: string;
+    credit: number;
+    category: "THEORY" | "LAB" | "PROJECT";
+    dayOfWeek: string;
+    timeText: string;
+    roomText: string;
+    batchCodes: string[];
+  }>;
+};
+
 function badgeClasses(status: string) {
   if (status === "OPEN") return "bg-green-100 text-green-700";
   if (status === "CLOSED") return "bg-red-100 text-red-700";
@@ -75,6 +112,7 @@ export default function FacultyDashboardPageClient() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
+  const [loadSheet, setLoadSheet] = useState<LoadSheetResponse | null>(null);
 
   async function loadDashboard(selectedTerm?: string) {
     setLoading(true);
@@ -86,20 +124,33 @@ export default function FacultyDashboardPageClient() {
         qs.set("termName", selectedTerm || termName);
       }
 
-      const res = await fetch(`/api/faculty/dashboard?${qs.toString()}`, {
-        cache: "no-store",
-      });
+      const [dashboardRes, loadSheetRes] = await Promise.all([
+        fetch(`/api/faculty/dashboard?${qs.toString()}`, {
+          cache: "no-store",
+        }),
+        fetch(`/api/faculty/my-load-sheet?${qs.toString()}`, {
+          cache: "no-store",
+        }),
+      ]);
 
-      const json: DashboardResponse = await res.json();
+      const dashboardJson: DashboardResponse = await dashboardRes.json();
+      const loadSheetJson: LoadSheetResponse = await loadSheetRes.json();
 
-      if (!res.ok) {
-        throw new Error(json.error || "Failed to load faculty dashboard.");
+      if (!dashboardRes.ok) {
+        throw new Error(dashboardJson.error || "Failed to load faculty dashboard.");
       }
 
-      setDashboard(json);
+      setDashboard(dashboardJson);
+
+      if (loadSheetRes.ok) {
+        setLoadSheet(loadSheetJson);
+      } else {
+        setLoadSheet(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load faculty dashboard.");
       setDashboard(null);
+      setLoadSheet(null);
     } finally {
       setLoading(false);
     }
@@ -129,7 +180,7 @@ export default function FacultyDashboardPageClient() {
             <div>
               <h1 className="text-2xl font-bold text-slate-900">Faculty Dashboard</h1>
               <p className="mt-1 text-sm text-slate-600">
-                All logged-in faculty may view the open pool. The most senior valid simultaneous session gets the active turn.
+                View active faculty-choice policy, your session state, your notifications, and your finalized load sheet.
               </p>
             </div>
 
@@ -261,65 +312,6 @@ export default function FacultyDashboardPageClient() {
               </div>
             </div>
 
-            {dashboard.activeTurn ? (
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h2 className="text-lg font-semibold text-slate-900">Current Active Turn</h2>
-                <div className="mt-3 text-sm text-slate-700">
-                  <div>
-                    {dashboard.activeTurn.teacherCode} — {dashboard.activeTurn.fullName}
-                  </div>
-                  <div>Seniority Level: {dashboard.activeTurn.seniorityLevel ?? "-"}</div>
-                  <div>
-                    Session expires at: {new Date(dashboard.activeTurn.sessionExpiresAt).toLocaleString()}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                No active faculty turn is available right now.
-              </div>
-            )}
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="text-lg font-semibold text-slate-900">Logged-in Queue Order</h2>
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="border-b px-3 py-3 text-left">Rank</th>
-                      <th className="border-b px-3 py-3 text-left">Faculty</th>
-                      <th className="border-b px-3 py-3 text-left">Seniority</th>
-                      <th className="border-b px-3 py-3 text-left">Session Expires</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(dashboard.queue || []).map((item) => (
-                      <tr key={`${item.teacherId}-${item.rank}`}>
-                        <td className="border-b px-3 py-2">{item.rank}</td>
-                        <td className="border-b px-3 py-2">
-                          {item.teacherCode} — {item.fullName}
-                        </td>
-                        <td className="border-b px-3 py-2">
-                          {item.seniorityLevel ?? "-"}
-                        </td>
-                        <td className="border-b px-3 py-2">
-                          {new Date(item.sessionExpiresAt).toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
-
-                    {(dashboard.queue || []).length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="px-4 py-8 text-center text-slate-500">
-                          No active logged-in faculty queue found.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-slate-900">Recent Notifications</h2>
@@ -371,6 +363,195 @@ export default function FacultyDashboardPageClient() {
                   </div>
                 ) : null}
               </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Your Finalized Load Sheet</h2>
+                  <p className="text-sm text-slate-600">
+                    Finalized choices for the selected term, ready for review and print/export.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!termName) return;
+                    window.location.href = `/api/faculty/my-load-sheet/export?termName=${encodeURIComponent(
+                      termName
+                    )}`;
+                  }}
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  disabled={!termName}
+                >
+                  Export Load Sheet Excel
+                </button>
+              </div>
+
+              {loadSheet?.success && loadSheet.faculty ? (
+                <div className="mt-6 space-y-6">
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Faculty's Department</div>
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {loadSheet.faculty.departmentCode} | {loadSheet.faculty.departmentName}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Semester for given choices</div>
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {loadSheet.termName || "-"}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Date and time of submission</div>
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {loadSheet.submittedAt
+                          ? new Date(loadSheet.submittedAt).toLocaleString()
+                          : "-"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Faculty's Full Name</div>
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {loadSheet.faculty.fullName}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Faculty's Designation</div>
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {loadSheet.faculty.designation}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Faculty's Initial</div>
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {loadSheet.faculty.initial}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Total theory credits taken</div>
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {loadSheet.totals?.theoryCredits ?? 0}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Total lab credits taken</div>
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {loadSheet.totals?.labCredits ?? 0}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Total credits</div>
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {loadSheet.totals?.totalCredits ?? 0}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">
+                      Total credits from which programs
+                    </h3>
+                    <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="border-b px-3 py-3 text-left">Program</th>
+                            <th className="border-b px-3 py-3 text-left">Theory Credits</th>
+                            <th className="border-b px-3 py-3 text-left">Lab Credits</th>
+                            <th className="border-b px-3 py-3 text-left">Total Credits</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(loadSheet.programTallies || []).map((item) => (
+                            <tr key={item.programCode}>
+                              <td className="border-b px-3 py-2">{item.programCode}</td>
+                              <td className="border-b px-3 py-2">{item.theoryCredits}</td>
+                              <td className="border-b px-3 py-2">{item.labCredits}</td>
+                              <td className="border-b px-3 py-2">{item.totalCredits}</td>
+                            </tr>
+                          ))}
+
+                          {(loadSheet.programTallies || []).length === 0 ? (
+                            <tr>
+                              <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
+                                No finalized program tally found.
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">
+                      Full schedule of the courses
+                    </h3>
+                    <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="border-b px-3 py-3 text-left">Course Code</th>
+                            <th className="border-b px-3 py-3 text-left">Section</th>
+                            <th className="border-b px-3 py-3 text-left">Credit</th>
+                            <th className="border-b px-3 py-3 text-left">Day</th>
+                            <th className="border-b px-3 py-3 text-left">Time</th>
+                            <th className="border-b px-3 py-3 text-left">Room</th>
+                            <th className="border-b px-3 py-3 text-left">Category</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(loadSheet.scheduleRows || []).map((item, index) => (
+                            <tr key={`${item.courseCode}-${item.section}-${index}`}>
+                              <td className="border-b px-3 py-2">{item.courseCode}</td>
+                              <td className="border-b px-3 py-2">{item.section}</td>
+                              <td className="border-b px-3 py-2">{item.credit}</td>
+                              <td className="border-b px-3 py-2">{item.dayOfWeek}</td>
+                              <td className="border-b px-3 py-2">{item.timeText}</td>
+                              <td className="border-b px-3 py-2">{item.roomText}</td>
+                              <td className="border-b px-3 py-2">{item.category}</td>
+                            </tr>
+                          ))}
+
+                          {(loadSheet.scheduleRows || []).length === 0 ? (
+                            <tr>
+                              <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
+                                No finalized courses found for this term.
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="pt-8">
+                    <div className="w-80 border-t border-slate-400 pt-2 text-sm text-slate-700">
+                      {loadSheet.faculty.fullName}
+                    </div>
+                    <div className="text-sm text-slate-500">Faculty Signature</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-slate-500">
+                  No finalized chosen course list found for the selected term.
+                </div>
+              )}
             </div>
           </>
         ) : !loading ? (

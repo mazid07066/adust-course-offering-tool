@@ -29,6 +29,50 @@ function normalizeUpper(value: string) {
   return normalizeText(value).toUpperCase();
 }
 
+function numbersClose(a: number | null, b: number | null, tolerance = 0.01) {
+  if (a === null || b === null) return false;
+  return Math.abs(a - b) <= tolerance;
+}
+
+function dedupeCompletedCourses(courses: SaveCompletedCourse[]) {
+  const map = new Map<string, SaveCompletedCourse>();
+
+  for (const course of courses) {
+    const code = normalizeUpper(course.code);
+    const semester = normalizeUpper(course.semester);
+    const key = `${code}||${semester}`;
+
+    map.set(key, {
+      code,
+      title: normalizeText(course.title),
+      semester,
+      credits: Number(course.credits),
+      grade: normalizeUpper(course.grade || ""),
+    });
+  }
+
+  return Array.from(map.values());
+}
+
+function dedupeOngoingCourses(courses: SaveOngoingCourse[]) {
+  const map = new Map<string, SaveOngoingCourse>();
+
+  for (const course of courses) {
+    const code = normalizeUpper(course.code);
+    const section = normalizeText(course.section || "");
+    const key = `${code}||${section}`;
+
+    map.set(key, {
+      code,
+      title: normalizeText(course.title),
+      credits: Number(course.credits),
+      section: section || null,
+    });
+  }
+
+  return Array.from(map.values());
+}
+
 export async function POST(request: NextRequest) {
   await requireCoordinatorOrAdminApi();
 
@@ -47,13 +91,26 @@ export async function POST(request: NextRequest) {
       ? normalizeUpper(body.currentRegistrationTerm)
       : null;
 
-    const completedCourses = Array.isArray(body.completedCourses)
+    const transcriptEarnedCredits =
+      body.transcriptEarnedCredits === null || body.transcriptEarnedCredits === undefined
+        ? null
+        : Number(body.transcriptEarnedCredits);
+
+    const parsedCompletedCredits =
+      body.parsedCompletedCredits === null || body.parsedCompletedCredits === undefined
+        ? null
+        : Number(body.parsedCompletedCredits);
+
+    const completedCoursesRaw = Array.isArray(body.completedCourses)
       ? (body.completedCourses as SaveCompletedCourse[])
       : [];
 
-    const ongoingCourses = Array.isArray(body.ongoingCourses)
+    const ongoingCoursesRaw = Array.isArray(body.ongoingCourses)
       ? (body.ongoingCourses as SaveOngoingCourse[])
       : [];
+
+    const completedCourses = dedupeCompletedCourses(completedCoursesRaw);
+    const ongoingCourses = dedupeOngoingCourses(ongoingCoursesRaw);
 
     if (!programCode) {
       return NextResponse.json({ error: "Program code is required." }, { status: 400 });
@@ -61,6 +118,19 @@ export async function POST(request: NextRequest) {
 
     if (!batchCode) {
       return NextResponse.json({ error: "Batch code is required." }, { status: 400 });
+    }
+
+    if (
+      transcriptEarnedCredits !== null &&
+      parsedCompletedCredits !== null &&
+      !numbersClose(transcriptEarnedCredits, parsedCompletedCredits)
+    ) {
+      return NextResponse.json(
+        {
+          error: `Save blocked because transcript earned credits (${transcriptEarnedCredits}) do not match parsed completed credits (${parsedCompletedCredits}). Please fix the parser result before saving.`,
+        },
+        { status: 400 }
+      );
     }
 
     const academicIdentity = await prisma.academic_catalog_entries.findFirst({

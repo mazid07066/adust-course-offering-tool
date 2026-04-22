@@ -304,8 +304,8 @@ export default function FacultyCourseChoicePageClient() {
         throw new Error(json.error || "Failed to save choice buffer.");
       }
 
-      setMessage("Choice buffer saved successfully.");
       await loadPage();
+      setMessage("Choice buffer saved successfully.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save choice buffer.");
     } finally {
@@ -360,8 +360,8 @@ export default function FacultyCourseChoicePageClient() {
         throw new Error(json.error || "Failed to finalize faculty choices.");
       }
 
-      setMessage("Final choice submission completed successfully.");
       await loadPage();
+      setMessage("Final choice submission completed successfully.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to finalize faculty choices.");
     } finally {
