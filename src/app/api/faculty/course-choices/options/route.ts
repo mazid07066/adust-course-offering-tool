@@ -16,6 +16,28 @@ const FACULTY_VISIBLE_OFFERING_STATUSES = [
   "FACULTY_CHOICE_FINALIZED",
 ];
 
+type SlotLike = {
+  day_of_week: string;
+  start_time: string;
+  end_time: string;
+};
+
+function timeToMinutes(value: string) {
+  const [h, m] = value.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function slotsOverlap(a: SlotLike, b: SlotLike) {
+  if (a.day_of_week !== b.day_of_week) return false;
+
+  const aStart = timeToMinutes(a.start_time);
+  const aEnd = timeToMinutes(a.end_time);
+  const bStart = timeToMinutes(b.start_time);
+  const bEnd = timeToMinutes(b.end_time);
+
+  return aStart < bEnd && bStart < aEnd;
+}
+
 function sumDistinctCredits(
   rows: Array<{
     offered_course_id: number;
@@ -171,74 +193,6 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    const availableCourses = offerings
-      .filter((row) => canFacultyViewOfferingStatus(row.offerings.status))
-      .map((course) => {
-        const finalByOther = course.faculty_course_selections.find(
-          (x) => x.status === "FINAL" && x.teacher_id !== teacher.id
-        );
-
-        const bufferedByOthers = course.faculty_course_selections.filter(
-          (x) => x.status === "BUFFER" && x.teacher_id !== teacher.id
-        );
-
-        const ownFinal = course.faculty_course_selections.find(
-          (x) => x.status === "FINAL" && x.teacher_id === teacher.id
-        );
-
-        const ownBuffer = course.faculty_course_selections.find(
-          (x) => x.status === "BUFFER" && x.teacher_id === teacher.id
-        );
-
-        return {
-          id: course.id,
-          section: course.section,
-          offeringStatus: course.offerings.status,
-          programCode: course.master_courses.program.short_name,
-          programName: course.master_courses.program.name,
-          courseCode: course.master_courses.course_code,
-          courseTitle: course.master_courses.course_title,
-          credit: Number(course.master_courses.credit || 0),
-          batchCodes: course.offered_course_batches.map((x) => x.batches.batch_code),
-          teacherCodes: course.offered_course_teachers.map(
-            (x) => x.teachers?.teacher_code || "-"
-          ),
-          schedule: course.offered_course_slots.map((slot) => ({
-            id: slot.id,
-            dayOfWeek: slot.day_of_week,
-            startTime: slot.start_time,
-            endTime: slot.end_time,
-            roomCode: slot.rooms?.room_code || "-",
-          })),
-          linkedSecondaryCourses: course.secondary_offered_courses.map((secondary) => ({
-            id: secondary.id,
-            courseCode: secondary.master_courses.course_code,
-            courseTitle: secondary.master_courses.course_title,
-            section: secondary.section,
-            programCode: secondary.master_courses.program.short_name,
-            batchCodes: secondary.offered_course_batches.map((x) => x.batches.batch_code),
-          })),
-          selectionState: ownFinal
-            ? "YOU_FINAL"
-            : ownBuffer
-            ? "YOU_BUFFER"
-            : finalByOther
-            ? "TAKEN_FINAL"
-            : bufferedByOthers.length > 0
-            ? "BUFFERED_BY_OTHERS"
-            : "FREE",
-          finalizedByOtherFaculty: finalByOther
-            ? {
-                teacherId: finalByOther.teacher_id,
-                teacherCode: finalByOther.teachers?.teacher_code || "-",
-                teacherName: finalByOther.teachers?.full_name || "-",
-              }
-            : null,
-          bufferedByOtherFacultyCount: bufferedByOthers.length,
-        };
-      })
-      .filter((course) => course.selectionState !== "TAKEN_FINAL");
-
     const selections = await prisma.faculty_course_selections.findMany({
       where: {
         teacher_id: teacher.id,
@@ -288,6 +242,87 @@ export async function GET(req: NextRequest) {
       },
       orderBy: [{ priority_order: "asc" }, { id: "asc" }],
     });
+
+    const ownChosenCourses = selections.map((x) => x.offered_courses);
+    const ownChosenSlots = ownChosenCourses.flatMap((x) => x.offered_course_slots);
+
+    const availableCourses = offerings
+      .filter((row) => canFacultyViewOfferingStatus(row.offerings.status))
+      .map((course) => {
+        const finalByOther = course.faculty_course_selections.find(
+          (x) => x.status === "FINAL" && x.teacher_id !== teacher.id
+        );
+
+        const bufferedByOthers = course.faculty_course_selections.filter(
+          (x) => x.status === "BUFFER" && x.teacher_id !== teacher.id
+        );
+
+        const ownFinal = course.faculty_course_selections.find(
+          (x) => x.status === "FINAL" && x.teacher_id === teacher.id
+        );
+
+        const ownBuffer = course.faculty_course_selections.find(
+          (x) => x.status === "BUFFER" && x.teacher_id === teacher.id
+        );
+
+        const hasOwnSlotConflict =
+          !ownFinal &&
+          !ownBuffer &&
+          course.offered_course_slots.length > 0 &&
+          ownChosenSlots.length > 0 &&
+          course.offered_course_slots.some((slotA) =>
+            ownChosenSlots.some((slotB) => slotsOverlap(slotA, slotB))
+          );
+
+        return {
+          id: course.id,
+          section: course.section,
+          offeringStatus: course.offerings.status,
+          programCode: course.master_courses.program.short_name,
+          programName: course.master_courses.program.name,
+          courseCode: course.master_courses.course_code,
+          courseTitle: course.master_courses.course_title,
+          credit: Number(course.master_courses.credit || 0),
+          batchCodes: course.offered_course_batches.map((x) => x.batches.batch_code),
+          teacherCodes: course.offered_course_teachers.map(
+            (x) => x.teachers?.teacher_code || "-"
+          ),
+          schedule: course.offered_course_slots.map((slot) => ({
+            id: slot.id,
+            dayOfWeek: slot.day_of_week,
+            startTime: slot.start_time,
+            endTime: slot.end_time,
+            roomCode: slot.rooms?.room_code || "-",
+          })),
+          linkedSecondaryCourses: course.secondary_offered_courses.map((secondary) => ({
+            id: secondary.id,
+            courseCode: secondary.master_courses.course_code,
+            courseTitle: secondary.master_courses.course_title,
+            section: secondary.section,
+            programCode: secondary.master_courses.program.short_name,
+            batchCodes: secondary.offered_course_batches.map((x) => x.batches.batch_code),
+          })),
+          selectionState: ownFinal
+            ? "YOU_FINAL"
+            : ownBuffer
+            ? "YOU_BUFFER"
+            : finalByOther
+            ? "TAKEN_FINAL"
+            : bufferedByOthers.length > 0
+            ? "BUFFERED_BY_OTHERS"
+            : "FREE",
+          hasOwnSlotConflict,
+          finalizedByOtherFaculty: finalByOther
+            ? {
+                teacherId: finalByOther.teacher_id,
+                teacherCode: finalByOther.teachers?.teacher_code || "-",
+                teacherName: finalByOther.teachers?.full_name || "-",
+              }
+            : null,
+          bufferedByOtherFacultyCount: bufferedByOthers.length,
+        };
+      })
+      .filter((course) => course.selectionState !== "TAKEN_FINAL");
 
     const currentSelectedCredits = sumDistinctCredits(selections);
     const hasFinalized = selections.some((row) => row.status === "FINAL");

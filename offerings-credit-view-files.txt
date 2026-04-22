@@ -1,0 +1,2065 @@
+
+==============================
+FILE: D:\adust-course-offering-tool\src\app\admin\offerings\page.tsx
+==============================
+
+import { requireCoordinatorOrAdmin } from "@/lib/auth-guard";
+import OfferingsPageClient from "./page-client";
+
+export default async function OfferingsPage() {
+  await requireCoordinatorOrAdmin();
+  return <OfferingsPageClient />;
+}
+
+==============================
+FILE: D:\adust-course-offering-tool\src\app\admin\offerings\page-client.tsx
+==============================
+
+"use client";
+
+import { useMemo, useState } from "react";
+import AdminLayout from "@/components/admin-layout";
+import ProgramBatchSelector from "@/components/program-batch-selector";
+import { useAcademicCatalogPrograms } from "@/hooks/use-academic-catalog-programs";
+import { useProgramBatches } from "@/hooks/use-program-batches";
+
+type OfferingContextCourse = {
+  id: number;
+  courseCode: string;
+  courseTitle: string;
+  normalizedTitle: string | null;
+  credit: number | null;
+  courseType: string | null;
+  levelTerm: string | null;
+  groupName: string | null;
+  status: "COMPLETED" | "ONGOING" | "REMAINING";
+};
+
+type ContextData = {
+  ok?: boolean;
+  success?: boolean;
+  error?: string;
+
+  programId: number;
+  programCode: string;
+  programLabel: string;
+
+  resolvedBatchProgramId: number;
+  resolvedBatchProgramShortName: string;
+  resolvedBatchProgramName: string;
+
+  batchId: number;
+  batchCode: string;
+  batchAdmissionTerm: string | null;
+
+  currentTermName: string | null;
+  latestCompletedAcademicTerm: string | null;
+  suggestedOfferingAcademicTerm: string | null;
+
+  latestCompletedLevelTerm: string | null;
+  latestOngoingLevelTerm: string | null;
+  suggestedNextLevelTerm: string | null;
+
+  completedCount: number;
+  ongoingCount: number;
+  remainingCount: number;
+  totalCourses: number;
+
+  completedCourses: OfferingContextCourse[];
+  ongoingCourses: OfferingContextCourse[];
+  remainingCourses: OfferingContextCourse[];
+  candidateCoursesForNextOffering: OfferingContextCourse[];
+
+  academicProgress: {
+    latestCompletedTerm: string | null;
+    currentRegistrationTerm: string | null;
+    suggestedOfferingTerm: string | null;
+  };
+
+  summary: {
+    totalCourses: number;
+    completedCourses: number;
+    ongoingCourses: number;
+    remainingCourses: number;
+  };
+};
+
+type DraftContextResponse = {
+  ok?: boolean;
+  error?: string;
+  draftId: number | null;
+  hiddenCourseIds: number[];
+  totalDraftCredits: number;
+  draftStatus?: string | null;
+};
+
+function CourseTable({
+  title,
+  subtitle,
+  badgeText,
+  badgeClassName,
+  courses,
+  emptyText,
+  showAddAction = false,
+  canAdd = false,
+  onAddCourse,
+  addingCourseId,
+}: {
+  title: string;
+  subtitle: string;
+  badgeText: string;
+  badgeClassName: string;
+  courses: OfferingContextCourse[];
+  emptyText: string;
+  showAddAction?: boolean;
+  canAdd?: boolean;
+  onAddCourse?: (course: OfferingContextCourse) => Promise<void>;
+  addingCourseId?: number | null;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h4 className="text-base font-semibold text-slate-900">{title}</h4>
+          <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+        </div>
+
+        <div className={`rounded-full px-3 py-1 text-xs font-medium ${badgeClassName}`}>
+          {badgeText}
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Code</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Title</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Credit</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Type</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Level-Term</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Group</th>
+              {showAddAction && (
+                <th className="border-b border-slate-200 px-3 py-3 text-left">Action</th>
+              )}
+            </tr>
+          </thead>
+          <tbody className="bg-white">
+            {courses.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={showAddAction ? 7 : 6}
+                  className="px-4 py-8 text-center text-slate-500"
+                >
+                  {emptyText}
+                </td>
+              </tr>
+            ) : (
+              courses.map((course) => (
+                <tr key={course.id} className="hover:bg-slate-50">
+                  <td className="border-b border-slate-100 px-3 py-2 font-medium text-slate-900">
+                    {course.courseCode}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.courseTitle}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.credit ?? "-"}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.courseType || "-"}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.levelTerm || "-"}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.groupName || "-"}
+                  </td>
+                  {showAddAction && (
+                    <td className="border-b border-slate-100 px-3 py-2">
+                      <button
+                        type="button"
+                        disabled={!canAdd || addingCourseId === course.id}
+                        onClick={() => onAddCourse?.(course)}
+                        className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {addingCourseId === course.id ? "Adding..." : "Add"}
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+export default function OfferingsPageClient() {
+  const {
+    programs,
+    programCode,
+    setProgramCode,
+    selectedProgram,
+    loadingPrograms,
+    programError,
+  } = useAcademicCatalogPrograms();
+
+  const {
+    batches,
+    batchCode,
+    setBatchCode,
+    loadingBatches,
+    batchError,
+  } = useProgramBatches(programCode);
+
+  const [loadingContext, setLoadingContext] = useState(false);
+  const [loadingDraftContext, setLoadingDraftContext] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [contextData, setContextData] = useState<ContextData | null>(null);
+
+  const [draftId, setDraftId] = useState<number | null>(null);
+  const [draftStatus, setDraftStatus] = useState<string | null>(null);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [addingCourseId, setAddingCourseId] = useState<number | null>(null);
+
+  const [hiddenCourseIds, setHiddenCourseIds] = useState<number[]>([]);
+  const [totalDraftCredits, setTotalDraftCredits] = useState(0);
+  const [maxAllowedCredits, setMaxAllowedCredits] = useState("18");
+
+  async function loadDraftContext(
+    selectedProgramCode: string,
+    selectedBatchCode: string,
+    selectedTermName: string,
+    fallbackDraftId?: number | null
+  ) {
+    setLoadingDraftContext(true);
+
+    try {
+      const params = new URLSearchParams({
+        programCode: selectedProgramCode,
+        batchCode: selectedBatchCode,
+        termName: selectedTermName,
+      });
+
+      const res = await fetch(`/api/offerings/drafts/context?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const json: DraftContextResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load draft context.");
+      }
+
+      setDraftId(json.draftId ?? fallbackDraftId ?? null);
+      setDraftStatus(json.draftStatus || null);
+      setHiddenCourseIds(json.hiddenCourseIds || []);
+      setTotalDraftCredits(Number(json.totalDraftCredits || 0));
+    } catch (err) {
+      setDraftId(fallbackDraftId ?? null);
+      setDraftStatus(null);
+      setHiddenCourseIds([]);
+      setTotalDraftCredits(0);
+      throw err;
+    } finally {
+      setLoadingDraftContext(false);
+    }
+  }
+
+  async function loadContext(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!programCode || !batchCode) {
+      setError("Please select both academic identity and batch.");
+      setMessage("");
+      setContextData(null);
+      setDraftId(null);
+      setDraftStatus(null);
+      setHiddenCourseIds([]);
+      setTotalDraftCredits(0);
+      return;
+    }
+
+    setLoadingContext(true);
+    setError("");
+    setMessage("");
+    setContextData(null);
+    setDraftId(null);
+    setDraftStatus(null);
+    setHiddenCourseIds([]);
+    setTotalDraftCredits(0);
+
+    try {
+      const params = new URLSearchParams({
+        programCode,
+        batchCode,
+      });
+
+      const res = await fetch(`/api/offering-context?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const json: ContextData = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load offering context.");
+      }
+
+      setContextData(json);
+
+      if (json.suggestedOfferingAcademicTerm) {
+        await loadDraftContext(
+          json.programCode,
+          json.batchCode,
+          json.suggestedOfferingAcademicTerm
+        );
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load offering context."
+      );
+    } finally {
+      setLoadingContext(false);
+    }
+  }
+
+  async function createDraftOffering() {
+    if (!contextData) {
+      setError("Load workspace first.");
+      setMessage("");
+      return;
+    }
+
+    if (!contextData.programCode || !contextData.suggestedOfferingAcademicTerm) {
+      setError("Program code or suggested offering term is missing.");
+      setMessage("");
+      return;
+    }
+
+    setCreatingDraft(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/offerings/drafts/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          programCode: contextData.programCode,
+          termName: contextData.suggestedOfferingAcademicTerm,
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to create draft offering.");
+      }
+
+      const createdDraftId = Number(json.draftId);
+      setDraftId(createdDraftId);
+
+      await loadDraftContext(
+        contextData.programCode,
+        contextData.batchCode,
+        contextData.suggestedOfferingAcademicTerm,
+        createdDraftId
+      );
+
+      setMessage(
+        json.reused
+          ? `Existing draft loaded successfully. Draft ID: ${json.draftId}`
+          : `Draft offering created successfully. Draft ID: ${json.draftId}`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to create draft offering."
+      );
+    } finally {
+      setCreatingDraft(false);
+    }
+  }
+
+  async function handleAddCourse(course: OfferingContextCourse) {
+    if (!contextData) {
+      setError("Load workspace first.");
+      setMessage("");
+      return;
+    }
+
+    if (!draftId) {
+      setError("Create draft offering first.");
+      setMessage("");
+      return;
+    }
+
+    const sectionInput = window.prompt("Enter section number (example: 1, 2, 11)");
+    if (!sectionInput) return;
+
+    const section = sectionInput.trim();
+    if (!section) return;
+
+    setAddingCourseId(course.id);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/offerings/drafts/add-course", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          draftId,
+          courseId: course.id,
+          section,
+          batchIds: [contextData.batchId],
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to add course to draft.");
+      }
+
+      await loadDraftContext(
+        contextData.programCode,
+        contextData.batchCode,
+        contextData.suggestedOfferingAcademicTerm || "",
+        draftId
+      );
+
+      setMessage(
+        `Course added to draft successfully. ${course.courseCode} | Section ${section}`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to add course to draft."
+      );
+    } finally {
+      setAddingCourseId(null);
+    }
+  }
+
+  const visibleCandidateCourses = useMemo(() => {
+    return (contextData?.candidateCoursesForNextOffering || []).filter(
+      (course) => !hiddenCourseIds.includes(course.id)
+    );
+  }, [contextData?.candidateCoursesForNextOffering, hiddenCourseIds]);
+
+  const visibleRemainingCourses = useMemo(() => {
+    return (contextData?.remainingCourses || []).filter(
+      (course) => !hiddenCourseIds.includes(course.id)
+    );
+  }, [contextData?.remainingCourses, hiddenCourseIds]);
+
+  const maxCreditsNumber = Number(maxAllowedCredits || 0);
+  const exceedsMaxCredits =
+    Number.isFinite(maxCreditsNumber) &&
+    maxCreditsNumber > 0 &&
+    totalDraftCredits > maxCreditsNumber;
+
+  const combinedError = error || programError || batchError;
+
+  return (
+    <AdminLayout title="Offerings Workspace">
+      <div className="space-y-6">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-900">
+            Offerings Workspace
+          </h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Load a batch context first, then use the recommended course pool as the
+            working starting point for open-credit offering preparation.
+          </p>
+        </div>
+
+        <form onSubmit={loadContext} className="space-y-4">
+          <ProgramBatchSelector
+            programs={programs}
+            programCode={programCode}
+            setProgramCode={setProgramCode}
+            loadingPrograms={loadingPrograms}
+            batches={batches}
+            batchCode={batchCode}
+            setBatchCode={setBatchCode}
+            loadingBatches={loadingBatches}
+            showBatch={true}
+          />
+
+          <button
+            type="submit"
+            disabled={loadingContext || !programCode || !batchCode}
+            className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+          >
+            {loadingContext ? "Loading..." : "Load Workspace"}
+          </button>
+        </form>
+
+        {combinedError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {combinedError}
+          </div>
+        )}
+
+        {message && (
+          <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {message}
+          </div>
+        )}
+
+        {selectedProgram && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Selected Academic Identity</p>
+            <p className="mt-2 text-base font-semibold text-slate-900">
+              {selectedProgram.displayLabel}
+            </p>
+          </div>
+        )}
+
+        {contextData && (
+          <>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={createDraftOffering}
+                disabled={creatingDraft || !contextData.suggestedOfferingAcademicTerm}
+                className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {creatingDraft ? "Creating..." : "Create Draft Offering"}
+              </button>
+
+              {loadingDraftContext && (
+                <div className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700">
+                  Loading draft context...
+                </div>
+              )}
+
+              {draftId && (
+                <div className="rounded-full bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700">
+                  Active Draft ID: {draftId}
+                </div>
+              )}
+
+              {draftStatus && (
+                <div className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700">
+                  Draft Status: {draftStatus}
+                </div>
+              )}
+
+              {contextData.suggestedOfferingAcademicTerm && (
+                <div className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700">
+                  Draft Term: {contextData.suggestedOfferingAcademicTerm}
+                </div>
+              )}
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Latest Completed Semester</p>
+                <p className="mt-2 text-xl font-semibold text-slate-900">
+                  {contextData.academicProgress.latestCompletedTerm || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <p className="text-sm text-amber-700">Current Registration Semester</p>
+                <p className="mt-2 text-xl font-semibold text-amber-900">
+                  {contextData.academicProgress.currentRegistrationTerm || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+                <p className="text-sm text-green-700">Suggested Offering Semester</p>
+                <p className="mt-2 text-xl font-semibold text-green-900">
+                  {contextData.academicProgress.suggestedOfferingTerm || "-"}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Latest Completed Level-Term</p>
+                <p className="mt-2 text-xl font-semibold text-slate-900">
+                  {contextData.latestCompletedLevelTerm || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <p className="text-sm text-amber-700">Latest Ongoing Level-Term</p>
+                <p className="mt-2 text-xl font-semibold text-amber-900">
+                  {contextData.latestOngoingLevelTerm || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+                <p className="text-sm text-green-700">Suggested Next Level-Term</p>
+                <p className="mt-2 text-xl font-semibold text-green-900">
+                  {contextData.suggestedNextLevelTerm || "-"}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Total Courses</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {contextData.summary.totalCourses}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+                <p className="text-sm text-green-700">Completed</p>
+                <p className="mt-2 text-2xl font-semibold text-green-800">
+                  {contextData.summary.completedCourses}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <p className="text-sm text-amber-700">Ongoing</p>
+                <p className="mt-2 text-2xl font-semibold text-amber-800">
+                  {contextData.summary.ongoingCourses}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm">
+                <p className="text-sm text-red-700">Remaining</p>
+                <p className="mt-2 text-2xl font-semibold text-red-800">
+                  {visibleRemainingCourses.length}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Current Draft Credits</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {totalDraftCredits}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <label className="text-sm text-slate-500">Maximum Allowed Credits</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={maxAllowedCredits}
+                  onChange={(e) => setMaxAllowedCredits(e.target.value)}
+                  className="mt-2 w-full rounded-xl border px-4 py-3"
+                />
+              </div>
+
+              <div
+                className={`rounded-2xl border p-5 shadow-sm ${
+                  exceedsMaxCredits
+                    ? "border-red-200 bg-red-50"
+                    : "border-green-200 bg-green-50"
+                }`}
+              >
+                <p
+                  className={`text-sm ${
+                    exceedsMaxCredits ? "text-red-700" : "text-green-700"
+                  }`}
+                >
+                  Draft Credit Status
+                </p>
+                <p
+                  className={`mt-2 text-sm font-semibold ${
+                    exceedsMaxCredits ? "text-red-800" : "text-green-800"
+                  }`}
+                >
+                  {exceedsMaxCredits
+                    ? `Warning: current draft credit (${totalDraftCredits}) exceeds maximum allowed credit (${maxCreditsNumber}).`
+                    : "Within the current maximum credit limit."}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Requested Academic Identity</p>
+                <p className="mt-2 text-base font-semibold text-slate-900">
+                  {contextData.programCode}
+                </p>
+                <p className="mt-1 text-sm text-slate-600">{contextData.programLabel}</p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Resolved Batch Owner Program</p>
+                <p className="mt-2 text-base font-semibold text-slate-900">
+                  {contextData.resolvedBatchProgramShortName}
+                </p>
+                <p className="mt-1 text-sm text-slate-600">
+                  {contextData.resolvedBatchProgramName}
+                </p>
+              </div>
+            </div>
+
+            <CourseTable
+              title="Candidate Courses for Next Offering"
+              subtitle="Recommended starting pool from the saved academic progression. Courses already assigned in the current draft for this batch are hidden."
+              badgeText={`${visibleCandidateCourses.length} course(s)`}
+              badgeClassName="bg-slate-100 text-slate-700"
+              courses={visibleCandidateCourses}
+              emptyText="No candidate course found."
+              showAddAction={true}
+              canAdd={Boolean(draftId)}
+              onAddCourse={handleAddCourse}
+              addingCourseId={addingCourseId}
+            />
+
+            <CourseTable
+              title="All Remaining Courses"
+              subtitle="Full remaining course pool for this batch. Courses already assigned in the current draft for this batch are hidden."
+              badgeText={`${visibleRemainingCourses.length} remaining`}
+              badgeClassName="bg-red-50 text-red-700"
+              courses={visibleRemainingCourses}
+              emptyText="No remaining course loaded yet."
+            />
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h4 className="text-base font-semibold text-slate-900">
+                Next development note
+              </h4>
+              <p className="mt-2 text-sm text-slate-600">
+                This workspace now blocks duplicate same-course assignment for the same
+                batch in the same draft, hides already drafted courses for the current
+                batch, and shows current draft credit status against a maximum credit limit.
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+    </AdminLayout>
+  );
+}
+
+==============================
+FILE: D:\adust-course-offering-tool\src\app\api\offerings\route.ts
+==============================
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+
+type OfferingListItem = {
+  id: number;
+  status: string;
+  createdAt: string | null;
+  termName: string;
+  year: number;
+  termType: string;
+  programCode: string;
+  programName: string;
+  departmentName: string;
+  preparedByUserId: number;
+  preparedByUsername: string;
+  courseCount: number;
+  totalBatchLinks: number;
+  totalSlotCount: number;
+};
+
+function normalizeText(value: string | null | undefined) {
+  return String(value || "").trim();
+}
+
+async function findActivePrivilegedUser() {
+  return prisma.users.findFirst({
+    where: {
+      is_active: true,
+      role: {
+        in: ["SUPER_ADMIN", "COORDINATOR"],
+      },
+    },
+    orderBy: {
+      id: "asc",
+    },
+  });
+}
+
+export async function GET(req: NextRequest) {
+  await requireCoordinatorOrAdminApi();
+
+  const { searchParams } = new URL(req.url);
+  const programCode = normalizeText(searchParams.get("programCode"));
+  const termName = normalizeText(searchParams.get("termName"));
+  const status = normalizeText(searchParams.get("status"));
+
+  const rows = await prisma.offerings.findMany({
+    where: {
+      ...(status ? { status } : {}),
+      ...(programCode
+        ? {
+            programs: {
+              short_name: programCode,
+            },
+          }
+        : {}),
+      ...(termName
+        ? {
+            academic_terms: {
+              name: termName,
+            },
+          }
+        : {}),
+    },
+    orderBy: [
+      { id: "desc" },
+    ],
+    include: {
+      academic_terms: true,
+      programs: {
+        include: {
+          departments: true,
+        },
+      },
+      users: true,
+      offered_courses: {
+        include: {
+          offered_course_batches: true,
+          offered_course_slots: true,
+        },
+      },
+    },
+  });
+
+  const offerings: OfferingListItem[] = rows.map((offering) => {
+    const totalBatchLinks = offering.offered_courses.reduce((sum, course) => {
+      return sum + course.offered_course_batches.length;
+    }, 0);
+
+    const totalSlotCount = offering.offered_courses.reduce((sum, course) => {
+      return sum + course.offered_course_slots.length;
+    }, 0);
+
+    return {
+      id: offering.id,
+      status: offering.status,
+      createdAt: offering.created_at ? offering.created_at.toISOString() : null,
+      termName: offering.academic_terms.name,
+      year: offering.academic_terms.year,
+      termType: offering.academic_terms.term_type,
+      programCode: offering.programs.short_name,
+      programName: offering.programs.name,
+      departmentName: offering.programs.departments.name,
+      preparedByUserId: offering.prepared_by_user_id,
+      preparedByUsername: offering.users.username,
+      courseCount: offering.offered_courses.length,
+      totalBatchLinks,
+      totalSlotCount,
+    };
+  });
+
+  return NextResponse.json({
+    ok: true,
+    offerings,
+  });
+}
+
+export async function POST(req: NextRequest) {
+  await requireCoordinatorOrAdminApi();
+
+  const body = await req.json();
+
+  const programCode = normalizeText(body.programCode);
+  const termName = normalizeText(body.termName);
+  const status = normalizeText(body.status) || "DRAFT";
+
+  if (!programCode) {
+    return NextResponse.json(
+      { error: "programCode is required." },
+      { status: 400 }
+    );
+  }
+
+  if (!termName) {
+    return NextResponse.json(
+      { error: "termName is required." },
+      { status: 400 }
+    );
+  }
+
+  const program = await prisma.programs.findFirst({
+    where: {
+      short_name: programCode,
+    },
+  });
+
+  if (!program) {
+    return NextResponse.json(
+      { error: `Program not found for code: ${programCode}` },
+      { status: 404 }
+    );
+  }
+
+  const term = await prisma.academic_terms.findFirst({
+    where: {
+      name: termName,
+    },
+  });
+
+  if (!term) {
+    return NextResponse.json(
+      { error: `Academic term not found: ${termName}` },
+      { status: 404 }
+    );
+  }
+
+  const activeUser = await findActivePrivilegedUser();
+
+  if (!activeUser) {
+    return NextResponse.json(
+      {
+        error:
+          "No active user found in users table. Please ensure at least one active SUPER_ADMIN or COORDINATOR user exists.",
+      },
+      { status: 400 }
+    );
+  }
+
+  const existing = await prisma.offerings.findFirst({
+    where: {
+      program_id: program.id,
+      academic_term_id: term.id,
+      status,
+    },
+    include: {
+      academic_terms: true,
+      programs: true,
+      users: true,
+      offered_courses: true,
+    },
+  });
+
+  if (existing) {
+    return NextResponse.json({
+      ok: true,
+      reused: true,
+      offering: {
+        id: existing.id,
+        status: existing.status,
+        createdAt: existing.created_at ? existing.created_at.toISOString() : null,
+        termName: existing.academic_terms.name,
+        programCode: existing.programs.short_name,
+        programName: existing.programs.name,
+        preparedByUserId: existing.prepared_by_user_id,
+        preparedByUsername: existing.users.username,
+        courseCount: existing.offered_courses.length,
+      },
+    });
+  }
+
+  const created = await prisma.offerings.create({
+    data: {
+      academic_term_id: term.id,
+      program_id: program.id,
+      prepared_by_user_id: activeUser.id,
+      status,
+    },
+    include: {
+      academic_terms: true,
+      programs: true,
+      users: true,
+      offered_courses: true,
+    },
+  });
+
+  return NextResponse.json({
+    ok: true,
+    created: true,
+    offering: {
+      id: created.id,
+      status: created.status,
+      createdAt: created.created_at ? created.created_at.toISOString() : null,
+      termName: created.academic_terms.name,
+      programCode: created.programs.short_name,
+      programName: created.programs.name,
+      preparedByUserId: created.prepared_by_user_id,
+      preparedByUsername: created.users.username,
+      courseCount: created.offered_courses.length,
+    },
+  });
+}
+
+==============================
+FILE NOT FOUND: src\app\api\offerings\context\route.ts
+==============================
+
+
+==============================
+FILE: D:\adust-course-offering-tool\src\app\api\batch-status\route.ts
+==============================
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import {
+  normalizeComparableCourseCode,
+  normalizeComparableTitle,
+} from "@/lib/student-status-parser";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { resolveCanonicalDepartment } from "@/lib/canonical-program";
+
+export const runtime = "nodejs";
+
+type CatalogProgramRow = {
+  id: number;
+  department_code: string;
+  department_name: string;
+  program_code: string;
+  program_title: string;
+  program_type: string;
+  study_shift: string;
+  curriculum_version: string;
+  curriculum_key: string | null;
+  student_id_suffix: string | null;
+  display_label: string;
+  is_active: boolean;
+};
+
+function normalizeText(value: string) {
+  return String(value || "").trim();
+}
+
+function normalizeUpper(value: string) {
+  return normalizeText(value).toUpperCase();
+}
+
+function buildCanonicalProgramName(programTitle: string, studyShift: string) {
+  return `${normalizeText(programTitle)} [${normalizeUpper(studyShift)}]`;
+}
+
+export async function GET(request: NextRequest) {
+  await requireCoordinatorOrAdminApi();
+
+  try {
+    const { searchParams } = new URL(request.url);
+    const programCode = String(searchParams.get("programCode") || "").trim().toUpperCase();
+    const batchCode = String(searchParams.get("batchCode") || "").trim();
+
+    if (!programCode) {
+      return NextResponse.json(
+        { error: "Program code is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!batchCode) {
+      return NextResponse.json(
+        { error: "Batch code is required." },
+        { status: 400 }
+      );
+    }
+
+    const academicIdentity = (await prisma.academic_catalog_entries.findFirst({
+      where: {
+        program_code: programCode,
+        is_active: true,
+      },
+    })) as CatalogProgramRow | null;
+
+    if (!academicIdentity) {
+      return NextResponse.json(
+        { error: "Academic identity not found." },
+        { status: 404 }
+      );
+    }
+
+    const department = await resolveCanonicalDepartment({
+      department_code: academicIdentity.department_code,
+      department_name: academicIdentity.department_name,
+      program_code: academicIdentity.program_code,
+      program_title: academicIdentity.program_title,
+      study_shift: academicIdentity.study_shift,
+    });
+
+    const program = await prisma.programs.findFirst({
+      where: {
+        department_id: department.id,
+        name: buildCanonicalProgramName(
+          academicIdentity.program_title,
+          academicIdentity.study_shift
+        ),
+      },
+    });
+
+    if (!program) {
+      return NextResponse.json(
+        { error: "Program record not found." },
+        { status: 404 }
+      );
+    }
+
+    const batch = await prisma.batches.findFirst({
+      where: {
+        program_id: program.id,
+        batch_code: batchCode,
+      },
+    });
+
+    let masterCourses = [];
+
+    if (academicIdentity.curriculum_key) {
+      masterCourses = await prisma.master_courses.findMany({
+        where: {
+          curriculum_key: academicIdentity.curriculum_key,
+        },
+        orderBy: [{ course_code: "asc" }],
+      });
+    } else {
+      masterCourses = await prisma.master_courses.findMany({
+        where: {
+          program_id: program.id,
+        },
+        orderBy: [{ course_code: "asc" }],
+      });
+    }
+
+    if (!batch) {
+      return NextResponse.json({
+        selectedProgram: {
+          programCode: academicIdentity.program_code,
+          displayLabel: academicIdentity.display_label,
+          curriculumKey: academicIdentity.curriculum_key,
+        },
+        batchCode,
+        counts: {
+          completed: 0,
+          ongoing: 0,
+          remaining: masterCourses.length,
+          masterCourses: masterCourses.length,
+        },
+        completedCourses: [],
+        ongoingCourses: [],
+        remainingCourses: masterCourses.map((row) => ({
+          code: row.course_code,
+          title: row.course_title,
+          credits: row.credit,
+          type: row.course_type,
+          group: row.group_name,
+          levelTerm: row.level_term,
+        })),
+        statusRows: masterCourses.map((row) => ({
+          code: row.course_code,
+          title: row.course_title,
+          credits: row.credit,
+          type: row.course_type,
+          group: row.group_name,
+          levelTerm: row.level_term,
+          status: "REMAINING",
+          color: "amber",
+        })),
+      });
+    }
+
+    const completedRows = await prisma.batch_completed_courses.findMany({
+      where: {
+        batch_id: batch.id,
+      },
+      include: {
+        academic_terms: true,
+      },
+      orderBy: [
+        { academic_term_id: "asc" },
+        { course_code: "asc" },
+      ],
+    });
+
+    const ongoingRows = await prisma.batch_current_registrations.findMany({
+      where: {
+        batch_id: batch.id,
+      },
+      include: {
+        academic_terms: true,
+      },
+      orderBy: [
+        { academic_term_id: "asc" },
+        { course_code: "asc" },
+      ],
+    });
+
+    const completedCodeSet = new Set(
+      completedRows.map((row) => normalizeComparableCourseCode(row.course_code))
+    );
+    const completedTitleSet = new Set(
+      completedRows.map((row) => normalizeComparableTitle(row.course_title)).filter(Boolean)
+    );
+
+    const ongoingCodeSet = new Set(
+      ongoingRows.map((row) => normalizeComparableCourseCode(row.course_code))
+    );
+    const ongoingTitleSet = new Set(
+      ongoingRows.map((row) => normalizeComparableTitle(row.course_title)).filter(Boolean)
+    );
+
+    const remainingRows = masterCourses.filter((course) => {
+      const code = normalizeComparableCourseCode(course.course_code);
+      const title = normalizeComparableTitle(course.course_title);
+
+      const isCompleted = completedCodeSet.has(code) || (title && completedTitleSet.has(title));
+      const isOngoing = ongoingCodeSet.has(code) || (title && ongoingTitleSet.has(title));
+
+      return !isCompleted && !isOngoing;
+    });
+
+    const statusRows = masterCourses.map((course) => {
+      const code = normalizeComparableCourseCode(course.course_code);
+      const title = normalizeComparableTitle(course.course_title);
+
+      const isCompleted = completedCodeSet.has(code) || (title && completedTitleSet.has(title));
+      const isOngoing = ongoingCodeSet.has(code) || (title && ongoingTitleSet.has(title));
+
+      if (isCompleted) {
+        return {
+          code: course.course_code,
+          title: course.course_title,
+          credits: course.credit,
+          type: course.course_type,
+          group: course.group_name,
+          levelTerm: course.level_term,
+          status: "COMPLETED",
+          color: "green",
+        };
+      }
+
+      if (isOngoing) {
+        return {
+          code: course.course_code,
+          title: course.course_title,
+          credits: course.credit,
+          type: course.course_type,
+          group: course.group_name,
+          levelTerm: course.level_term,
+          status: "ONGOING",
+          color: "blue",
+        };
+      }
+
+      return {
+        code: course.course_code,
+        title: course.course_title,
+        credits: course.credit,
+        type: course.course_type,
+        group: course.group_name,
+        levelTerm: course.level_term,
+        status: "REMAINING",
+        color: "amber",
+      };
+    });
+
+    return NextResponse.json({
+      selectedProgram: {
+        programCode: academicIdentity.program_code,
+        displayLabel: academicIdentity.display_label,
+        curriculumKey: academicIdentity.curriculum_key,
+      },
+      batchCode,
+      counts: {
+        completed: completedRows.length,
+        ongoing: ongoingRows.length,
+        remaining: remainingRows.length,
+        masterCourses: masterCourses.length,
+      },
+      completedCourses: completedRows.map((row) => ({
+        semester: row.academic_terms?.name || "-",
+        code: row.course_code,
+        title: row.course_title,
+        credits: row.credit,
+        grade: row.grade || "-",
+      })),
+      ongoingCourses: ongoingRows.map((row) => ({
+        semester: row.academic_terms?.name || "-",
+        code: row.course_code,
+        title: row.course_title,
+        credits: row.credit,
+      })),
+      remainingCourses: remainingRows.map((row) => ({
+        code: row.course_code,
+        title: row.course_title,
+        credits: row.credit,
+        type: row.course_type,
+        group: row.group_name,
+        levelTerm: row.level_term,
+      })),
+      statusRows,
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "Failed to load batch status.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+==============================
+FILE: D:\adust-course-offering-tool\src\lib\offering-context.ts
+==============================
+
+import { prisma } from "@/lib/prisma";
+import { getCatalogProgramByCode } from "@/lib/academic-catalog";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
+import { getLatestTerm, getNextSemester } from "@/lib/semester-utils";
+
+type MasterCourseRow = {
+  id: number;
+  program_id: number;
+  curriculum_key: string | null;
+  course_code: string;
+  course_title: string;
+  normalized_title: string;
+  credit: number;
+  course_type: string;
+  level_term: string | null;
+  group_name: string | null;
+};
+
+type CompletedRow = {
+  id: number;
+  course_code: string;
+  course_title: string;
+  normalized_title: string;
+  credit: number;
+  grade: string | null;
+  academic_terms: {
+    name: string;
+  } | null;
+};
+
+type OngoingRow = {
+  id: number;
+  course_code: string;
+  course_title: string;
+  normalized_title: string;
+  credit: number;
+  academic_terms: {
+    name: string;
+  } | null;
+};
+
+type ProgramCandidate = {
+  id: number;
+  short_name: string;
+  name: string;
+  source:
+    | "EXACT_PROGRAM_CODE"
+    | "CANONICAL_PROGRAM"
+    | "CURRICULUM_RELATED_PROGRAM";
+};
+
+export type OfferingContextCourse = {
+  id: number;
+  courseCode: string;
+  courseTitle: string;
+  normalizedTitle: string | null;
+  credit: number | null;
+  courseType: string | null;
+  levelTerm: string | null;
+  groupName: string | null;
+  status: "COMPLETED" | "ONGOING" | "REMAINING";
+};
+
+export type OfferingContextResult = {
+  ok: true;
+  success: true;
+
+  programId: number;
+  programCode: string;
+  programLabel: string;
+
+  resolvedBatchProgramId: number;
+  resolvedBatchProgramShortName: string;
+  resolvedBatchProgramName: string;
+
+  batchId: number;
+  batchCode: string;
+  batchAdmissionTerm: string | null;
+
+  currentTermName: string | null;
+  latestCompletedAcademicTerm: string | null;
+  suggestedOfferingAcademicTerm: string | null;
+
+  latestCompletedLevelTerm: string | null;
+  latestOngoingLevelTerm: string | null;
+  suggestedNextLevelTerm: string | null;
+
+  completedCount: number;
+  ongoingCount: number;
+  remainingCount: number;
+  totalCourses: number;
+
+  completedCourses: OfferingContextCourse[];
+  ongoingCourses: OfferingContextCourse[];
+  remainingCourses: OfferingContextCourse[];
+  candidateCoursesForNextOffering: OfferingContextCourse[];
+
+  academicProgress: {
+    latestCompletedTerm: string | null;
+    currentRegistrationTerm: string | null;
+    suggestedOfferingTerm: string | null;
+  };
+
+  summary: {
+    totalCourses: number;
+    completedCourses: number;
+    ongoingCourses: number;
+    remainingCourses: number;
+  };
+};
+
+function normalizeCode(value: string | null | undefined): string {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/[-–—]/g, "");
+}
+
+function normalizeTitle(value: string | null | undefined): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseLevelTerm(
+  levelTerm: string | null | undefined
+): { level: number; term: number } | null {
+  const raw = String(levelTerm || "").trim().toUpperCase();
+  if (!raw) return null;
+
+  let match = raw.match(/^(\d+)[.\-_/ ](\d+)$/);
+  if (match) {
+    return {
+      level: Number(match[1]),
+      term: Number(match[2]),
+    };
+  }
+
+  match = raw.match(/^L?\s*(\d+)\s*T?\s*(\d+)$/i);
+  if (match) {
+    return {
+      level: Number(match[1]),
+      term: Number(match[2]),
+    };
+  }
+
+  return null;
+}
+
+function compareLevelTerms(
+  a: string | null | undefined,
+  b: string | null | undefined
+): number {
+  const pa = parseLevelTerm(a);
+  const pb = parseLevelTerm(b);
+
+  if (!pa && !pb) return 0;
+  if (!pa) return -1;
+  if (!pb) return 1;
+
+  if (pa.level !== pb.level) {
+    return pa.level - pb.level;
+  }
+
+  return pa.term - pb.term;
+}
+
+function formatLevelTerm(level: number, term: number): string {
+  return `${level}.${term}`;
+}
+
+function getNextLevelTerm(levelTerm: string | null | undefined): string | null {
+  const parsed = parseLevelTerm(levelTerm);
+  if (!parsed) return null;
+
+  if (parsed.term < 3) {
+    return formatLevelTerm(parsed.level, parsed.term + 1);
+  }
+
+  return formatLevelTerm(parsed.level + 1, 1);
+}
+
+function safeGetNextSemester(termName: string | null | undefined): string | null {
+  const raw = String(termName || "").trim();
+  if (!raw) return null;
+
+  try {
+    return getNextSemester(raw);
+  } catch {
+    return null;
+  }
+}
+
+function toUiCourse(
+  row: MasterCourseRow,
+  status: "COMPLETED" | "ONGOING" | "REMAINING"
+): OfferingContextCourse {
+  return {
+    id: row.id,
+    courseCode: row.course_code,
+    courseTitle: row.course_title,
+    normalizedTitle: row.normalized_title || null,
+    credit: row.credit ?? null,
+    courseType: row.course_type || null,
+    levelTerm: row.level_term || null,
+    groupName: row.group_name || null,
+    status,
+  };
+}
+
+function masterMatchesSaved(
+  master: Pick<MasterCourseRow, "course_code" | "course_title" | "normalized_title">,
+  saved: Pick<CompletedRow, "course_code" | "course_title" | "normalized_title"> |
+         Pick<OngoingRow, "course_code" | "course_title" | "normalized_title">
+): boolean {
+  const masterCode = normalizeCode(master.course_code);
+  const savedCode = normalizeCode(saved.course_code);
+
+  if (masterCode && savedCode && masterCode === savedCode) {
+    return true;
+  }
+
+  const masterTitle = normalizeTitle(master.normalized_title || master.course_title);
+  const savedTitle = normalizeTitle(saved.normalized_title || saved.course_title);
+
+  if (masterTitle && savedTitle && masterTitle === savedTitle) {
+    return true;
+  }
+
+  return false;
+}
+
+function uniqueById<T extends { id: number }>(rows: T[]): T[] {
+  const seen = new Set<number>();
+  const out: T[] = [];
+
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+
+  return out;
+}
+
+function uniqueCoursesByComparableIdentity(rows: MasterCourseRow[]): MasterCourseRow[] {
+  const seen = new Set<string>();
+  const out: MasterCourseRow[] = [];
+
+  for (const row of rows) {
+    const key =
+      normalizeCode(row.course_code) ||
+      normalizeTitle(row.normalized_title || row.course_title);
+
+    if (!key) continue;
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    out.push(row);
+  }
+
+  return out;
+}
+
+async function getProgramCandidates(programCode: string): Promise<{
+  requestedProgramCode: string;
+  requestedProgramLabel: string;
+  curriculumKey: string | null;
+  candidates: ProgramCandidate[];
+}> {
+  const normalizedProgramCode = String(programCode || "").trim().toUpperCase();
+  if (!normalizedProgramCode) {
+    throw new Error("programCode is required.");
+  }
+
+  const catalogStatic = getCatalogProgramByCode(normalizedProgramCode);
+  if (!catalogStatic) {
+    throw new Error("Invalid academic identity programCode.");
+  }
+
+  const catalogEntry = await prisma.academic_catalog_entries.findUnique({
+    where: {
+      program_code: normalizedProgramCode,
+    },
+    select: {
+      program_code: true,
+      display_label: true,
+      curriculum_key: true,
+      department_code: true,
+      department_name: true,
+      program_title: true,
+      study_shift: true,
+    },
+  });
+
+  const requestedProgramLabel =
+    catalogEntry?.display_label || catalogStatic.displayLabel;
+
+  const candidates: ProgramCandidate[] = [];
+
+  const exactProgram = await prisma.programs.findFirst({
+    where: {
+      short_name: normalizedProgramCode,
+    },
+    select: {
+      id: true,
+      short_name: true,
+      name: true,
+    },
+  });
+
+  if (exactProgram) {
+    candidates.push({
+      ...exactProgram,
+      source: "EXACT_PROGRAM_CODE",
+    });
+  }
+
+  const canonicalProgram = await resolveCanonicalProgram({
+    department_code: catalogEntry?.department_code || catalogStatic.departmentCode,
+    department_name: catalogEntry?.department_name || catalogStatic.departmentName,
+    program_code: normalizedProgramCode,
+    program_title: catalogEntry?.program_title || catalogStatic.programTitle,
+    study_shift: catalogEntry?.study_shift || catalogStatic.studyShift,
+  });
+
+  if (
+    !candidates.some((item) => item.id === canonicalProgram.id)
+  ) {
+    candidates.push({
+      id: canonicalProgram.id,
+      short_name: canonicalProgram.short_name,
+      name: canonicalProgram.name,
+      source: "CANONICAL_PROGRAM",
+    });
+  }
+
+  const curriculumKey = catalogEntry?.curriculum_key || null;
+
+  if (curriculumKey) {
+    const relatedCatalogEntries = await prisma.academic_catalog_entries.findMany({
+      where: {
+        curriculum_key: curriculumKey,
+        is_active: true,
+      },
+      select: {
+        program_code: true,
+      },
+    });
+
+    const relatedProgramCodes = relatedCatalogEntries
+      .map((item) => item.program_code)
+      .filter(Boolean);
+
+    if (relatedProgramCodes.length > 0) {
+      const relatedPrograms = await prisma.programs.findMany({
+        where: {
+          short_name: {
+            in: relatedProgramCodes,
+          },
+        },
+        select: {
+          id: true,
+          short_name: true,
+          name: true,
+        },
+      });
+
+      for (const item of relatedPrograms) {
+        if (!candidates.some((row) => row.id === item.id)) {
+          candidates.push({
+            ...item,
+            source: "CURRICULUM_RELATED_PROGRAM",
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    requestedProgramCode: normalizedProgramCode,
+    requestedProgramLabel,
+    curriculumKey,
+    candidates: uniqueById(candidates),
+  };
+}
+
+async function resolveBatchForProgramCode(programCode: string, batchCode: string) {
+  const resolved = await getProgramCandidates(programCode);
+
+  if (resolved.candidates.length === 0) {
+    throw new Error("No program candidate could be resolved for the selected academic identity.");
+  }
+
+  const batches = await prisma.batches.findMany({
+    where: {
+      program_id: {
+        in: resolved.candidates.map((item) => item.id),
+      },
+      batch_code: String(batchCode || "").trim(),
+    },
+    select: {
+      id: true,
+      batch_code: true,
+      admission_term: true,
+      program_id: true,
+      programs: {
+        select: {
+          id: true,
+          short_name: true,
+          name: true,
+        },
+      },
+    },
+  });
+
+  if (batches.length === 0) {
+    const searchedPrograms = resolved.candidates
+      .map((item) => `${item.short_name} [${item.source}]`)
+      .join(", ");
+
+    throw new Error(
+      `Batch not found for the selected academic identity. Searched programs: ${searchedPrograms}`
+    );
+  }
+
+  const preferredOrder = new Map<number, number>();
+  resolved.candidates.forEach((item, index) => {
+    preferredOrder.set(item.id, index);
+  });
+
+  batches.sort((a, b) => {
+    const pa = preferredOrder.get(a.program_id) ?? 9999;
+    const pb = preferredOrder.get(b.program_id) ?? 9999;
+    return pa - pb;
+  });
+
+  const selectedBatch = batches[0];
+  const selectedProgram = resolved.candidates.find(
+    (item) => item.id === selectedBatch.program_id
+  );
+
+  if (!selectedProgram) {
+    throw new Error("Resolved batch program could not be matched.");
+  }
+
+  return {
+    requestedProgramCode: resolved.requestedProgramCode,
+    requestedProgramLabel: resolved.requestedProgramLabel,
+    curriculumKey: resolved.curriculumKey,
+    candidatePrograms: resolved.candidates,
+    batch: selectedBatch,
+    resolvedBatchProgram: selectedProgram,
+  };
+}
+
+async function loadMasterCoursesForContext(params: {
+  requestedProgramCode: string;
+  curriculumKey: string | null;
+  candidatePrograms: ProgramCandidate[];
+  resolvedBatchProgramId: number;
+}) {
+  const { requestedProgramCode, curriculumKey, candidatePrograms, resolvedBatchProgramId } = params;
+
+  let rows: MasterCourseRow[] = [];
+
+  if (curriculumKey) {
+    rows = await prisma.master_courses.findMany({
+      where: {
+        curriculum_key: curriculumKey,
+        is_active: true,
+      },
+      orderBy: [{ level_term: "asc" }, { course_code: "asc" }],
+      select: {
+        id: true,
+        program_id: true,
+        curriculum_key: true,
+        course_code: true,
+        course_title: true,
+        normalized_title: true,
+        credit: true,
+        course_type: true,
+        level_term: true,
+        group_name: true,
+      },
+    });
+  }
+
+  if (rows.length === 0) {
+    rows = await prisma.master_courses.findMany({
+      where: {
+        OR: [
+          {
+            program_id: resolvedBatchProgramId,
+            is_active: true,
+          },
+          {
+            program_id: {
+              in: candidatePrograms.map((item) => item.id),
+            },
+            is_active: true,
+          },
+        ],
+      },
+      orderBy: [{ level_term: "asc" }, { course_code: "asc" }],
+      select: {
+        id: true,
+        program_id: true,
+        curriculum_key: true,
+        course_code: true,
+        course_title: true,
+        normalized_title: true,
+        credit: true,
+        course_type: true,
+        level_term: true,
+        group_name: true,
+      },
+    });
+  }
+
+  const exactProgramRows = rows.filter((row) => {
+    const owner = candidatePrograms.find((item) => item.id === row.program_id);
+    return owner?.short_name === requestedProgramCode;
+  });
+
+  const resolvedBatchProgramRows = rows.filter(
+    (row) => row.program_id === resolvedBatchProgramId
+  );
+
+  const finalRows =
+    exactProgramRows.length > 0
+      ? exactProgramRows
+      : resolvedBatchProgramRows.length > 0
+      ? resolvedBatchProgramRows
+      : rows;
+
+  return uniqueCoursesByComparableIdentity(finalRows).sort((a, b) => {
+    const lt = compareLevelTerms(a.level_term, b.level_term);
+    if (lt !== 0) return lt;
+    return a.course_code.localeCompare(b.course_code);
+  });
+}
+
+function resolveCourseLevelTermFromMaster(
+  saved:
+    | Pick<CompletedRow, "course_code" | "course_title" | "normalized_title">
+    | Pick<OngoingRow, "course_code" | "course_title" | "normalized_title">,
+  masterCourses: MasterCourseRow[]
+): string | null {
+  const match = masterCourses.find((master) => masterMatchesSaved(master, saved));
+  return match?.level_term || null;
+}
+
+export async function buildOfferingContext(params: {
+  programCode: string;
+  batchCode: string;
+}): Promise<OfferingContextResult> {
+  const programCode = String(params.programCode || "").trim().toUpperCase();
+  const batchCode = String(params.batchCode || "").trim();
+
+  if (!programCode) {
+    throw new Error("programCode is required.");
+  }
+
+  if (!batchCode) {
+    throw new Error("batchCode is required.");
+  }
+
+  const resolved = await resolveBatchForProgramCode(programCode, batchCode);
+
+  const masterCourses = await loadMasterCoursesForContext({
+    requestedProgramCode: resolved.requestedProgramCode,
+    curriculumKey: resolved.curriculumKey,
+    candidatePrograms: resolved.candidatePrograms,
+    resolvedBatchProgramId: resolved.batch.program_id,
+  });
+
+  const [completedRows, ongoingRows] = await Promise.all([
+    prisma.batch_completed_courses.findMany({
+      where: {
+        batch_id: resolved.batch.id,
+      },
+      orderBy: [{ course_code: "asc" }],
+      select: {
+        id: true,
+        course_code: true,
+        course_title: true,
+        normalized_title: true,
+        credit: true,
+        grade: true,
+        academic_terms: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    }),
+    prisma.batch_current_registrations.findMany({
+      where: {
+        batch_id: resolved.batch.id,
+      },
+      orderBy: [{ course_code: "asc" }],
+      select: {
+        id: true,
+        course_code: true,
+        course_title: true,
+        normalized_title: true,
+        credit: true,
+        academic_terms: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    }),
+  ]);
+
+  const currentTermName = getLatestTerm(
+    ongoingRows.map((row) => row.academic_terms?.name)
+  );
+
+  const latestCompletedAcademicTerm = getLatestTerm(
+    completedRows.map((row) => row.academic_terms?.name)
+  );
+
+  const completedCourses: OfferingContextCourse[] = [];
+  const ongoingCourses: OfferingContextCourse[] = [];
+  const remainingCourses: OfferingContextCourse[] = [];
+
+  for (const master of masterCourses) {
+    const completedMatch = completedRows.find((row) => masterMatchesSaved(master, row));
+    if (completedMatch) {
+      completedCourses.push(toUiCourse(master, "COMPLETED"));
+      continue;
+    }
+
+    const ongoingMatch = ongoingRows.find((row) => masterMatchesSaved(master, row));
+    if (ongoingMatch) {
+      ongoingCourses.push(toUiCourse(master, "ONGOING"));
+      continue;
+    }
+
+    remainingCourses.push(toUiCourse(master, "REMAINING"));
+  }
+
+  let latestCompletedLevelTerm: string | null = null;
+  for (const row of completedRows) {
+    const levelTerm = resolveCourseLevelTermFromMaster(row, masterCourses);
+    if (!levelTerm) continue;
+
+    if (!latestCompletedLevelTerm || compareLevelTerms(levelTerm, latestCompletedLevelTerm) > 0) {
+      latestCompletedLevelTerm = levelTerm;
+    }
+  }
+
+  let latestOngoingLevelTerm: string | null = null;
+  for (const row of ongoingRows) {
+    const levelTerm = resolveCourseLevelTermFromMaster(row, masterCourses);
+    if (!levelTerm) continue;
+
+    if (!latestOngoingLevelTerm || compareLevelTerms(levelTerm, latestOngoingLevelTerm) > 0) {
+      latestOngoingLevelTerm = levelTerm;
+    }
+  }
+
+  const suggestedNextLevelTerm =
+    getNextLevelTerm(latestOngoingLevelTerm || latestCompletedLevelTerm) || null;
+
+  const suggestedOfferingAcademicTerm =
+    safeGetNextSemester(currentTermName) ||
+    safeGetNextSemester(latestCompletedAcademicTerm) ||
+    resolved.batch.admission_term ||
+    null;
+
+  let candidateCoursesForNextOffering = remainingCourses;
+
+  if (suggestedNextLevelTerm) {
+    const exactRows = remainingCourses.filter(
+      (course) => String(course.levelTerm || "").trim() === suggestedNextLevelTerm
+    );
+
+    if (exactRows.length > 0) {
+      candidateCoursesForNextOffering = exactRows;
+    }
+  } else {
+    const levelTermGroups = remainingCourses
+      .map((row) => row.levelTerm)
+      .filter((value): value is string => Boolean(value))
+      .sort(compareLevelTerms);
+
+    if (levelTermGroups.length > 0) {
+      const earliest = levelTermGroups[0];
+      candidateCoursesForNextOffering = remainingCourses.filter(
+        (course) => course.levelTerm === earliest
+      );
+    }
+  }
+
+  const result: OfferingContextResult = {
+    ok: true,
+    success: true,
+
+    programId: resolved.resolvedBatchProgram.id,
+    programCode: resolved.requestedProgramCode,
+    programLabel: resolved.requestedProgramLabel,
+
+    resolvedBatchProgramId: resolved.resolvedBatchProgram.id,
+    resolvedBatchProgramShortName: resolved.resolvedBatchProgram.short_name,
+    resolvedBatchProgramName: resolved.resolvedBatchProgram.name,
+
+    batchId: resolved.batch.id,
+    batchCode: resolved.batch.batch_code,
+    batchAdmissionTerm: resolved.batch.admission_term || null,
+
+    currentTermName,
+    latestCompletedAcademicTerm,
+    suggestedOfferingAcademicTerm,
+
+    latestCompletedLevelTerm,
+    latestOngoingLevelTerm,
+    suggestedNextLevelTerm,
+
+    completedCount: completedCourses.length,
+    ongoingCount: ongoingCourses.length,
+    remainingCount: remainingCourses.length,
+    totalCourses: masterCourses.length,
+
+    completedCourses,
+    ongoingCourses,
+    remainingCourses,
+    candidateCoursesForNextOffering,
+
+    academicProgress: {
+      latestCompletedTerm: latestCompletedAcademicTerm,
+      currentRegistrationTerm: currentTermName,
+      suggestedOfferingTerm: suggestedOfferingAcademicTerm,
+    },
+
+    summary: {
+      totalCourses: masterCourses.length,
+      completedCourses: completedCourses.length,
+      ongoingCourses: ongoingCourses.length,
+      remainingCourses: remainingCourses.length,
+    },
+  };
+
+  return result;
+}
+
+==============================
+FILE NOT FOUND: src\lib\batch-status.ts
+==============================
+

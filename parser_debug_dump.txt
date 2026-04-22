@@ -1,0 +1,3912 @@
+﻿
+
+===== FILE: src/lib/student-status-parser.ts =====
+
+import pdfParse from "pdf-parse";
+
+export type ParsedTranscriptCourse = {
+  semester: string;
+  code: string;
+  comparableCode: string;
+  comparableTitle: string;
+  title: string;
+  credits: number;
+  grade: string;
+};
+
+export type ParsedRegistrationCourse = {
+  code: string;
+  comparableCode: string;
+  comparableTitle: string;
+  title: string;
+  credits: number;
+  section: string | null;
+};
+
+export type ParsedStudentIdentity = {
+  studentId: string | null;
+  batchCode: string | null;
+  suffix: string | null;
+};
+
+function normalizeInline(value: string) {
+  return String(value || "")
+    .replace(/[ï¿¾ï¿½]/g, " ")
+    .replace(/\u00A0/g, " ")
+    .replace(/[^\S\r\n]+/g, " ")
+    .trim();
+}
+
+function normalizeMultiline(value: string) {
+  return String(value || "")
+    .replace(/[ï¿¾ï¿½]/g, " ")
+    .replace(/\u00A0/g, " ")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => normalizeInline(line))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function safeDecodeURIComponent(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function collapseText(value: string) {
+  return normalizeMultiline(value).replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function normalizeRawCourseCode(value: string) {
+  const raw = normalizeInline(value).toUpperCase();
+  if (!raw) return "";
+
+  const compact = raw.replace(/\s+/g, "");
+
+  const directMatch = compact.match(/^([A-Z]{2,6})(\d{3,4})$/);
+  if (directMatch) return `${directMatch[1]}${directMatch[2]}`;
+
+  const spacedTailMatch = raw.match(/^([A-Z]{2,6})(?:\s+\d{2,4})?\s+(\d{3,4})$/);
+  if (spacedTailMatch) return `${spacedTailMatch[1]}${spacedTailMatch[2]}`;
+
+  const genericMatch = compact.match(/^([A-Z]{2,6}).*?(\d{3,4})$/);
+  if (genericMatch) return `${genericMatch[1]}${genericMatch[2]}`;
+
+  return compact;
+}
+
+function normalizeDepartmentSpecificAlias(prefix: string, digits: string) {
+  const threeDigitAliasPrefixes = new Set([
+    "EEE",
+    "MAT",
+    "PHY",
+    "CHE",
+    "MEE",
+    "CSE",
+    "ENG",
+    "STA",
+    "HUM",
+    "ACT",
+    "ECO",
+    "SOC",
+    "ENV",
+    "HIS",
+    "BBA",
+    "MGT",
+    "PEV",
+    "PHI",
+    "CSC",
+  ]);
+
+  if (digits.length === 4 && digits.startsWith("1") && threeDigitAliasPrefixes.has(prefix)) {
+    return `${prefix}${digits.slice(1)}`;
+  }
+
+  return `${prefix}${digits}`;
+}
+
+export function normalizeComparableCourseCode(value: string) {
+  const normalized = normalizeRawCourseCode(value);
+  if (!normalized) return "";
+
+  const match = normalized.match(/^([A-Z]{2,6})(\d{3,4})$/);
+  if (!match) return normalized;
+
+  const prefix = match[1];
+  const digits = match[2];
+
+  return normalizeDepartmentSpecificAlias(prefix, digits);
+}
+
+function cleanRegistrationTitle(value: string) {
+  let cleaned = normalizeInline(value);
+
+  cleaned = cleaned.replace(
+    /\s+(?:SU|SA|TH|MO|FR|WE)-\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?.*$/i,
+    ""
+  );
+
+  cleaned = cleaned.replace(/\s+[A-Z]{2,6}\d{2,}.*$/i, (match) => {
+    return /\b(?:MU|WE|EE|CE|ME|LAB|ROOM)\b/i.test(match) ? "" : match;
+  });
+
+  return normalizeInline(cleaned);
+}
+
+export function normalizeComparableTitle(value: string) {
+  let cleaned = cleanRegistrationTitle(value)
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\b(the|course|lab\s*course)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleaned;
+}
+
+export async function extractPdfText(buffer: Buffer): Promise<string> {
+  try {
+    const parsed = await pdfParse(buffer, { version: "v1.10.100" });
+    return normalizeMultiline(parsed?.text || "");
+  } catch {
+    const PDFParserModule = await import("pdf2json");
+    const PDFParser = PDFParserModule.default;
+
+    const text = await new Promise<string>((resolve, reject) => {
+      const parser = new PDFParser(undefined, true);
+
+      parser.on("pdfParser_dataError", (errMsg: Error | { parserError: Error }) => {
+        const actualError = errMsg instanceof Error ? errMsg : errMsg.parserError;
+        reject(actualError);
+      });
+
+      parser.on("pdfParser_dataReady", (pdfData: any) => {
+        try {
+          const pages = pdfData?.Pages || [];
+          const pageLines: string[] = [];
+
+          for (const page of pages) {
+            const lines: string[] = [];
+
+            for (const textItem of page.Texts || []) {
+              const line = (textItem.R || [])
+                .map((run: { T?: string }) => safeDecodeURIComponent(run.T || ""))
+                .join(" ");
+
+              const cleaned = normalizeInline(line);
+              if (cleaned) lines.push(cleaned);
+            }
+
+            pageLines.push(lines.join("\n"));
+          }
+
+          resolve(normalizeMultiline(pageLines.join("\n")));
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      parser.parseBuffer(buffer);
+    });
+
+    return normalizeMultiline(text);
+  }
+}
+
+export function parseStudentIdentity(text: string): ParsedStudentIdentity {
+  const match = text.match(/\b(\d{2,3}-\d{4}-\d{3})\b/);
+
+  if (!match) {
+    return {
+      studentId: null,
+      batchCode: null,
+      suffix: null,
+    };
+  }
+
+  const studentId = match[1];
+  const [batchCode, , suffix] = studentId.split("-");
+
+  return {
+    studentId,
+    batchCode: batchCode || null,
+    suffix: suffix || null,
+  };
+}
+
+function stripTranscriptFooter(segment: string) {
+  let cleaned = segment;
+
+  const footerPatterns = [
+    /\bCredits\s*Earned\b[\s\S]*$/i,
+    /\bTransfered\s*Credits\b[\s\S]*$/i,
+    /\bGPA\s*:\s*[\s\S]*$/i,
+    /\bPrinted\s*(?:on)?\s*:\s*[\s\S]*$/i,
+    /\bPage\s+\d+\s+of\s+\d+\b[\s\S]*$/i,
+  ];
+
+  for (const pattern of footerPatterns) {
+    cleaned = cleaned.replace(pattern, "").trim();
+  }
+
+  return cleaned;
+}
+
+function splitTranscriptIntoSegments(text: string) {
+  let clean = collapseText(text);
+
+  clean = clean
+    .replace(/SemesterCodeDescriptionCreditsGrade/gi, " ")
+    .replace(/CreditsEarned/gi, " Credits Earned ")
+    .replace(/TransferedCredits/gi, " Transfered Credits ")
+    .replace(/Printedon:/gi, " Printed on: ")
+    .replace(/StudentID:/gi, " Student ID: ");
+
+  clean = clean.replace(
+    /(?=(SPRING|SUMMER|FALL)\s*\d{4}\s*[A-Z]{2,6}\d{3,4})/gi,
+    " ||ROW|| "
+  );
+
+  return clean
+    .split("||ROW||")
+    .map((part) => stripTranscriptFooter(normalizeInline(part)))
+    .filter(Boolean);
+}
+
+export function parseTranscriptCourses(text: string): ParsedTranscriptCourse[] {
+  const segments = splitTranscriptIntoSegments(text);
+  const rows: ParsedTranscriptCourse[] = [];
+
+  for (const segment of segments) {
+    if (!/^(SPRING|SUMMER|FALL)\s*\d{4}\s*[A-Z]{2,6}\d{3,4}/i.test(segment)) {
+      continue;
+    }
+
+    const fullMatch = segment.match(
+      /^(SPRING|SUMMER|FALL)\s*(\d{4})\s*([A-Z]{2,6}\d{3,4})\s*(.*?)\s*(\d+(?:\.\d+)?)\s*([A-F][+-]?|I|W)$/i
+    );
+
+    if (fullMatch) {
+      const semester = `${String(fullMatch[1]).toUpperCase()} ${fullMatch[2]}`;
+      const code = normalizeInline(fullMatch[3]).toUpperCase();
+      const title = normalizeInline(fullMatch[4]);
+      const credits = Number(fullMatch[5]);
+      const grade = normalizeInline(fullMatch[6]).toUpperCase();
+
+      if (code && title && !Number.isNaN(credits) && grade) {
+        rows.push({
+          semester,
+          code,
+          comparableCode: normalizeComparableCourseCode(code),
+          comparableTitle: normalizeComparableTitle(title),
+          title,
+          credits,
+          grade,
+        });
+      }
+      continue;
+    }
+
+    const noGradeMatch = segment.match(
+      /^(SPRING|SUMMER|FALL)\s*(\d{4})\s*([A-Z]{2,6}\d{3,4})\s*(.*?)\s*(\d+(?:\.\d+)?)$/i
+    );
+
+    if (noGradeMatch) {
+      const semester = `${String(noGradeMatch[1]).toUpperCase()} ${noGradeMatch[2]}`;
+      const code = normalizeInline(noGradeMatch[3]).toUpperCase();
+      const title = normalizeInline(noGradeMatch[4]);
+      const credits = Number(noGradeMatch[5]);
+
+      if (code && title && !Number.isNaN(credits)) {
+        rows.push({
+          semester,
+          code,
+          comparableCode: normalizeComparableCourseCode(code),
+          comparableTitle: normalizeComparableTitle(title),
+          title,
+          credits,
+          grade: "",
+        });
+      }
+    }
+  }
+
+  return rows;
+}
+
+export function parseRegistrationSemester(text: string): string | null {
+  const match = text.match(/Registration\s+(Spring|Summer|Fall),?\s+(\d{4})/i);
+  if (!match) return null;
+  return `${match[1].toUpperCase()} ${match[2]}`;
+}
+
+export function parseRegistrationCourses(text: string): ParsedRegistrationCourse[] {
+  const clean = collapseText(text);
+
+  const segments =
+    clean.match(
+      /A-[A-Z]{2,6}\d{3,4}CR:\d+(?:\.\d+)?Sec:\d+\s+.*?(?=A-[A-Z]{2,6}\d{3,4}CR:|Developed by:|Office Copy|Bank Copy|University Management Information System|$)/gi
+    ) || [];
+
+  const rows: ParsedRegistrationCourse[] = [];
+
+  for (const segment of segments) {
+    const match = normalizeInline(segment).match(
+      /^A-([A-Z]{2,6}\d{3,4})CR:(\d+(?:\.\d+)?)Sec:(\d+)\s+(.+?)(?=\s+(?:SU|SA|TH|MO|FR|WE)-|$)/i
+    );
+
+    if (!match) continue;
+
+    const code = normalizeInline(match[1]).toUpperCase();
+    const title = cleanRegistrationTitle(match[4]);
+
+    rows.push({
+      code,
+      comparableCode: normalizeComparableCourseCode(code),
+      comparableTitle: normalizeComparableTitle(title),
+      credits: Number(match[2]),
+      section: normalizeInline(match[3]) || null,
+      title,
+    });
+  }
+
+  return rows;
+}
+
+const TERM_ORDER = ["SPRING", "SUMMER", "FALL"];
+
+export function compareTerms(a: string, b: string) {
+  const [aTerm, aYearText] = a.split(" ");
+  const [bTerm, bYearText] = b.split(" ");
+
+  const aYear = Number(aYearText);
+  const bYear = Number(bYearText);
+
+  if (aYear !== bYear) return aYear - bYear;
+  return TERM_ORDER.indexOf(aTerm) - TERM_ORDER.indexOf(bTerm);
+}
+
+export function getLatestTerm(terms: string[]): string | null {
+  if (!terms.length) return null;
+  return [...terms].sort(compareTerms).at(-1) || null;
+}
+
+export function getNextTerm(term: string | null): string | null {
+  if (!term) return null;
+
+  const [season, yearText] = term.split(" ");
+  const year = Number(yearText);
+
+  if (season === "SPRING") return `SUMMER ${year}`;
+  if (season === "SUMMER") return `FALL ${year}`;
+  if (season === "FALL") return `SPRING ${year + 1}`;
+
+  return null;
+}
+
+export function getCompletedCourseMap(courses: ParsedTranscriptCourse[]) {
+  const map = new Map<
+    string,
+    {
+      code: string;
+      comparableCode: string;
+      comparableTitle: string;
+      title: string;
+      semester: string;
+      credits: number;
+      grade: string;
+    }
+  >();
+
+  for (const row of courses) {
+    const isPassing =
+      row.grade !== "F" &&
+      row.grade !== "I" &&
+      row.grade !== "W" &&
+      row.credits > 0;
+
+    if (!isPassing) continue;
+
+    const existing = map.get(row.comparableCode);
+    if (!existing || compareTerms(existing.semester, row.semester) < 0) {
+      map.set(row.comparableCode, {
+        code: row.code,
+        comparableCode: row.comparableCode,
+        comparableTitle: row.comparableTitle,
+        title: row.title,
+        semester: row.semester,
+        credits: row.credits,
+        grade: row.grade,
+      });
+    }
+  }
+
+  return map;
+}
+
+export function getFailedOnlyCodes(courses: ParsedTranscriptCourse[]) {
+  const passed = new Set(
+    courses
+      .filter(
+        (row) =>
+          row.grade !== "F" &&
+          row.grade !== "I" &&
+          row.grade !== "W" &&
+          row.credits > 0
+      )
+      .map((row) => row.comparableCode)
+  );
+
+  const failed = new Set(
+    courses
+      .filter(
+        (row) =>
+          row.grade === "F" ||
+          row.grade === "I" ||
+          row.grade === "W" ||
+          row.credits <= 0
+      )
+      .map((row) => row.comparableCode)
+  );
+
+  return [...failed].filter((code) => !passed.has(code));
+}
+
+export function makeDebugTextSample(text: string, maxLength = 1500) {
+  return collapseText(text).slice(0, maxLength);
+}
+
+
+===== FILE: src/app/api/student-status-save/route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { normalizeComparableTitle } from "@/lib/student-status-parser";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
+
+type SaveCompletedCourse = {
+  code: string;
+  title: string;
+  semester: string;
+  credits: number;
+  grade: string;
+};
+
+type SaveOngoingCourse = {
+  code: string;
+  title: string;
+  credits: number;
+  section: string | null;
+};
+
+export const runtime = "nodejs";
+
+function normalizeText(value: string) {
+  return String(value || "").trim();
+}
+
+function normalizeUpper(value: string) {
+  return normalizeText(value).toUpperCase();
+}
+
+export async function POST(request: NextRequest) {
+  await requireCoordinatorOrAdminApi();
+
+  try {
+    const body = await request.json();
+
+    const programCode = normalizeUpper(body.programCode || "");
+    const batchCode = normalizeText(body.batchCode || "");
+    const studentId = normalizeText(body.studentId || "");
+
+    const latestCompletedTerm = body.latestCompletedTerm
+      ? normalizeUpper(body.latestCompletedTerm)
+      : null;
+
+    const currentRegistrationTerm = body.currentRegistrationTerm
+      ? normalizeUpper(body.currentRegistrationTerm)
+      : null;
+
+    const completedCourses = Array.isArray(body.completedCourses)
+      ? (body.completedCourses as SaveCompletedCourse[])
+      : [];
+
+    const ongoingCourses = Array.isArray(body.ongoingCourses)
+      ? (body.ongoingCourses as SaveOngoingCourse[])
+      : [];
+
+    if (!programCode) {
+      return NextResponse.json({ error: "Program code is required." }, { status: 400 });
+    }
+
+    if (!batchCode) {
+      return NextResponse.json({ error: "Batch code is required." }, { status: 400 });
+    }
+
+    const academicIdentity = await prisma.academic_catalog_entries.findFirst({
+      where: {
+        program_code: programCode,
+        is_active: true,
+      },
+    });
+
+    if (!academicIdentity) {
+      return NextResponse.json(
+        { error: "Academic identity not found in Academic Setup." },
+        { status: 400 }
+      );
+    }
+
+    const program = await resolveCanonicalProgram({
+      department_code: academicIdentity.department_code,
+      department_name: academicIdentity.department_name,
+      program_code: academicIdentity.program_code,
+      program_title: academicIdentity.program_title,
+      study_shift: academicIdentity.study_shift,
+    });
+
+    const batch = await prisma.batches.upsert({
+      where: {
+        program_id_batch_code: {
+          program_id: program.id,
+          batch_code: batchCode,
+        },
+      },
+      update: {
+        is_active: true,
+      },
+      create: {
+        program_id: program.id,
+        batch_code: batchCode,
+        is_active: true,
+      },
+    });
+
+    let completedTermId: number | null = null;
+    if (latestCompletedTerm) {
+      const [termType, yearText] = latestCompletedTerm.split(" ");
+      const year = Number(yearText);
+
+      const term = await prisma.academic_terms.upsert({
+        where: { name: latestCompletedTerm },
+        update: {},
+        create: {
+          name: latestCompletedTerm,
+          term_type: termType,
+          year,
+          is_active: true,
+        },
+      });
+
+      completedTermId = term.id;
+    }
+
+    let registrationTermId: number | null = null;
+    if (currentRegistrationTerm) {
+      const [termType, yearText] = currentRegistrationTerm.split(" ");
+      const year = Number(yearText);
+
+      const term = await prisma.academic_terms.upsert({
+        where: { name: currentRegistrationTerm },
+        update: {},
+        create: {
+          name: currentRegistrationTerm,
+          term_type: termType,
+          year,
+          is_active: true,
+        },
+      });
+
+      registrationTermId = term.id;
+    }
+
+    await prisma.batch_completed_courses.deleteMany({
+      where: {
+        batch_id: batch.id,
+      },
+    });
+
+    await prisma.batch_current_registrations.deleteMany({
+      where: {
+        batch_id: batch.id,
+      },
+    });
+
+    if (completedCourses.length > 0) {
+      await prisma.batch_completed_courses.createMany({
+        data: completedCourses.map((course) => ({
+          batch_id: batch.id,
+          academic_term_id: completedTermId,
+          course_code: normalizeUpper(course.code),
+          course_title: normalizeText(course.title),
+          normalized_title: normalizeComparableTitle(course.title),
+          credit: Number(course.credits),
+          grade: normalizeUpper(course.grade || "") || null,
+          source_student_id: studentId || null,
+          source_file_name: null,
+        })),
+      });
+    }
+
+    if (ongoingCourses.length > 0 && registrationTermId) {
+      await prisma.batch_current_registrations.createMany({
+        data: ongoingCourses.map((course) => ({
+          batch_id: batch.id,
+          academic_term_id: registrationTermId,
+          course_code: normalizeUpper(course.code),
+          course_title: normalizeText(course.title),
+          normalized_title: normalizeComparableTitle(course.title),
+          credit: Number(course.credits),
+          source_student_id: studentId || null,
+          source_file_name: null,
+        })),
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: "Batch status saved successfully.",
+      batchId: batch.id,
+      programId: program.id,
+      savedCompleted: completedCourses.length,
+      savedOngoing: ongoingCourses.length,
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "Failed to save batch status.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src/app/admin/imports/page-client.tsx =====
+
+"use client";
+
+import { useEffect, useState } from "react";
+
+type ProgramOption = {
+  id: number;
+  departmentCode: string;
+  departmentName: string;
+  programCode: string;
+  programTitle: string;
+  programType: string;
+  studyShift: string;
+  curriculumVersion: string;
+  curriculumKey: string | null;
+  studentIdSuffix: string | null;
+  displayLabel: string;
+  active: boolean;
+};
+
+type PreviewResponse = {
+  success: boolean;
+  selectedProgram: {
+    programCode: string;
+    displayLabel: string;
+    curriculumKey?: string | null;
+  };
+  inferredProgram: {
+    programCode: string;
+    displayLabel: string;
+    curriculumKey?: string | null;
+  } | null;
+  studentIdentity: {
+    studentId: string | null;
+    batchCode: string | null;
+    suffix: string | null;
+  };
+  warningMessages: string[];
+  transcriptSummary: {
+    parsedCount: number;
+    latestCompletedTerm: string | null;
+    failedOnlyCodes: string[];
+  };
+  registrationSummary: {
+    parsedCount: number;
+    currentRegistrationTerm: string | null;
+  };
+  offeringContext: {
+    suggestedNextOfferingTerm: string | null;
+  };
+  counts: {
+    completed: number;
+    ongoing: number;
+    remaining: number;
+    masterCourses: number;
+  };
+  completedCourses: Array<{
+    code: string;
+    title: string;
+    semester: string;
+    credits: number;
+    grade: string;
+  }>;
+  ongoingCourses: Array<{
+    code: string;
+    title: string;
+    credits: number;
+    section: string | null;
+  }>;
+  remainingCourses: Array<{
+    code: string;
+    title: string;
+    credits: number;
+    type: string;
+    group: string | null;
+    levelTerm: string | null;
+    curriculumKey?: string | null;
+  }>;
+  debug?: {
+    transcriptTextSample: string;
+    registrationTextSample: string;
+  };
+};
+
+export default function ImportsPageClient() {
+  const [programs, setPrograms] = useState<ProgramOption[]>([]);
+  const [programCode, setProgramCode] = useState("");
+  const [transcriptFile, setTranscriptFile] = useState<File | null>(null);
+  const [registrationFile, setRegistrationFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [saveMessage, setSaveMessage] = useState("");
+  const [result, setResult] = useState<PreviewResponse | null>(null);
+
+  useEffect(() => {
+    async function loadPrograms() {
+      try {
+        const res = await fetch("/api/academic-catalog/options", {
+          cache: "no-store",
+        });
+        const data = await res.json();
+        setPrograms(data.programs || []);
+      } catch {
+        setPrograms([]);
+      }
+    }
+
+    loadPrograms();
+  }, []);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setSaveMessage("");
+    setResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("programCode", programCode);
+
+      if (transcriptFile) {
+        formData.append("transcriptFile", transcriptFile);
+      }
+
+      if (registrationFile) {
+        formData.append("registrationFile", registrationFile);
+      }
+
+      const res = await fetch("/api/student-status-import", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Parsing failed.");
+      }
+
+      setResult(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Parsing failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSaveBatchStatus() {
+    if (!result) return;
+
+    setSaving(true);
+    setError("");
+    setSaveMessage("");
+
+    try {
+      const res = await fetch("/api/student-status-save", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          programCode,
+          batchCode: result.studentIdentity.batchCode,
+          studentId: result.studentIdentity.studentId,
+          latestCompletedTerm: result.transcriptSummary.latestCompletedTerm,
+          currentRegistrationTerm: result.registrationSummary.currentRegistrationTerm,
+          completedCourses: result.completedCourses,
+          ongoingCourses: result.ongoingCourses,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to save batch status.");
+      }
+
+      setSaveMessage(data.message || "Batch status saved successfully.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save batch status.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-bold text-slate-900">
+          Transcript and Registration Parsing Preview
+        </h2>
+
+        <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-5 text-sm leading-7 text-slate-700">
+          <p className="font-semibold text-slate-900">Structured import rule</p>
+          <p className="mt-2">
+            Select the exact academic identity first. Student IDs follow the pattern{" "}
+            <span className="rounded bg-white px-2 py-1 font-semibold">
+              XXX-YYYY-ZZZ
+            </span>{" "}
+            where <span className="font-semibold">XXX</span> is the batch code and{" "}
+            <span className="font-semibold">ZZZ</span> is the configured academic suffix.
+          </p>
+          <p className="mt-2">
+            Transcript logic: passed courses with positive earned credit are treated
+            as completed. Failed or zero-credit attempts are not completed.
+            Registration courses are treated as ongoing.
+          </p>
+          <p className="mt-2">
+            This screen is the safe parsing and validation preview step before final
+            persistence wiring.
+          </p>
+        </div>
+
+        <form
+          onSubmit={handleSubmit}
+          className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2"
+        >
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium">
+              Program / Curriculum
+            </label>
+            <select
+              value={programCode}
+              onChange={(e) => setProgramCode(e.target.value)}
+              className="w-full rounded-2xl border px-3 py-2"
+              required
+            >
+              <option value="">Select exact academic identity</option>
+              {programs.map((program) => (
+                <option key={program.programCode} value={program.programCode}>
+                  {program.displayLabel}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Transcript PDF</label>
+            <input
+              type="file"
+              accept=".pdf"
+              onChange={(e) => setTranscriptFile(e.target.files?.[0] || null)}
+              className="w-full rounded-2xl border px-3 py-2"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">
+              Registration PDF
+            </label>
+            <input
+              type="file"
+              accept=".pdf"
+              onChange={(e) => setRegistrationFile(e.target.files?.[0] || null)}
+              className="w-full rounded-2xl border px-3 py-2"
+            />
+          </div>
+
+          <div className="md:col-span-2 flex flex-wrap gap-3">
+            <button
+              type="submit"
+              disabled={loading}
+              className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+            >
+              {loading ? "Parsing..." : "Parse and Preview Status"}
+            </button>
+
+            {result ? (
+              <button
+                type="button"
+                onClick={handleSaveBatchStatus}
+                disabled={saving}
+                className="rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+              >
+                {saving ? "Saving..." : "Save Batch Status"}
+              </button>
+            ) : null}
+          </div>
+        </form>
+
+        {error ? (
+          <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </p>
+        ) : null}
+
+        {saveMessage ? (
+          <p className="mt-4 rounded-xl bg-green-50 px-4 py-3 text-sm text-green-700">
+            {saveMessage}
+          </p>
+        ) : null}
+      </div>
+
+      {result ? (
+        <>
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-xl font-bold text-slate-900">
+              Identity and Offering Context
+            </h3>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-2xl border bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Student ID
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.studentIdentity.studentId || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Batch Code
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.studentIdentity.batchCode || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Suffix
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.studentIdentity.suffix || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Suggested Next Term
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.offeringContext.suggestedNextOfferingTerm || "-"}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border bg-white p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  Selected Academic Identity
+                </p>
+                <p className="mt-2 text-sm text-slate-700">
+                  {result.selectedProgram.displayLabel}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border bg-white p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  Inferred From Student ID Suffix
+                </p>
+                <p className="mt-2 text-sm text-slate-700">
+                  {result.inferredProgram?.displayLabel || "No inferred match found"}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border bg-white p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  Transcript Parsed Rows
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.transcriptSummary.parsedCount}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border bg-white p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  Registration Parsed Rows
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.registrationSummary.parsedCount}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border bg-white p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  Latest Completed Term
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-900">
+                  {result.transcriptSummary.latestCompletedTerm || "-"}
+                </p>
+              </div>
+            </div>
+
+            {result.warningMessages.length ? (
+              <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <p className="text-sm font-semibold text-amber-800">Warnings</p>
+                <ul className="mt-2 space-y-2 text-sm text-amber-900">
+                  {result.warningMessages.map((item, idx) => (
+                    <li key={idx}>â€¢ {item}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Completed
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-green-700">
+                {result.counts.completed}
+              </h4>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Ongoing
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-blue-700">
+                {result.counts.ongoing}
+              </h4>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Remaining
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-amber-700">
+                {result.counts.remaining}
+              </h4>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Curriculum Rows
+              </p>
+              <h4 className="mt-2 text-3xl font-bold text-slate-900">
+                {result.counts.masterCourses}
+              </h4>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-xl font-bold text-slate-900">Completed Courses</h3>
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left">
+                    <th className="px-3 py-2">Semester</th>
+                    <th className="px-3 py-2">Code</th>
+                    <th className="px-3 py-2">Title</th>
+                    <th className="px-3 py-2">Credits</th>
+                    <th className="px-3 py-2">Grade</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.completedCourses.map((row) => (
+                    <tr key={`${row.semester}-${row.code}`} className="border-b">
+                      <td className="px-3 py-2">{row.semester}</td>
+                      <td className="px-3 py-2">{row.code}</td>
+                      <td className="px-3 py-2">{row.title}</td>
+                      <td className="px-3 py-2">{row.credits}</td>
+                      <td className="px-3 py-2">{row.grade}</td>
+                    </tr>
+                  ))}
+                  {!result.completedCourses.length ? (
+                    <tr>
+                      <td className="px-3 py-4 text-slate-500" colSpan={5}>
+                        No completed courses parsed.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-xl font-bold text-slate-900">
+              Ongoing Courses From Registration
+            </h3>
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left">
+                    <th className="px-3 py-2">Code</th>
+                    <th className="px-3 py-2">Title</th>
+                    <th className="px-3 py-2">Credits</th>
+                    <th className="px-3 py-2">Section</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.ongoingCourses.map((row) => (
+                    <tr key={row.code} className="border-b">
+                      <td className="px-3 py-2">{row.code}</td>
+                      <td className="px-3 py-2">{row.title}</td>
+                      <td className="px-3 py-2">{row.credits}</td>
+                      <td className="px-3 py-2">{row.section || "-"}</td>
+                    </tr>
+                  ))}
+                  {!result.ongoingCourses.length ? (
+                    <tr>
+                      <td className="px-3 py-4 text-slate-500" colSpan={4}>
+                        No ongoing courses parsed.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-xl font-bold text-slate-900">
+              Remaining Courses From Imported Curriculum
+            </h3>
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left">
+                    <th className="px-3 py-2">Code</th>
+                    <th className="px-3 py-2">Title</th>
+                    <th className="px-3 py-2">Credits</th>
+                    <th className="px-3 py-2">Type</th>
+                    <th className="px-3 py-2">Group</th>
+                    <th className="px-3 py-2">Level / Term</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.remainingCourses.map((row) => (
+                    <tr key={row.code} className="border-b">
+                      <td className="px-3 py-2">{row.code}</td>
+                      <td className="px-3 py-2">{row.title}</td>
+                      <td className="px-3 py-2">{row.credits}</td>
+                      <td className="px-3 py-2">{row.type}</td>
+                      <td className="px-3 py-2">{row.group || "-"}</td>
+                      <td className="px-3 py-2">{row.levelTerm || "-"}</td>
+                    </tr>
+                  ))}
+                  {!result.remainingCourses.length ? (
+                    <tr>
+                      <td className="px-3 py-4 text-slate-500" colSpan={6}>
+                        No remaining courses available yet. Import curriculum first, or check selected identity.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {result.debug ? (
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h3 className="text-xl font-bold text-slate-900">Debug Text Samples</h3>
+
+              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div className="rounded-2xl border bg-slate-50 p-4">
+                  <p className="text-sm font-semibold text-slate-900">
+                    Transcript Extract Sample
+                  </p>
+                  <pre className="mt-3 whitespace-pre-wrap break-words text-xs leading-6 text-slate-700">
+                    {result.debug.transcriptTextSample || "-"}
+                  </pre>
+                </div>
+
+                <div className="rounded-2xl border bg-slate-50 p-4">
+                  <p className="text-sm font-semibold text-slate-900">
+                    Registration Extract Sample
+                  </p>
+                  <pre className="mt-3 whitespace-pre-wrap break-words text-xs leading-6 text-slate-700">
+                    {result.debug.registrationTextSample || "-"}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+
+===== FILE: D:\adust-course-offering-tool\src\app\api\imports\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { ImportType } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+
+function normalizeTitle(raw: string): string {
+  return raw
+    .toUpperCase()
+    .replace(/&/g, " AND ")
+    .replace(/[^A-Z0-9]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function selectApplicableCatalog(
+  catalogs: {
+    id: string;
+    title: string;
+    startingBatchCode: string;
+    courses: {
+      id: string;
+      code: string;
+      title: string;
+      creditHours: number;
+      semesterNo: number | null;
+    }[];
+  }[],
+  batchCode: string
+) {
+  const batchNumber = Number(batchCode);
+
+  const eligible = catalogs
+    .filter((catalog) => Number(catalog.startingBatchCode) <= batchNumber)
+    .sort((a, b) => Number(b.startingBatchCode) - Number(a.startingBatchCode));
+
+  if (eligible.length > 0) return eligible[0];
+
+  const fallback = [...catalogs].sort(
+    (a, b) => Number(a.startingBatchCode) - Number(b.startingBatchCode)
+  );
+
+  return fallback[0] ?? null;
+}
+
+async function deletePreviousSameTitleImports(
+  batchId: string,
+  type: ImportType,
+  originalName: string
+) {
+  const oldImports = await prisma.importFile.findMany({
+    where: {
+      batchId,
+      type,
+      originalName,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  const oldIds = oldImports.map((item) => item.id);
+
+  if (oldIds.length > 0) {
+    await prisma.parsedBatchCourse.deleteMany({
+      where: {
+        importFileId: {
+          in: oldIds,
+        },
+      },
+    });
+
+    await prisma.importFile.deleteMany({
+      where: {
+        id: {
+          in: oldIds,
+        },
+      },
+    });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const formData = await request.formData();
+
+    const transcriptFile = formData.get("transcriptFile") as File | null;
+    const registrationFile = formData.get("registrationFile") as File | null;
+    const season = String(formData.get("offeringSeason") || "");
+    const year = String(formData.get("offeringYear") || "");
+    const programCode = String(formData.get("programCode") || "").trim().toUpperCase();
+
+    if (!transcriptFile || !registrationFile || !programCode) {
+      return NextResponse.json(
+        { error: "Program code, transcript file, and registration file are required." },
+        { status: 400 }
+      );
+    }
+
+    const {
+      buildOfferingSemesterTitle,
+      parseRegistrationPdf,
+      parseTranscriptPdf,
+    } = await import("@/lib/pdf-import");
+
+    const offeringSemesterTitle = buildOfferingSemesterTitle(season, year);
+    const semesterCode = offeringSemesterTitle.replace(/\s+/g, "-");
+
+    const transcriptBuffer = Buffer.from(await transcriptFile.arrayBuffer());
+    const registrationBuffer = Buffer.from(await registrationFile.arrayBuffer());
+
+    const transcriptResult = await parseTranscriptPdf(transcriptBuffer);
+    const registrationResult = await parseRegistrationPdf(registrationBuffer);
+
+    const detectedBatchCode = transcriptResult.batchCode || registrationResult.batchCode;
+
+    if (!detectedBatchCode) {
+      return NextResponse.json(
+        { error: "Could not detect batch from student ID." },
+        { status: 400 }
+      );
+    }
+
+    const program = await prisma.program.findUnique({
+      where: {
+        code: programCode,
+      },
+      include: {
+        courseCatalogs: {
+          include: {
+            courses: true,
+          },
+        },
+      },
+    });
+
+    if (!program) {
+      return NextResponse.json(
+        { error: `Program ${programCode} was not found.` },
+        { status: 404 }
+      );
+    }
+
+    const applicableCatalog = selectApplicableCatalog(program.courseCatalogs, detectedBatchCode);
+
+    if (!applicableCatalog) {
+      return NextResponse.json(
+        { error: `No course catalog found for program ${programCode}.` },
+        { status: 404 }
+      );
+    }
+
+    const batch = await prisma.batch.upsert({
+      where: {
+        programId_code: {
+          programId: program.id,
+          code: detectedBatchCode,
+        },
+      },
+      update: {},
+      create: {
+        programId: program.id,
+        code: detectedBatchCode,
+        displayName: `Batch ${detectedBatchCode}`,
+        admissionSemester: "Unknown",
+        expectedGradYear: null,
+        isActive: true,
+      },
+    });
+
+    const semester = await prisma.semester.upsert({
+      where: {
+        code: semesterCode,
+      },
+      update: {
+        title: offeringSemesterTitle,
+      },
+      create: {
+        code: semesterCode,
+        title: offeringSemesterTitle,
+        isActive: true,
+      },
+    });
+
+    await deletePreviousSameTitleImports(batch.id, ImportType.TRANSCRIPT, transcriptFile.name);
+    await deletePreviousSameTitleImports(batch.id, ImportType.REGISTRATION, registrationFile.name);
+
+    const transcriptImport = await prisma.importFile.create({
+      data: {
+        batchId: batch.id,
+        type: ImportType.TRANSCRIPT,
+        semesterId: semester.id,
+        originalName: transcriptFile.name,
+        studentId: transcriptResult.studentId,
+        studentName: transcriptResult.studentName,
+      },
+    });
+
+    const registrationImport = await prisma.importFile.create({
+      data: {
+        batchId: batch.id,
+        type: ImportType.REGISTRATION,
+        semesterId: semester.id,
+        originalName: registrationFile.name,
+        studentId: registrationResult.studentId,
+        studentName: registrationResult.studentName,
+      },
+    });
+
+    const codeMap = new Map(
+      applicableCatalog.courses.map((course) => [course.code.toUpperCase(), course])
+    );
+
+    const titleMap = new Map(
+      applicableCatalog.courses.map((course) => [normalizeTitle(course.title), course])
+    );
+
+    function mapCourse(rawCode: string, rawTitle: string) {
+      const byCode = codeMap.get(rawCode.toUpperCase());
+      if (byCode) return byCode;
+
+      const byTitle = titleMap.get(normalizeTitle(rawTitle));
+      if (byTitle) return byTitle;
+
+      return null;
+    }
+
+    for (const course of transcriptResult.courses) {
+      const mappedCourse = mapCourse(course.rawCourseCode, course.rawCourseTitle);
+
+      await prisma.parsedBatchCourse.create({
+        data: {
+          batchId: batch.id,
+          importFileId: transcriptImport.id,
+          courseId: mappedCourse?.id ?? null,
+          rawCourseCode: course.rawCourseCode,
+          rawCourseTitle: course.rawCourseTitle,
+          creditHours: course.creditHours,
+          grade: course.grade,
+          sourceSemester: course.sourceSemester,
+          isCompleted: course.isCompleted,
+          isOngoing: false,
+          isPassed: course.isPassed,
+        },
+      });
+    }
+
+    for (const course of registrationResult.courses) {
+      const mappedCourse = mapCourse(course.rawCourseCode, course.rawCourseTitle);
+
+      await prisma.parsedBatchCourse.create({
+        data: {
+          batchId: batch.id,
+          importFileId: registrationImport.id,
+          courseId: mappedCourse?.id ?? null,
+          rawCourseCode: course.rawCourseCode,
+          rawCourseTitle: course.rawCourseTitle,
+          creditHours: course.creditHours,
+          grade: null,
+          sourceSemester: course.sourceSemester,
+          isCompleted: false,
+          isOngoing: true,
+          isPassed: null,
+          section: course.section,
+          rawScheduleText: course.rawScheduleText,
+        },
+      });
+    }
+
+    const completedCourses = transcriptResult.courses.filter((course) => course.isCompleted);
+    const ongoingCourses = registrationResult.courses;
+
+    const completedKeys = new Set(
+      completedCourses.map((course) => normalizeTitle(course.rawCourseTitle))
+    );
+
+    const ongoingKeys = new Set(
+      ongoingCourses.map((course) => normalizeTitle(course.rawCourseTitle))
+    );
+
+    const remainingCourses = applicableCatalog.courses.filter((course) => {
+      const key = normalizeTitle(course.title);
+      return !completedKeys.has(key) && !ongoingKeys.has(key);
+    });
+
+    return NextResponse.json({
+      success: true,
+      debug: {
+        transcriptExtractedCount: transcriptResult.courses.length,
+        completedCount: completedCourses.length,
+        ongoingCount: ongoingCourses.length,
+        transcriptPreview: transcriptResult.debugTranscriptText ?? "",
+      },
+      program: {
+        code: program.code,
+        name: program.name,
+      },
+      batch: {
+        id: batch.id,
+        code: batch.code,
+        displayName: batch.displayName,
+      },
+      catalog: {
+        id: applicableCatalog.id,
+        title: applicableCatalog.title,
+        startingBatchCode: applicableCatalog.startingBatchCode,
+      },
+      studentId: transcriptResult.studentId || registrationResult.studentId,
+      studentName: transcriptResult.studentName || registrationResult.studentName,
+      detectedBatchCode,
+      lastCompletedSemester: transcriptResult.lastCompletedSemester,
+      currentSemester: registrationResult.currentSemester,
+      offeringSemester: offeringSemesterTitle,
+      completedCourses,
+      ongoingCourses,
+      remainingCourses,
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "Import failed.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE() {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    await prisma.parsedBatchCourse.deleteMany({});
+    await prisma.importFile.deleteMany({});
+
+    return NextResponse.json({
+      success: true,
+      message: "All previous transcript and registration uploads have been deleted.",
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "Reset failed.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: D:\adust-course-offering-tool\src\app\api\master-course-import\repair-level-terms\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import * as XLSX from "xlsx";
+import mammoth from "mammoth";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
+
+type ParsedCourse = {
+  course_code: string;
+  course_title: string;
+  normalized_title: string;
+  credit: number;
+  course_type: string;
+  level_term: string | null;
+  group_name: string | null;
+  is_active: boolean;
+};
+
+type CatalogProgram = {
+  departmentCode: string;
+  departmentName: string;
+  programCode: string;
+  programTitle: string;
+  programType: string;
+  studyShift: string;
+  curriculumVersion: string;
+  curriculumKey: string | null;
+  studentIdSuffix: string | null;
+  displayLabel: string;
+};
+
+function normalizeText(text: string) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeTitle(text: string) {
+  return normalizeText(text).toLowerCase();
+}
+
+function toCompactCourseCode(text: string) {
+  const raw = normalizeText(text).toUpperCase();
+  if (!raw) return "";
+
+  const compact = raw.replace(/\s+/g, "");
+
+  const directMatch = compact.match(/^([A-Z]{2,6})(\d{3,4})$/);
+  if (directMatch) return `${directMatch[1]}${directMatch[2]}`;
+
+  const spacedMatch = raw.match(/^([A-Z]{2,6})(?:\s+\d{2,4})?\s+(\d{3,4})$/);
+  if (spacedMatch) return `${spacedMatch[1]}${spacedMatch[2]}`;
+
+  const genericMatch = compact.match(/^([A-Z]{2,6}).*?(\d{3,4})$/);
+  if (genericMatch) return `${genericMatch[1]}${genericMatch[2]}`;
+
+  return compact;
+}
+
+function detectCourseType(rawType: string, rawTitle: string) {
+  const type = normalizeText(rawType).toUpperCase();
+  const title = normalizeText(rawTitle).toUpperCase();
+
+  if (type.includes("LAB") || title.includes(" LAB")) return "LAB";
+  if (type.includes("PROJECT") || title.includes("PROJECT")) return "PROJECT";
+  if (type.includes("INTERNSHIP") || title.includes("INTERNSHIP")) return "INTERNSHIP";
+  return "THEORY";
+}
+
+function isLikelyCourseCode(value: string) {
+  const v = normalizeText(value).toUpperCase();
+  return /^[A-Z]{2,6}\s*\d{3,4}(?:\s*\d{3,4})?$/.test(v);
+}
+
+function isNumericCredit(value: string) {
+  return /^\d+(\.\d+)?$/.test(normalizeText(value));
+}
+
+function extractGroupName(text: string) {
+  const value = normalizeText(text);
+  if (!value) return null;
+
+  if (/group\s*-\s*[a-z0-9]+/i.test(value)) return value;
+  if (/ged|general education|language/i.test(value)) return value;
+  if (/basic science|mathematics/i.test(value)) return value;
+  if (/other engineering/i.test(value)) return value;
+  if (/core courses?/i.test(value)) return value;
+  if (/elective courses?/i.test(value)) return value;
+  if (/electronics|biomedical|communication|power division|computer engineering/i.test(value)) {
+    return value;
+  }
+
+  return null;
+}
+
+function parseExcel(buffer: Buffer): ParsedCourse[] {
+  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const courses: ParsedCourse[] = [];
+
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+      defval: "",
+      raw: false,
+    });
+
+    for (const row of rows) {
+      const rowValues = Object.values(row)
+        .map((v) => normalizeText(String(v || "")))
+        .filter(Boolean);
+
+      const joined = rowValues.join(" | ");
+      const foundGroup = extractGroupName(joined);
+
+      let code = "";
+      let title = "";
+      let credit = "";
+
+      for (let i = 0; i < rowValues.length; i++) {
+        const current = rowValues[i];
+        const next = rowValues[i + 1] || "";
+        const next2 = rowValues[i + 2] || "";
+
+        if (!code && isLikelyCourseCode(current)) {
+          code = current;
+
+          if (!title && next && !isNumericCredit(next) && !isLikelyCourseCode(next)) {
+            title = next;
+          }
+
+          if (!credit && isNumericCredit(next2)) {
+            credit = next2;
+          } else if (!credit && isNumericCredit(next)) {
+            credit = next;
+          }
+        }
+      }
+
+      if (!code || !title || !credit) continue;
+      if (/course code|course title|credit/i.test(joined)) continue;
+
+      courses.push({
+        course_code: toCompactCourseCode(code),
+        course_title: normalizeText(title),
+        normalized_title: normalizeTitle(title),
+        credit: Number(credit),
+        course_type: detectCourseType("", title),
+        level_term: sheetName || null,
+        group_name: foundGroup,
+        is_active: true,
+      });
+    }
+  }
+
+  return courses;
+}
+
+function parseHtmlTables(html: string): ParsedCourse[] {
+  const courses: ParsedCourse[] = [];
+  const tableMatches = html.match(/<table[\s\S]*?<\/table>/gi) || [];
+  let currentGroup: string | null = null;
+
+  for (const tableHtml of tableMatches) {
+    const rowMatches = tableHtml.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+
+    for (const rowHtml of rowMatches) {
+      const cellMatches = [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((m) =>
+        normalizeText(
+          m[1]
+            .replace(/<br\s*\/?>/gi, " ")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/&nbsp;/gi, " ")
+        )
+      );
+
+      if (!cellMatches.length) continue;
+
+      const rowText = cellMatches.join(" | ");
+      const foundGroup = extractGroupName(rowText);
+      if (foundGroup) currentGroup = foundGroup;
+
+      if (cellMatches.some((c) => /course code/i.test(c))) continue;
+      if (cellMatches.every((c) => !c)) continue;
+
+      let code = "";
+      let title = "";
+      let credit = "";
+
+      for (let i = 0; i < cellMatches.length; i++) {
+        const current = cellMatches[i];
+        const next = cellMatches[i + 1] || "";
+        const next2 = cellMatches[i + 2] || "";
+
+        if (!code && isLikelyCourseCode(current)) {
+          code = current;
+
+          if (!title && next && !isLikelyCourseCode(next) && !isNumericCredit(next)) {
+            title = next;
+          }
+
+          if (!credit && isNumericCredit(next2)) {
+            credit = next2;
+          } else if (!credit && isNumericCredit(next)) {
+            credit = next;
+          }
+        }
+      }
+
+      if (!code || !title || !credit) continue;
+
+      courses.push({
+        course_code: toCompactCourseCode(code),
+        course_title: normalizeText(title),
+        normalized_title: normalizeTitle(title),
+        credit: Number(credit),
+        course_type: detectCourseType("", title),
+        level_term: null,
+        group_name: currentGroup,
+        is_active: true,
+      });
+    }
+  }
+
+  return courses;
+}
+
+function parseDocxRawText(text: string): ParsedCourse[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => normalizeText(line))
+    .filter(Boolean);
+
+  const courses: ParsedCourse[] = [];
+  let currentGroup: string | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    const foundGroup = extractGroupName(line);
+    if (foundGroup) currentGroup = foundGroup;
+
+    if (!isLikelyCourseCode(line)) continue;
+
+    const next1 = lines[i + 1] || "";
+    const next2 = lines[i + 2] || "";
+
+    if (!next1 || !next2) continue;
+    if (isLikelyCourseCode(next1)) continue;
+    if (!isNumericCredit(next2)) continue;
+
+    courses.push({
+      course_code: toCompactCourseCode(line),
+      course_title: normalizeText(next1),
+      normalized_title: normalizeTitle(next1),
+      credit: Number(next2),
+      course_type: detectCourseType("", next1),
+      level_term: null,
+      group_name: currentGroup,
+      is_active: true,
+    });
+  }
+
+  return courses;
+}
+
+async function parseDocx(buffer: Buffer): Promise<ParsedCourse[]> {
+  const htmlResult = await mammoth.convertToHtml({ buffer });
+  const htmlCourses = parseHtmlTables(htmlResult.value || "");
+  if (htmlCourses.length > 0) return htmlCourses;
+
+  const rawResult = await mammoth.extractRawText({ buffer });
+  return parseDocxRawText(rawResult.value || "");
+}
+
+async function getCatalogProgramByCode(programCode: string): Promise<CatalogProgram | null> {
+  const row = await prisma.academic_catalog_entries.findFirst({
+    where: {
+      program_code: programCode,
+      is_active: true,
+    },
+  });
+
+  if (!row) return null;
+
+  return {
+    departmentCode: row.department_code,
+    departmentName: row.department_name,
+    programCode: row.program_code,
+    programTitle: row.program_title,
+    programType: row.program_type,
+    studyShift: row.study_shift,
+    curriculumVersion: row.curriculum_version,
+    curriculumKey: row.curriculum_key,
+    studentIdSuffix: row.student_id_suffix,
+    displayLabel: row.display_label,
+  };
+}
+
+export async function POST(request: NextRequest) {
+  await requireCoordinatorOrAdminApi();
+
+  try {
+    const formData = await request.formData();
+
+    const programCode = String(formData.get("programCode") || "").trim().toUpperCase();
+    const replaceExisting = String(formData.get("replaceExisting") || "false") === "true";
+    const file = formData.get("file") as File | null;
+
+    if (!programCode || !file) {
+      return NextResponse.json(
+        { error: "programCode and file are required." },
+        { status: 400 }
+      );
+    }
+
+    const catalogProgram = await getCatalogProgramByCode(programCode);
+
+    if (!catalogProgram) {
+      return NextResponse.json(
+        { error: "Selected program/curriculum is not defined in academic setup." },
+        { status: 400 }
+      );
+    }
+
+    const effectiveCurriculumKey =
+      (catalogProgram.curriculumKey || "").trim().toUpperCase() || catalogProgram.programCode;
+
+    const program = await resolveCanonicalProgram({
+      department_code: catalogProgram.departmentCode,
+      department_name: catalogProgram.departmentName,
+      program_code: catalogProgram.programCode,
+      program_title: catalogProgram.programTitle,
+      study_shift: catalogProgram.studyShift,
+    });
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const lowerName = file.name.toLowerCase();
+
+    let courses: ParsedCourse[] = [];
+
+    if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) {
+      courses = parseExcel(buffer);
+    } else if (
+      lowerName.endsWith(".docx") ||
+      lowerName.endsWith(".doc") ||
+      lowerName.endsWith(".docm")
+    ) {
+      courses = await parseDocx(buffer);
+    } else {
+      return NextResponse.json(
+        { error: "Unsupported file type. Please upload Excel or DOCX." },
+        { status: 400 }
+      );
+    }
+
+    const dedupedMap = new Map<string, ParsedCourse>();
+
+    for (const c of courses) {
+      const key = toCompactCourseCode(c.course_code);
+      if (!key) continue;
+
+      if (!dedupedMap.has(key)) {
+        dedupedMap.set(key, {
+          ...c,
+          course_code: key,
+        });
+      }
+    }
+
+    const dedupedCourses = Array.from(dedupedMap.values());
+
+    if (!dedupedCourses.length) {
+      return NextResponse.json(
+        { error: "No course rows could be parsed from the uploaded file." },
+        { status: 400 }
+      );
+    }
+
+    const existingRows = await prisma.master_courses.findMany({
+      where: {
+        OR: [
+          { curriculum_key: effectiveCurriculumKey },
+          { program_id: program.id },
+        ],
+      },
+      select: {
+        id: true,
+        course_code: true,
+      },
+    });
+
+    const existingByCode = new Map<string, { id: number }>();
+
+    for (const row of existingRows) {
+      const compactCode = toCompactCourseCode(row.course_code);
+      if (!compactCode) continue;
+
+      if (!existingByCode.has(compactCode)) {
+        existingByCode.set(compactCode, { id: row.id });
+      }
+    }
+
+    let insertedCount = 0;
+    let updatedCount = 0;
+
+    for (const c of dedupedCourses) {
+      const compactCode = toCompactCourseCode(c.course_code);
+      if (!compactCode) continue;
+
+      const existing = existingByCode.get(compactCode);
+
+      if (existing) {
+        await prisma.master_courses.update({
+          where: { id: existing.id },
+          data: {
+            program_id: program.id,
+            curriculum_key: effectiveCurriculumKey,
+            course_code: compactCode,
+            course_title: c.course_title,
+            normalized_title: c.normalized_title,
+            credit: c.credit,
+            course_type: c.course_type,
+            level_term: c.level_term,
+            group_name: c.group_name,
+            is_active: true,
+          },
+        });
+        updatedCount += 1;
+      } else {
+        await prisma.master_courses.create({
+          data: {
+            program_id: program.id,
+            curriculum_key: effectiveCurriculumKey,
+            course_code: compactCode,
+            course_title: c.course_title,
+            normalized_title: c.normalized_title,
+            credit: c.credit,
+            course_type: c.course_type,
+            level_term: c.level_term,
+            group_name: c.group_name,
+            is_active: true,
+          },
+        });
+        insertedCount += 1;
+      }
+    }
+
+    let deactivatedReferencedCount = 0;
+    let deletedUnreferencedCount = 0;
+
+    if (replaceExisting) {
+      const incomingCodes = new Set(
+        dedupedCourses.map((c) => toCompactCourseCode(c.course_code))
+      );
+
+      const staleRows = existingRows.filter((row) => {
+        const compactCode = toCompactCourseCode(row.course_code);
+        return compactCode && !incomingCodes.has(compactCode);
+      });
+
+      const staleIds = staleRows.map((row) => row.id);
+
+      if (staleIds.length > 0) {
+        const referencedRows = await prisma.offered_courses.findMany({
+          where: {
+            master_course_id: {
+              in: staleIds,
+            },
+          },
+          select: {
+            master_course_id: true,
+          },
+          distinct: ["master_course_id"],
+        });
+
+        const referencedIds = new Set(
+          referencedRows.map((row) => row.master_course_id)
+        );
+
+        const referencedStaleIds = staleIds.filter((id) => referencedIds.has(id));
+        const unreferencedStaleIds = staleIds.filter((id) => !referencedIds.has(id));
+
+        if (referencedStaleIds.length > 0) {
+          const updated = await prisma.master_courses.updateMany({
+            where: {
+              id: { in: referencedStaleIds },
+            },
+            data: {
+              is_active: false,
+            },
+          });
+
+          deactivatedReferencedCount = updated.count;
+        }
+
+        if (unreferencedStaleIds.length > 0) {
+          const deleted = await prisma.master_courses.deleteMany({
+            where: {
+              id: { in: unreferencedStaleIds },
+            },
+          });
+
+          deletedUnreferencedCount = deleted.count;
+        }
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `Curriculum import completed successfully for ${effectiveCurriculumKey}. Inserted ${insertedCount}, updated ${updatedCount}, deactivated referenced stale ${deactivatedReferencedCount}, deleted unreferenced stale ${deletedUnreferencedCount}.`,
+      insertedCount,
+      updatedCount,
+      deactivatedReferencedCount,
+      deletedUnreferencedCount,
+      parsedCount: dedupedCourses.length,
+      programCode: catalogProgram.programCode,
+      curriculumKey: effectiveCurriculumKey,
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "Master course import failed.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: D:\adust-course-offering-tool\src\app\api\master-course-import\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import * as XLSX from "xlsx";
+import mammoth from "mammoth";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
+
+const ROUTE_VERSION = "master-course-import-final-no-tx-v4";
+
+type ParsedCourse = {
+  course_code: string;
+  course_title: string;
+  normalized_title: string;
+  credit: number;
+  course_type: string;
+  level_term: string | null;
+  group_name: string | null;
+  is_active: boolean;
+};
+
+type CatalogProgram = {
+  departmentCode: string;
+  departmentName: string;
+  programCode: string;
+  programTitle: string;
+  programType: string;
+  studyShift: string;
+  curriculumVersion: string;
+  curriculumKey: string | null;
+  studentIdSuffix: string | null;
+  displayLabel: string;
+};
+
+function normalizeText(text: string) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeTitle(text: string) {
+  return normalizeText(text).toLowerCase();
+}
+
+function toCompactCourseCode(text: string) {
+  const raw = normalizeText(text).toUpperCase();
+  if (!raw) return "";
+
+  const compact = raw.replace(/\s+/g, "");
+
+  const directMatch = compact.match(/^([A-Z]{2,6})(\d{3,4})$/);
+  if (directMatch) return `${directMatch[1]}${directMatch[2]}`;
+
+  const spacedMatch = raw.match(/^([A-Z]{2,6})(?:\s+\d{2,4})?\s+(\d{3,4})$/);
+  if (spacedMatch) return `${spacedMatch[1]}${spacedMatch[2]}`;
+
+  const genericMatch = compact.match(/^([A-Z]{2,6}).*?(\d{3,4})$/);
+  if (genericMatch) return `${genericMatch[1]}${genericMatch[2]}`;
+
+  return compact;
+}
+
+function detectCourseType(rawType: string, rawTitle: string) {
+  const type = normalizeText(rawType).toUpperCase();
+  const title = normalizeText(rawTitle).toUpperCase();
+
+  if (type.includes("LAB") || title.includes(" LAB")) return "LAB";
+  if (type.includes("PROJECT") || title.includes("PROJECT")) return "PROJECT";
+  if (type.includes("INTERNSHIP") || title.includes("INTERNSHIP")) return "INTERNSHIP";
+  return "THEORY";
+}
+
+function isLikelyCourseCode(value: string) {
+  const v = normalizeText(value).toUpperCase();
+  return /^[A-Z]{2,6}\s*\d{3,4}(?:\s*\d{3,4})?$/.test(v);
+}
+
+function isNumericCredit(value: string) {
+  return /^\d+(\.\d+)?$/.test(normalizeText(value));
+}
+
+function extractGroupName(text: string) {
+  const value = normalizeText(text);
+  if (!value) return null;
+
+  if (/group\s*-\s*[a-z0-9]+/i.test(value)) return value;
+  if (/ged|general education|language/i.test(value)) return value;
+  if (/basic science|mathematics/i.test(value)) return value;
+  if (/other engineering/i.test(value)) return value;
+  if (/core courses?/i.test(value)) return value;
+  if (/elective courses?/i.test(value)) return value;
+  if (
+    /electronics|biomedical|communication|power division|computer engineering/i.test(
+      value
+    )
+  ) {
+    return value;
+  }
+
+  return null;
+}
+
+function parseExcel(buffer: Buffer): ParsedCourse[] {
+  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const courses: ParsedCourse[] = [];
+
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+      defval: "",
+      raw: false,
+    });
+
+    for (const row of rows) {
+      const rowValues = Object.values(row)
+        .map((v) => normalizeText(String(v || "")))
+        .filter(Boolean);
+
+      const joined = rowValues.join(" | ");
+      const foundGroup = extractGroupName(joined);
+
+      let code = "";
+      let title = "";
+      let credit = "";
+
+      for (let i = 0; i < rowValues.length; i++) {
+        const current = rowValues[i];
+        const next = rowValues[i + 1] || "";
+        const next2 = rowValues[i + 2] || "";
+
+        if (!code && isLikelyCourseCode(current)) {
+          code = current;
+
+          if (!title && next && !isNumericCredit(next) && !isLikelyCourseCode(next)) {
+            title = next;
+          }
+
+          if (!credit && isNumericCredit(next2)) {
+            credit = next2;
+          } else if (!credit && isNumericCredit(next)) {
+            credit = next;
+          }
+        }
+      }
+
+      if (!code || !title || !credit) continue;
+      if (/course code|course title|credit/i.test(joined)) continue;
+
+      courses.push({
+        course_code: toCompactCourseCode(code),
+        course_title: normalizeText(title),
+        normalized_title: normalizeTitle(title),
+        credit: Number(credit),
+        course_type: detectCourseType("", title),
+        level_term: sheetName || null,
+        group_name: foundGroup,
+        is_active: true,
+      });
+    }
+  }
+
+  return courses;
+}
+
+function parseHtmlTables(html: string): ParsedCourse[] {
+  const courses: ParsedCourse[] = [];
+  const tableMatches = html.match(/<table[\s\S]*?<\/table>/gi) || [];
+  let currentGroup: string | null = null;
+
+  for (const tableHtml of tableMatches) {
+    const rowMatches = tableHtml.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+
+    for (const rowHtml of rowMatches) {
+      const cellMatches = [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(
+        (m) =>
+          normalizeText(
+            m[1]
+              .replace(/<br\s*\/?>/gi, " ")
+              .replace(/<[^>]+>/g, " ")
+              .replace(/&nbsp;/gi, " ")
+          )
+      );
+
+      if (!cellMatches.length) continue;
+
+      const rowText = cellMatches.join(" | ");
+      const foundGroup = extractGroupName(rowText);
+      if (foundGroup) currentGroup = foundGroup;
+
+      if (cellMatches.some((c) => /course code/i.test(c))) continue;
+      if (cellMatches.every((c) => !c)) continue;
+
+      let code = "";
+      let title = "";
+      let credit = "";
+
+      for (let i = 0; i < cellMatches.length; i++) {
+        const current = cellMatches[i];
+        const next = cellMatches[i + 1] || "";
+        const next2 = cellMatches[i + 2] || "";
+
+        if (!code && isLikelyCourseCode(current)) {
+          code = current;
+
+          if (!title && next && !isLikelyCourseCode(next) && !isNumericCredit(next)) {
+            title = next;
+          }
+
+          if (!credit && isNumericCredit(next2)) {
+            credit = next2;
+          } else if (!credit && isNumericCredit(next)) {
+            credit = next;
+          }
+        }
+      }
+
+      if (!code || !title || !credit) continue;
+
+      courses.push({
+        course_code: toCompactCourseCode(code),
+        course_title: normalizeText(title),
+        normalized_title: normalizeTitle(title),
+        credit: Number(credit),
+        course_type: detectCourseType("", title),
+        level_term: null,
+        group_name: currentGroup,
+        is_active: true,
+      });
+    }
+  }
+
+  return courses;
+}
+
+function parseDocxRawText(text: string): ParsedCourse[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => normalizeText(line))
+    .filter(Boolean);
+
+  const courses: ParsedCourse[] = [];
+  let currentGroup: string | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    const foundGroup = extractGroupName(line);
+    if (foundGroup) currentGroup = foundGroup;
+
+    if (!isLikelyCourseCode(line)) continue;
+
+    const next1 = lines[i + 1] || "";
+    const next2 = lines[i + 2] || "";
+
+    if (!next1 || !next2) continue;
+    if (isLikelyCourseCode(next1)) continue;
+    if (!isNumericCredit(next2)) continue;
+
+    courses.push({
+      course_code: toCompactCourseCode(line),
+      course_title: normalizeText(next1),
+      normalized_title: normalizeTitle(next1),
+      credit: Number(next2),
+      course_type: detectCourseType("", next1),
+      level_term: null,
+      group_name: currentGroup,
+      is_active: true,
+    });
+  }
+
+  return courses;
+}
+
+async function parseDocx(buffer: Buffer): Promise<ParsedCourse[]> {
+  const htmlResult = await mammoth.convertToHtml({ buffer });
+  const htmlCourses = parseHtmlTables(htmlResult.value || "");
+  if (htmlCourses.length > 0) return htmlCourses;
+
+  const rawResult = await mammoth.extractRawText({ buffer });
+  return parseDocxRawText(rawResult.value || "");
+}
+
+async function getCatalogProgramByCode(programCode: string): Promise<CatalogProgram | null> {
+  const row = await prisma.academic_catalog_entries.findFirst({
+    where: {
+      program_code: programCode,
+      is_active: true,
+    },
+  });
+
+  if (!row) return null;
+
+  return {
+    departmentCode: row.department_code,
+    departmentName: row.department_name,
+    programCode: row.program_code,
+    programTitle: row.program_title,
+    programType: row.program_type,
+    studyShift: row.study_shift,
+    curriculumVersion: row.curriculum_version,
+    curriculumKey: row.curriculum_key,
+    studentIdSuffix: row.student_id_suffix,
+    displayLabel: row.display_label,
+  };
+}
+
+export async function GET() {
+  await requireCoordinatorOrAdminApi();
+
+  return NextResponse.json({
+    ok: true,
+    routeVersion: ROUTE_VERSION,
+    message: "master-course-import route is active",
+  });
+}
+
+export async function POST(request: NextRequest) {
+  await requireCoordinatorOrAdminApi();
+
+  try {
+    const formData = await request.formData();
+
+    const programCode = String(formData.get("programCode") || "").trim().toUpperCase();
+    const replaceExisting = String(formData.get("replaceExisting") || "false") === "true";
+    const file = formData.get("file") as File | null;
+
+    if (!programCode || !file) {
+      return NextResponse.json(
+        { error: "programCode and file are required.", routeVersion: ROUTE_VERSION },
+        { status: 400 }
+      );
+    }
+
+    const catalogProgram = await getCatalogProgramByCode(programCode);
+    if (!catalogProgram) {
+      return NextResponse.json(
+        {
+          error: "Selected program/curriculum is not defined in academic setup.",
+          routeVersion: ROUTE_VERSION,
+        },
+        { status: 400 }
+      );
+    }
+
+    const effectiveCurriculumKey =
+      (catalogProgram.curriculumKey || "").trim().toUpperCase() || catalogProgram.programCode;
+
+    const program = await resolveCanonicalProgram({
+      department_code: catalogProgram.departmentCode,
+      department_name: catalogProgram.departmentName,
+      program_code: catalogProgram.programCode,
+      program_title: catalogProgram.programTitle,
+      study_shift: catalogProgram.studyShift,
+    });
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const lowerName = file.name.toLowerCase();
+
+    let courses: ParsedCourse[] = [];
+
+    if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) {
+      courses = parseExcel(buffer);
+    } else if (
+      lowerName.endsWith(".docx") ||
+      lowerName.endsWith(".doc") ||
+      lowerName.endsWith(".docm")
+    ) {
+      courses = await parseDocx(buffer);
+    } else {
+      return NextResponse.json(
+        {
+          error: "Unsupported file type. Please upload Excel or DOCX.",
+          routeVersion: ROUTE_VERSION,
+        },
+        { status: 400 }
+      );
+    }
+
+    const dedupedMap = new Map<string, ParsedCourse>();
+
+    for (const c of courses) {
+      const key = toCompactCourseCode(c.course_code);
+      if (!key) continue;
+
+      if (!dedupedMap.has(key)) {
+        dedupedMap.set(key, {
+          ...c,
+          course_code: key,
+        });
+      }
+    }
+
+    const dedupedCourses = Array.from(dedupedMap.values());
+
+    if (!dedupedCourses.length) {
+      return NextResponse.json(
+        {
+          error: "No course rows could be parsed from the uploaded file.",
+          routeVersion: ROUTE_VERSION,
+        },
+        { status: 400 }
+      );
+    }
+
+    const existingRows = await prisma.master_courses.findMany({
+      where: {
+        OR: [
+          { curriculum_key: effectiveCurriculumKey },
+          { program_id: program.id },
+        ],
+      },
+      select: {
+        id: true,
+        course_code: true,
+      },
+      orderBy: [{ id: "asc" }],
+    });
+
+    const existingByCode = new Map<string, { id: number }>();
+
+    for (const row of existingRows) {
+      const compactCode = toCompactCourseCode(row.course_code);
+      if (!compactCode) continue;
+      if (!existingByCode.has(compactCode)) {
+        existingByCode.set(compactCode, { id: row.id });
+      }
+    }
+
+    let insertedCount = 0;
+    let updatedCount = 0;
+
+    for (const c of dedupedCourses) {
+      const compactCode = toCompactCourseCode(c.course_code);
+      if (!compactCode) continue;
+
+      const existing = existingByCode.get(compactCode);
+
+      if (existing) {
+        await prisma.master_courses.update({
+          where: { id: existing.id },
+          data: {
+            program_id: program.id,
+            curriculum_key: effectiveCurriculumKey,
+            course_code: compactCode,
+            course_title: c.course_title,
+            normalized_title: c.normalized_title,
+            credit: c.credit,
+            course_type: c.course_type,
+            level_term: c.level_term,
+            group_name: c.group_name,
+            is_active: true,
+          },
+        });
+        updatedCount += 1;
+      } else {
+        await prisma.master_courses.create({
+          data: {
+            program_id: program.id,
+            curriculum_key: effectiveCurriculumKey,
+            course_code: compactCode,
+            course_title: c.course_title,
+            normalized_title: c.normalized_title,
+            credit: c.credit,
+            course_type: c.course_type,
+            level_term: c.level_term,
+            group_name: c.group_name,
+            is_active: true,
+          },
+        });
+        insertedCount += 1;
+      }
+    }
+
+    let deactivatedReferencedCount = 0;
+    let deletedUnreferencedCount = 0;
+
+    if (replaceExisting) {
+      const incomingCodes = new Set(
+        dedupedCourses.map((c) => toCompactCourseCode(c.course_code))
+      );
+
+      const staleRows = existingRows.filter((row) => {
+        const compactCode = toCompactCourseCode(row.course_code);
+        return compactCode && !incomingCodes.has(compactCode);
+      });
+
+      const staleIds = staleRows.map((row) => row.id);
+
+      if (staleIds.length > 0) {
+        const referencedRows = await prisma.offered_courses.findMany({
+          where: {
+            master_course_id: {
+              in: staleIds,
+            },
+          },
+          select: {
+            master_course_id: true,
+          },
+          distinct: ["master_course_id"],
+        });
+
+        const referencedIds = new Set(
+          referencedRows.map((row) => row.master_course_id)
+        );
+
+        const referencedStaleIds = staleIds.filter((id) => referencedIds.has(id));
+        const unreferencedStaleIds = staleIds.filter((id) => !referencedIds.has(id));
+
+        if (referencedStaleIds.length > 0) {
+          const updated = await prisma.master_courses.updateMany({
+            where: {
+              id: { in: referencedStaleIds },
+            },
+            data: {
+              is_active: false,
+            },
+          });
+          deactivatedReferencedCount = updated.count;
+        }
+
+        if (unreferencedStaleIds.length > 0) {
+          const deleted = await prisma.master_courses.deleteMany({
+            where: {
+              id: { in: unreferencedStaleIds },
+            },
+          });
+          deletedUnreferencedCount = deleted.count;
+        }
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      routeVersion: ROUTE_VERSION,
+      message: `Curriculum import completed successfully for ${effectiveCurriculumKey}. Inserted ${insertedCount}, updated ${updatedCount}, deactivated referenced stale ${deactivatedReferencedCount}, deleted unreferenced stale ${deletedUnreferencedCount}.`,
+      insertedCount,
+      updatedCount,
+      deactivatedReferencedCount,
+      deletedUnreferencedCount,
+      parsedCount: dedupedCourses.length,
+      programCode: catalogProgram.programCode,
+      curriculumKey: effectiveCurriculumKey,
+      departmentCode: catalogProgram.departmentCode,
+      departmentName: catalogProgram.departmentName,
+      programName: catalogProgram.programTitle,
+    });
+  } catch (error) {
+    console.error("MASTER COURSE IMPORT ERROR", error);
+
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "Master course import failed.",
+        routeVersion: ROUTE_VERSION,
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: D:\adust-course-offering-tool\src\app\api\offering-template-import\commit\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { parseAcademicTerm } from "@/lib/semester-utils";
+import {
+  buildRoomLookupCandidates,
+  isBlankLikeFaculty,
+  isSlotOptionalCourseType,
+  normalizeCourseCode,
+  normalizeCourseTitle,
+  normalizeRoomCode,
+  normalizeTeacherCode,
+  parseOneCourseCodeAliases,
+} from "@/lib/offering-template-normalize";
+import { resolveProgramForOfferingTemplate } from "@/lib/offering-template-program-resolver";
+
+type CommitRow = {
+  rowKey: string;
+  batchCode: string;
+  courseTitle: string;
+  courseCode: string;
+  coofferedCourseCode: string;
+  facultyInitial: string;
+  section: string;
+  credits: number;
+  day: string;
+  rawTime: string;
+  startTime: string;
+  endTime: string;
+  timeParseOk: boolean;
+  room: string;
+  courseType: string;
+  status: "READY" | "WARNING" | "BLOCKED";
+};
+
+type MasterCourseLite = {
+  id: number;
+  course_code: string;
+  course_title: string;
+};
+
+type StoredRoomLite = {
+  id: number;
+  room_code: string;
+};
+
+function splitStoredRoomCode(stored: string) {
+  const raw = String(stored || "").trim();
+  const parts = raw.split("|").map((x) => x.trim());
+
+  if (parts.length >= 2) {
+    return {
+      roomCode: normalizeRoomCode(parts[0]),
+      roomNumber: normalizeRoomCode(parts.slice(1).join(" | ")),
+    };
+  }
+
+  return {
+    roomCode: normalizeRoomCode(raw),
+    roomNumber: "",
+  };
+}
+
+function buildRoomMaps(rooms: StoredRoomLite[]) {
+  const byNumber = new Map<string, StoredRoomLite>();
+  const byStoredText = new Map<string, StoredRoomLite>();
+
+  for (const room of rooms) {
+    const parsed = splitStoredRoomCode(room.room_code);
+
+    if (parsed.roomNumber && !byNumber.has(parsed.roomNumber)) {
+      byNumber.set(parsed.roomNumber, room);
+    }
+
+    byStoredText.set(normalizeRoomCode(room.room_code), room);
+
+    if (parsed.roomCode) {
+      byStoredText.set(parsed.roomCode, room);
+    }
+  }
+
+  return { byNumber, byStoredText };
+}
+
+function resolveRoom(
+  rawRoomValue: string,
+  roomMaps: ReturnType<typeof buildRoomMaps>
+) {
+  const candidates = buildRoomLookupCandidates(rawRoomValue);
+
+  for (const candidate of candidates) {
+    if (/^\d{2,4}$/.test(candidate)) {
+      const byNumber = roomMaps.byNumber.get(candidate);
+      if (byNumber) return byNumber;
+    }
+  }
+
+  for (const candidate of candidates) {
+    const byText = roomMaps.byStoredText.get(normalizeRoomCode(candidate));
+    if (byText) return byText;
+  }
+
+  return null;
+}
+
+function resolveMasterCourse(
+  rowCourseCode: string,
+  rowCoofferedCourseCode: string,
+  rowCourseTitle: string,
+  masterCourses: MasterCourseLite[]
+) {
+  const codeMap = new Map(
+    masterCourses.map((item) => [normalizeCourseCode(item.course_code), item])
+  );
+
+  const titleMap = new Map(
+    masterCourses.map((item) => [normalizeCourseTitle(item.course_title), item])
+  );
+
+  const directMain = codeMap.get(normalizeCourseCode(rowCourseCode));
+  if (directMain) return directMain;
+
+  const aliases = parseOneCourseCodeAliases(rowCoofferedCourseCode);
+  for (const alias of aliases) {
+    const found = codeMap.get(alias);
+    if (found) return found;
+  }
+
+  return titleMap.get(normalizeCourseTitle(rowCourseTitle)) || null;
+}
+
+async function ensureAcademicTerm(termName: string) {
+  const normalized = String(termName || "").trim().toUpperCase();
+
+  if (!normalized) {
+    throw new Error("termName is required.");
+  }
+
+  const existing = await prisma.academic_terms.findFirst({
+    where: {
+      name: normalized,
+    },
+    select: {
+      id: true,
+      name: true,
+      year: true,
+      term_type: true,
+      is_active: true,
+    },
+  });
+
+  if (existing) return existing;
+
+  const parsed = parseAcademicTerm(normalized);
+
+  return prisma.academic_terms.create({
+    data: {
+      name: normalized,
+      year: parsed.year,
+      term_type: parsed.season,
+      is_active: true,
+    },
+    select: {
+      id: true,
+      name: true,
+      year: true,
+      term_type: true,
+      is_active: true,
+    },
+  });
+}
+
+async function resolvePreparedByUserId() {
+  const adminOrCoordinator = await prisma.users.findFirst({
+    where: {
+      is_active: true,
+      role: {
+        in: ["SUPER_ADMIN", "COORDINATOR"],
+      },
+    },
+    orderBy: {
+      id: "asc",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (adminOrCoordinator) return adminOrCoordinator.id;
+
+  const anyActiveUser = await prisma.users.findFirst({
+    where: {
+      is_active: true,
+    },
+    orderBy: {
+      id: "asc",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (anyActiveUser) return anyActiveUser.id;
+
+  throw new Error(
+    "No active user found in users table. Please ensure at least one active SUPER_ADMIN or COORDINATOR user exists."
+  );
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    await requireCoordinatorOrAdminApi();
+
+    const body = await req.json();
+
+    const requestedProgramCode = String(body.programCode || "").trim().toUpperCase();
+    const termName = String(body.termName || "").trim().toUpperCase();
+    const rows: CommitRow[] = Array.isArray(body.rows) ? body.rows : [];
+
+    if (!requestedProgramCode) {
+      return NextResponse.json(
+        { ok: false, error: "programCode is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!termName) {
+      return NextResponse.json(
+        { ok: false, error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: "rows are required." },
+        { status: 400 }
+      );
+    }
+
+    const importableRows = rows.filter((row) => row.status !== "BLOCKED");
+
+    if (importableRows.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: "There are no importable rows. Preview first and fix blocked rows." },
+        { status: 400 }
+      );
+    }
+
+    const resolvedProgramInfo = await resolveProgramForOfferingTemplate(
+      requestedProgramCode
+    );
+    const program = resolvedProgramInfo.program;
+
+    const [term, preparedByUserId, masterCourses, existingBatches, teachers, rooms] =
+      await Promise.all([
+        ensureAcademicTerm(termName),
+        resolvePreparedByUserId(),
+        prisma.master_courses.findMany({
+          where: {
+            program_id: program.id,
+            is_active: true,
+          },
+          select: {
+            id: true,
+            course_code: true,
+            course_title: true,
+          },
+        }),
+        prisma.batches.findMany({
+          where: {
+            program_id: program.id,
+          },
+          select: {
+            id: true,
+            batch_code: true,
+          },
+        }),
+        prisma.teachers.findMany({
+          where: {
+            is_active: true,
+          },
+          select: {
+            id: true,
+            teacher_code: true,
+          },
+        }),
+        prisma.rooms.findMany({
+          where: {
+            is_active: true,
+          },
+          select: {
+            id: true,
+            room_code: true,
+          },
+        }),
+      ]);
+
+    const teacherMap = new Map(
+      teachers.map((item) => [normalizeTeacherCode(item.teacher_code), item])
+    );
+
+    const roomMaps = buildRoomMaps(rooms);
+
+    const batchMap = new Map(
+      existingBatches.map((item) => [String(item.batch_code).trim(), item])
+    );
+
+    let draft = await prisma.offerings.findFirst({
+      where: {
+        program_id: program.id,
+        academic_term_id: term.id,
+        status: "DRAFT",
+      },
+      orderBy: {
+        id: "desc",
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!draft) {
+      draft = await prisma.offerings.create({
+        data: {
+          status: "DRAFT",
+          academic_terms: {
+            connect: { id: term.id },
+          },
+          programs: {
+            connect: { id: program.id },
+          },
+          users: {
+            connect: { id: preparedByUserId },
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+    }
+
+    let createdCourseCount = 0;
+    let reusedCourseCount = 0;
+    let attachedBatchCount = 0;
+    let createdBatchCount = 0;
+    let addedTeacherCount = 0;
+    let addedSlotCount = 0;
+    let addedManualCoofferCount = 0;
+    const skippedRows: string[] = [];
+
+    for (const row of importableRows) {
+      const resolvedMasterCourse = resolveMasterCourse(
+        row.courseCode,
+        row.coofferedCourseCode,
+        row.courseTitle,
+        masterCourses
+      );
+
+      if (!resolvedMasterCourse || !row.section) {
+        skippedRows.push(
+          `${row.batchCode} | ${row.courseCode} | Section ${row.section || "-"}`
+        );
+        continue;
+      }
+
+      let batch = batchMap.get(String(row.batchCode).trim());
+
+      if (!batch) {
+        batch = await prisma.batches.create({
+          data: {
+            program_id: program.id,
+            batch_code: String(row.batchCode).trim(),
+            admission_term: null,
+            is_active: true,
+          },
+          select: {
+            id: true,
+            batch_code: true,
+          },
+        });
+
+        batchMap.set(String(batch.batch_code).trim(), batch);
+        createdBatchCount += 1;
+      }
+
+      let offeredCourse = await prisma.offered_courses.findFirst({
+        where: {
+          offering_id: draft.id,
+          master_course_id: resolvedMasterCourse.id,
+          section: row.section,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!offeredCourse) {
+        offeredCourse = await prisma.offered_courses.create({
+          data: {
+            offering_id: draft.id,
+            master_course_id: resolvedMasterCourse.id,
+            section: row.section,
+            is_cooffered: false,
+            notes: `Imported from offering template | Batch ${row.batchCode}`,
+          },
+          select: {
+            id: true,
+          },
+        });
+        createdCourseCount += 1;
+      } else {
+        reusedCourseCount += 1;
+      }
+
+      const existingBatchLink = await prisma.offered_course_batches.findFirst({
+        where: {
+          offered_course_id: offeredCourse.id,
+          batch_id: batch.id,
+        },
+        select: { id: true },
+      });
+
+      if (!existingBatchLink) {
+        await prisma.offered_course_batches.create({
+          data: {
+            offered_course_id: offeredCourse.id,
+            batch_id: batch.id,
+          },
+        });
+        attachedBatchCount += 1;
+      }
+
+      if (row.coofferedCourseCode) {
+        const existingManual = await prisma.offered_course_manual_cooffers.findFirst({
+          where: {
+            offered_course_id: offeredCourse.id,
+            manual_course_code: normalizeCourseCode(row.coofferedCourseCode),
+            target_program_code: requestedProgramCode,
+          },
+          select: { id: true },
+        });
+
+        if (!existingManual) {
+          await prisma.offered_course_manual_cooffers.create({
+            data: {
+              offered_course_id: offeredCourse.id,
+              target_program_code: requestedProgramCode,
+              manual_course_code: normalizeCourseCode(row.coofferedCourseCode),
+              note: "Imported from prepared offering template",
+            },
+          });
+          addedManualCoofferCount += 1;
+        }
+      }
+
+      if (!isBlankLikeFaculty(row.facultyInitial) && row.facultyInitial) {
+        const teacher = teacherMap.get(normalizeTeacherCode(row.facultyInitial));
+
+        if (teacher) {
+          const existingTeacher = await prisma.offered_course_teachers.findFirst({
+            where: {
+              offered_course_id: offeredCourse.id,
+              teacher_id: teacher.id,
+            },
+            select: { id: true },
+          });
+
+          if (!existingTeacher) {
+            await prisma.offered_course_teachers.create({
+              data: {
+                offered_course_id: offeredCourse.id,
+                teacher_id: teacher.id,
+                assigned_credit: Number(row.credits || 0),
+                load_type: "AUTO_IMPORTED",
+              },
+            });
+            addedTeacherCount += 1;
+          }
+        }
+      }
+
+      const slotOptional = isSlotOptionalCourseType(row.courseType, row.courseTitle);
+
+      if (!slotOptional && row.day && row.timeParseOk && row.startTime && row.endTime && row.room) {
+        const room = resolveRoom(row.room, roomMaps);
+
+        if (room) {
+          const existingSlot = await prisma.offered_course_slots.findFirst({
+            where: {
+              offered_course_id: offeredCourse.id,
+              day_of_week: row.day,
+              start_time: row.startTime,
+              end_time: row.endTime,
+              room_id: room.id,
+            },
+            select: { id: true },
+          });
+
+          if (!existingSlot) {
+            await prisma.offered_course_slots.create({
+              data: {
+                offered_course_id: offeredCourse.id,
+                day_of_week: row.day,
+                start_time: row.startTime,
+                end_time: row.endTime,
+                room_id: room.id,
+                slot_type: "CLASS",
+              },
+            });
+            addedSlotCount += 1;
+          }
+        }
+      }
+    }
+
+    return NextResponse.json({
+      ok: true,
+      requestedProgramCode: resolvedProgramInfo.requestedProgramCode,
+      resolvedProgramCode: program.short_name,
+      resolvedProgramName: program.name,
+      matchedProgramCodes: resolvedProgramInfo.matchedProgramCodes,
+      draftId: draft.id,
+      summary: {
+        importedRowCount: importableRows.length,
+        createdCourseCount,
+        reusedCourseCount,
+        attachedBatchCount,
+        createdBatchCount,
+        addedTeacherCount,
+        addedSlotCount,
+        addedManualCoofferCount,
+        skippedCount: skippedRows.length,
+      },
+      skippedRows,
+      message: "Offering template imported into draft successfully.",
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to import offering template into draft.";
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: message,
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: D:\adust-course-offering-tool\src\app\api\offering-template-import\preview\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { parseOfferingTemplateWorkbook } from "@/lib/offering-template-parser";
+import {
+  buildRoomLookupCandidates,
+  isBlankLikeFaculty,
+  isSlotOptionalCourseType,
+  normalizeCourseCode,
+  normalizeCourseTitle,
+  normalizeRoomCode,
+  normalizeTeacherCode,
+  parseOneCourseCodeAliases,
+  uniqueStrings,
+} from "@/lib/offering-template-normalize";
+import { resolveProgramForOfferingTemplate } from "@/lib/offering-template-program-resolver";
+
+type PreviewRowStatus = "READY" | "WARNING" | "BLOCKED";
+
+type MasterCourseLite = {
+  id: number;
+  course_code: string;
+  course_title: string;
+  credit: number;
+};
+
+type StoredRoomLite = {
+  id: number;
+  room_code: string;
+  room_type: string | null;
+};
+
+function splitStoredRoomCode(stored: string) {
+  const raw = String(stored || "").trim();
+  const parts = raw.split("|").map((x) => x.trim());
+
+  if (parts.length >= 2) {
+    return {
+      roomCode: normalizeRoomCode(parts[0]),
+      roomNumber: normalizeRoomCode(parts.slice(1).join(" | ")),
+    };
+  }
+
+  return {
+    roomCode: normalizeRoomCode(raw),
+    roomNumber: "",
+  };
+}
+
+function buildRoomMaps(rooms: StoredRoomLite[]) {
+  const byNumber = new Map<string, StoredRoomLite>();
+  const byStoredText = new Map<string, StoredRoomLite>();
+
+  for (const room of rooms) {
+    const parsed = splitStoredRoomCode(room.room_code);
+
+    if (parsed.roomNumber && !byNumber.has(parsed.roomNumber)) {
+      byNumber.set(parsed.roomNumber, room);
+    }
+
+    byStoredText.set(normalizeRoomCode(room.room_code), room);
+
+    if (parsed.roomCode) {
+      byStoredText.set(parsed.roomCode, room);
+    }
+  }
+
+  return { byNumber, byStoredText };
+}
+
+function resolveRoom(
+  rawRoomValue: string,
+  roomMaps: ReturnType<typeof buildRoomMaps>
+) {
+  const candidates = buildRoomLookupCandidates(rawRoomValue);
+
+  for (const candidate of candidates) {
+    if (/^\d{2,4}$/.test(candidate)) {
+      const byNumber = roomMaps.byNumber.get(candidate);
+      if (byNumber) return byNumber;
+    }
+  }
+
+  for (const candidate of candidates) {
+    const byText = roomMaps.byStoredText.get(normalizeRoomCode(candidate));
+    if (byText) return byText;
+  }
+
+  return null;
+}
+
+function resolveMasterCourse(
+  rowCourseCode: string,
+  rowCoofferedCourseCode: string,
+  rowCourseTitle: string,
+  masterCourses: MasterCourseLite[]
+) {
+  const codeMap = new Map(
+    masterCourses.map((item) => [normalizeCourseCode(item.course_code), item])
+  );
+
+  const titleMap = new Map(
+    masterCourses.map((item) => [normalizeCourseTitle(item.course_title), item])
+  );
+
+  const directMain = codeMap.get(normalizeCourseCode(rowCourseCode));
+  if (directMain) {
+    return {
+      course: directMain,
+      matchedBy: "MAIN_CODE",
+      matchedValue: normalizeCourseCode(rowCourseCode),
+    };
+  }
+
+  const aliasCodes = parseOneCourseCodeAliases(rowCoofferedCourseCode);
+  for (const alias of aliasCodes) {
+    const found = codeMap.get(alias);
+    if (found) {
+      return {
+        course: found,
+        matchedBy: "ALTERNATE_CODE",
+        matchedValue: alias,
+      };
+    }
+  }
+
+  const titleMatch = titleMap.get(normalizeCourseTitle(rowCourseTitle));
+  if (titleMatch) {
+    return {
+      course: titleMatch,
+      matchedBy: "TITLE",
+      matchedValue: normalizeCourseTitle(rowCourseTitle),
+    };
+  }
+
+  return {
+    course: null,
+    matchedBy: "",
+    matchedValue: "",
+  };
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    await requireCoordinatorOrAdminApi();
+
+    const formData = await req.formData();
+    const file = formData.get("file");
+    const requestedProgramCode = String(formData.get("programCode") || "")
+      .trim()
+      .toUpperCase();
+    const termName = String(formData.get("termName") || "")
+      .trim()
+      .toUpperCase();
+
+    if (!requestedProgramCode) {
+      return NextResponse.json(
+        { ok: false, error: "programCode is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!termName) {
+      return NextResponse.json(
+        { ok: false, error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!(file instanceof File)) {
+      return NextResponse.json(
+        { ok: false, error: "An Excel file is required." },
+        { status: 400 }
+      );
+    }
+
+    const resolvedProgramInfo = await resolveProgramForOfferingTemplate(
+      requestedProgramCode
+    );
+
+    const program = resolvedProgramInfo.program;
+
+    const fileBuffer = Buffer.from(await file.arrayBuffer());
+    const parsed = parseOfferingTemplateWorkbook(fileBuffer);
+
+    const [masterCourses, batches, teachers, rooms] = await Promise.all([
+      prisma.master_courses.findMany({
+        where: {
+          program_id: program.id,
+          is_active: true,
+        },
+        select: {
+          id: true,
+          course_code: true,
+          course_title: true,
+          credit: true,
+        },
+      }),
+      prisma.batches.findMany({
+        where: {
+          program_id: program.id,
+        },
+        select: {
+          id: true,
+          batch_code: true,
+        },
+      }),
+      prisma.teachers.findMany({
+        where: {
+          is_active: true,
+        },
+        select: {
+          id: true,
+          teacher_code: true,
+          full_name: true,
+        },
+      }),
+      prisma.rooms.findMany({
+        where: {
+          is_active: true,
+        },
+        select: {
+          id: true,
+          room_code: true,
+          room_type: true,
+        },
+      }),
+    ]);
+
+    const batchMap = new Map(
+      batches.map((item) => [String(item.batch_code).trim(), item])
+    );
+
+    const teacherMap = new Map(
+      teachers.map((item) => [normalizeTeacherCode(item.teacher_code), item])
+    );
+
+    const roomMaps = buildRoomMaps(rooms);
+
+    const previewRows = parsed.rows.map((row) => {
+      const issues: string[] = [];
+      let status: PreviewRowStatus = "READY";
+
+      const courseResolution = resolveMasterCourse(
+        row.courseCode,
+        row.coofferedCourseCode,
+        row.courseTitle,
+        masterCourses
+      );
+
+      const resolvedCourse = courseResolution.course;
+      const resolvedBatch = batchMap.get(String(row.batchCode).trim());
+      const resolvedTeacher = !isBlankLikeFaculty(row.facultyInitial)
+        ? teacherMap.get(normalizeTeacherCode(row.facultyInitial))
+        : null;
+
+      const resolvedRoom = resolveRoom(row.room, roomMaps);
+      const slotOptional = isSlotOptionalCourseType(row.courseType, row.courseTitle);
+
+      if (!resolvedBatch) {
+        issues.push(
+          `Batch ${row.batchCode} is not yet present under internal program ${program.short_name}. It will be treated as an incoming/new batch candidate.`
+        );
+        status = "WARNING";
+      }
+
+      if (!resolvedCourse) {
+        issues.push(
+          `Course could not be resolved by main code (${row.courseCode}), alternate code (${row.coofferedCourseCode || "-"}) or title (${row.courseTitle}).`
+        );
+        status = "BLOCKED";
+      }
+
+      if (!row.section) {
+        issues.push("Section is empty.");
+        status = "BLOCKED";
+      }
+
+      if (!slotOptional) {
+        if (!row.day) {
+          issues.push("Day is empty.");
+          status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+        }
+
+        if (!row.timeParseOk) {
+          issues.push(row.timeParseReason || "Time could not be parsed.");
+          status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+        }
+
+        if (row.room && !resolvedRoom) {
+          issues.push(
+            `Room ${row.room} was not matched to an active room number or stored room label. Slot import will be skipped unless room mapping is fixed.`
+          );
+          status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+        }
+      }
+
+      if (!isBlankLikeFaculty(row.facultyInitial) && row.facultyInitial && !resolvedTeacher) {
+        issues.push(
+          `Faculty initial ${row.facultyInitial} was not matched to an active faculty.`
+        );
+        status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+      }
+
+      if (slotOptional) {
+        issues.push(
+          "Slot/room is optional for this course type and will not be required during import."
+        );
+        status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+      }
+
+      return {
+        ...row,
+        status,
+        issues,
+        resolvedCourseId: resolvedCourse?.id ?? null,
+        resolvedCourseTitle: resolvedCourse?.course_title ?? null,
+        resolvedCourseCode: resolvedCourse?.course_code ?? null,
+        resolvedCourseMatchedBy: courseResolution.matchedBy || null,
+        resolvedCourseMatchedValue: courseResolution.matchedValue || null,
+        resolvedBatchId: resolvedBatch?.id ?? null,
+        resolvedTeacherId: resolvedTeacher?.id ?? null,
+        resolvedTeacherCode: resolvedTeacher?.teacher_code ?? null,
+        resolvedRoomId: resolvedRoom?.id ?? null,
+        resolvedRoomCode: resolvedRoom?.room_code ?? null,
+        slotOptional,
+      };
+    });
+
+    const readyCount = previewRows.filter((x) => x.status === "READY").length;
+    const warningCount = previewRows.filter((x) => x.status === "WARNING").length;
+    const blockedCount = previewRows.filter((x) => x.status === "BLOCKED").length;
+    const detectedBatchCodes = uniqueStrings(previewRows.map((x) => x.batchCode));
+
+    return NextResponse.json({
+      ok: true,
+      fileName: file.name,
+      requestedProgramCode: resolvedProgramInfo.requestedProgramCode,
+      resolvedProgramCode: program.short_name,
+      resolvedProgramName: program.name,
+      matchedProgramCodes: resolvedProgramInfo.matchedProgramCodes,
+      termName,
+      sheetName: parsed.sheetName,
+      summary: {
+        totalRows: previewRows.length,
+        totalBatchBlocks: parsed.summary.totalBatchBlocks,
+        detectedBatchCodes,
+        readyCount,
+        warningCount,
+        blockedCount,
+      },
+      previewRows,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to preview offering template.";
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: message,
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: D:\adust-course-offering-tool\src\app\api\student-status-import\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import {
+  compareTerms,
+  extractPdfText,
+  getCompletedCourseMap,
+  getFailedOnlyCodes,
+  getLatestTerm,
+  getNextTerm,
+  makeDebugTextSample,
+  normalizeComparableCourseCode,
+  normalizeComparableTitle,
+  parseRegistrationCourses,
+  parseRegistrationSemester,
+  parseStudentIdentity,
+  parseTranscriptCourses,
+} from "@/lib/student-status-parser";
+
+export const runtime = "nodejs";
+
+type CatalogProgramRow = {
+  id: number;
+  department_code: string;
+  department_name: string;
+  program_code: string;
+  program_title: string;
+  program_type: string;
+  study_shift: string;
+  curriculum_version: string;
+  curriculum_key: string | null;
+  student_id_suffix: string | null;
+  display_label: string;
+  is_active: boolean;
+};
+
+export async function POST(request: NextRequest) {
+  await requireCoordinatorOrAdminApi();
+
+  try {
+    const formData = await request.formData();
+
+    const selectedProgramCode = String(formData.get("programCode") || "")
+      .trim()
+      .toUpperCase();
+
+    const transcriptFile = formData.get("transcriptFile") as File | null;
+    const registrationFile = formData.get("registrationFile") as File | null;
+
+    if (!selectedProgramCode) {
+      return NextResponse.json(
+        { error: "Program / curriculum selection is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!transcriptFile && !registrationFile) {
+      return NextResponse.json(
+        { error: "Upload at least one transcript or registration PDF." },
+        { status: 400 }
+      );
+    }
+
+    const selectedProgram = (await prisma.academic_catalog_entries.findFirst({
+      where: {
+        program_code: selectedProgramCode,
+        is_active: true,
+      },
+    })) as CatalogProgramRow | null;
+
+    if (!selectedProgram) {
+      return NextResponse.json(
+        { error: "Selected academic identity was not found in Academic Setup." },
+        { status: 400 }
+      );
+    }
+
+    const transcriptText = transcriptFile
+      ? await extractPdfText(Buffer.from(await transcriptFile.arrayBuffer()))
+      : "";
+
+    const registrationText = registrationFile
+      ? await extractPdfText(Buffer.from(await registrationFile.arrayBuffer()))
+      : "";
+
+    const identitySourceText = [transcriptText, registrationText].filter(Boolean).join(" ");
+    const identity = parseStudentIdentity(identitySourceText);
+
+    const inferredProgram = identity.suffix
+      ? ((await prisma.academic_catalog_entries.findFirst({
+          where: {
+            student_id_suffix: identity.suffix,
+            is_active: true,
+          },
+        })) as CatalogProgramRow | null)
+      : null;
+
+    const transcriptCourses = transcriptText ? parseTranscriptCourses(transcriptText) : [];
+    const registrationCourses = registrationText ? parseRegistrationCourses(registrationText) : [];
+
+    const completedMap = getCompletedCourseMap(transcriptCourses);
+
+    const ongoingMap = new Map(
+      registrationCourses.map((course) => [
+        course.comparableCode,
+        {
+          code: course.code,
+          comparableCode: course.comparableCode,
+          comparableTitle: course.comparableTitle,
+          title: course.title,
+          credits: course.credits,
+          section: course.section,
+        },
+      ])
+    );
+
+    const failedOnlyCodes = getFailedOnlyCodes(transcriptCourses);
+
+    const latestCompletedTerm = getLatestTerm(
+      Array.from(completedMap.values()).map((row) => row.semester)
+    );
+
+    const currentRegistrationTerm = registrationText
+      ? parseRegistrationSemester(registrationText)
+      : null;
+
+    const suggestedNextOfferingTerm =
+      getNextTerm(currentRegistrationTerm || latestCompletedTerm || null);
+
+    let masterCourses = [];
+
+    if (selectedProgram.curriculum_key) {
+      masterCourses = await prisma.master_courses.findMany({
+        where: {
+          curriculum_key: selectedProgram.curriculum_key,
+        },
+        orderBy: [{ course_code: "asc" }],
+      });
+    } else {
+      const program = await prisma.programs.findFirst({
+        where: {
+          short_name: selectedProgram.program_code,
+        },
+      });
+
+      masterCourses = program
+        ? await prisma.master_courses.findMany({
+            where: {
+              program_id: program.id,
+            },
+            orderBy: [{ course_code: "asc" }],
+          })
+        : [];
+    }
+
+    const completedComparableCodes = new Set(
+      Array.from(completedMap.values()).map((row) => row.comparableCode)
+    );
+
+    const completedComparableTitles = new Set(
+      Array.from(completedMap.values())
+        .map((row) => row.comparableTitle)
+        .filter(Boolean)
+    );
+
+    const ongoingComparableCodes = new Set(
+      Array.from(ongoingMap.values()).map((row) => row.comparableCode)
+    );
+
+    const ongoingComparableTitles = new Set(
+      Array.from(ongoingMap.values())
+        .map((row) => row.comparableTitle)
+        .filter(Boolean)
+    );
+
+    const remainingCourses = masterCourses.filter((course) => {
+      const comparableCode = normalizeComparableCourseCode(course.course_code);
+      const comparableTitle = normalizeComparableTitle(course.course_title);
+
+      const matchedCompleted =
+        completedComparableCodes.has(comparableCode) ||
+        (comparableTitle && completedComparableTitles.has(comparableTitle));
+
+      const matchedOngoing =
+        ongoingComparableCodes.has(comparableCode) ||
+        (comparableTitle && ongoingComparableTitles.has(comparableTitle));
+
+      return !matchedCompleted && !matchedOngoing;
+    });
+
+    const warningMessages: string[] = [];
+
+    if (
+      identity.studentId &&
+      inferredProgram &&
+      inferredProgram.program_code !== selectedProgram.program_code
+    ) {
+      warningMessages.push(
+        `Selected academic identity (${selectedProgram.program_code}) does not match the student ID suffix inference (${inferredProgram.program_code}).`
+      );
+    }
+
+    if (!identity.studentId) {
+      warningMessages.push("Student ID could not be detected from the uploaded PDF text.");
+    }
+
+    if (!masterCourses.length) {
+      warningMessages.push(
+        selectedProgram.curriculum_key
+          ? `No master course list was found yet for curriculum key ${selectedProgram.curriculum_key}.`
+          : `No master course list was found yet for ${selectedProgram.program_code}.`
+      );
+    }
+
+    if (!currentRegistrationTerm && !latestCompletedTerm) {
+      warningMessages.push(
+        "Neither current registration term nor latest completed term could be determined."
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      selectedProgram: {
+        programCode: selectedProgram.program_code,
+        displayLabel: selectedProgram.display_label,
+        curriculumKey: selectedProgram.curriculum_key,
+      },
+      inferredProgram: inferredProgram
+        ? {
+            programCode: inferredProgram.program_code,
+            displayLabel: inferredProgram.display_label,
+            curriculumKey: inferredProgram.curriculum_key,
+          }
+        : null,
+      studentIdentity: identity,
+      warningMessages,
+      transcriptSummary: {
+        parsedCount: transcriptCourses.length,
+        latestCompletedTerm,
+        failedOnlyCodes,
+      },
+      registrationSummary: {
+        parsedCount: registrationCourses.length,
+        currentRegistrationTerm,
+      },
+      offeringContext: {
+        suggestedNextOfferingTerm,
+      },
+      counts: {
+        completed: completedMap.size,
+        ongoing: ongoingMap.size,
+        remaining: remainingCourses.length,
+        masterCourses: masterCourses.length,
+      },
+      completedCourses: Array.from(completedMap.values()).sort((a, b) => {
+        const termCompare = compareTerms(a.semester, b.semester);
+        if (termCompare !== 0) return termCompare;
+        return a.code.localeCompare(b.code);
+      }),
+      ongoingCourses: Array.from(ongoingMap.values()).sort((a, b) =>
+        a.code.localeCompare(b.code)
+      ),
+      remainingCourses: remainingCourses.map((course) => ({
+        code: course.course_code,
+        title: course.course_title,
+        credits: course.credit,
+        type: course.course_type,
+        group: course.group_name,
+        levelTerm: course.level_term,
+        curriculumKey: course.curriculum_key,
+      })),
+      debug: {
+        transcriptTextSample: makeDebugTextSample(transcriptText),
+        registrationTextSample: makeDebugTextSample(registrationText),
+      },
+    });
+  } catch (error) {
+    console.error(error);
+
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Transcript and registration parsing failed.",
+      },
+      { status: 500 }
+    );
+  }
+}

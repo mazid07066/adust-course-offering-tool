@@ -90,6 +90,10 @@ export type OfferingContextResult = {
   remainingCount: number;
   totalCourses: number;
 
+  completedCredits: number;
+  ongoingCredits: number;
+  combinedCredits: number;
+
   completedCourses: OfferingContextCourse[];
   ongoingCourses: OfferingContextCourse[];
   remainingCourses: OfferingContextCourse[];
@@ -106,6 +110,9 @@ export type OfferingContextResult = {
     completedCourses: number;
     ongoingCourses: number;
     remainingCourses: number;
+    completedCredits: number;
+    ongoingCredits: number;
+    combinedCredits: number;
   };
 };
 
@@ -213,8 +220,9 @@ function toUiCourse(
 
 function masterMatchesSaved(
   master: Pick<MasterCourseRow, "course_code" | "course_title" | "normalized_title">,
-  saved: Pick<CompletedRow, "course_code" | "course_title" | "normalized_title"> |
-         Pick<OngoingRow, "course_code" | "course_title" | "normalized_title">
+  saved:
+    | Pick<CompletedRow, "course_code" | "course_title" | "normalized_title">
+    | Pick<OngoingRow, "course_code" | "course_title" | "normalized_title">
 ): boolean {
   const masterCode = normalizeCode(master.course_code);
   const savedCode = normalizeCode(saved.course_code);
@@ -327,9 +335,7 @@ async function getProgramCandidates(programCode: string): Promise<{
     study_shift: catalogEntry?.study_shift || catalogStatic.studyShift,
   });
 
-  if (
-    !candidates.some((item) => item.id === canonicalProgram.id)
-  ) {
+  if (!candidates.some((item) => item.id === canonicalProgram.id)) {
     candidates.push({
       id: canonicalProgram.id,
       short_name: canonicalProgram.short_name,
@@ -534,8 +540,8 @@ async function loadMasterCoursesForContext(params: {
     exactProgramRows.length > 0
       ? exactProgramRows
       : resolvedBatchProgramRows.length > 0
-      ? resolvedBatchProgramRows
-      : rows;
+        ? resolvedBatchProgramRows
+        : rows;
 
   return uniqueCoursesByComparableIdentity(finalRows).sort((a, b) => {
     const lt = compareLevelTerms(a.level_term, b.level_term);
@@ -699,6 +705,16 @@ export async function buildOfferingContext(params: {
     }
   }
 
+  const completedCredits = completedRows.reduce((sum, row) => {
+    return sum + Number(row.credit || 0);
+  }, 0);
+
+  const ongoingCredits = ongoingRows.reduce((sum, row) => {
+    return sum + Number(row.credit || 0);
+  }, 0);
+
+  const combinedCredits = completedCredits + ongoingCredits;
+
   const result: OfferingContextResult = {
     ok: true,
     success: true,
@@ -728,6 +744,10 @@ export async function buildOfferingContext(params: {
     remainingCount: remainingCourses.length,
     totalCourses: masterCourses.length,
 
+    completedCredits,
+    ongoingCredits,
+    combinedCredits,
+
     completedCourses,
     ongoingCourses,
     remainingCourses,
@@ -744,6 +764,9 @@ export async function buildOfferingContext(params: {
       completedCourses: completedCourses.length,
       ongoingCourses: ongoingCourses.length,
       remainingCourses: remainingCourses.length,
+      completedCredits,
+      ongoingCredits,
+      combinedCredits,
     },
   };
 

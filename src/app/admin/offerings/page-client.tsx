@@ -48,6 +48,10 @@ type ContextData = {
   remainingCount: number;
   totalCourses: number;
 
+  completedCredits: number;
+  ongoingCredits: number;
+  combinedCredits: number;
+
   completedCourses: OfferingContextCourse[];
   ongoingCourses: OfferingContextCourse[];
   remainingCourses: OfferingContextCourse[];
@@ -64,6 +68,9 @@ type ContextData = {
     completedCourses: number;
     ongoingCourses: number;
     remainingCourses: number;
+    completedCredits: number;
+    ongoingCredits: number;
+    combinedCredits: number;
   };
 };
 
@@ -623,6 +630,29 @@ export default function OfferingsPageClient() {
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+                <p className="text-sm text-green-700">Total Completed Credits</p>
+                <p className="mt-2 text-2xl font-semibold text-green-900">
+                  {contextData.completedCredits}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <p className="text-sm text-amber-700">Total Ongoing Credits</p>
+                <p className="mt-2 text-2xl font-semibold text-amber-900">
+                  {contextData.ongoingCredits}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
+                <p className="text-sm text-blue-700">Completed + Ongoing Credits</p>
+                <p className="mt-2 text-2xl font-semibold text-blue-900">
+                  {contextData.combinedCredits}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                 <p className="text-sm text-slate-500">Current Draft Credits</p>
                 <p className="mt-2 text-2xl font-semibold text-slate-900">
@@ -715,9 +745,9 @@ export default function OfferingsPageClient() {
                 Next development note
               </h4>
               <p className="mt-2 text-sm text-slate-600">
-                This workspace now blocks duplicate same-course assignment for the same
-                batch in the same draft, hides already drafted courses for the current
-                batch, and shows current draft credit status against a maximum credit limit.
+                This workspace now shows total completed credits, total ongoing credits,
+                and the combined completed-plus-ongoing credits for the selected batch,
+                while keeping the existing draft offering preparation flow intact.
               </p>
             </div>
           </>

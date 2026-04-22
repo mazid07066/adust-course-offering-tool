@@ -6,6 +6,28 @@ import { canFacultyEdit } from "@/lib/faculty-access";
 import { validateFacultySession } from "@/lib/faculty-session";
 import { getFacultyLevelCreditPolicy } from "@/lib/system-settings";
 
+type SlotLike = {
+  day_of_week: string;
+  start_time: string;
+  end_time: string;
+};
+
+function timeToMinutes(value: string) {
+  const [h, m] = value.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function slotsOverlap(a: SlotLike, b: SlotLike) {
+  if (a.day_of_week !== b.day_of_week) return false;
+
+  const aStart = timeToMinutes(a.start_time);
+  const aEnd = timeToMinutes(a.end_time);
+  const bStart = timeToMinutes(b.start_time);
+  const bEnd = timeToMinutes(b.end_time);
+
+  return aStart < bEnd && bStart < aEnd;
+}
+
 export async function POST(req: NextRequest) {
   const guard = await requireFacultyApi();
   if (guard instanceof Response) return guard;
@@ -126,6 +148,9 @@ export async function POST(req: NextRequest) {
             },
           },
           include: {
+            offered_course_slots: {
+              orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+            },
             faculty_course_selections: {
               include: {
                 teachers: true,
@@ -134,6 +159,8 @@ export async function POST(req: NextRequest) {
             master_courses: {
               select: {
                 credit: true,
+                course_code: true,
+                course_title: true,
               },
             },
           },
@@ -164,6 +191,29 @@ export async function POST(req: NextRequest) {
         },
         { status: 400 }
       );
+    }
+
+    for (let i = 0; i < validCourses.length; i += 1) {
+      for (let j = i + 1; j < validCourses.length; j += 1) {
+        const a = validCourses[i];
+        const b = validCourses[j];
+
+        const overlaps =
+          a.offered_course_slots.length > 0 &&
+          b.offered_course_slots.length > 0 &&
+          a.offered_course_slots.some((slotA) =>
+            b.offered_course_slots.some((slotB) => slotsOverlap(slotA, slotB))
+          );
+
+        if (overlaps) {
+          return NextResponse.json(
+            {
+              error: `Time conflict detected between ${a.master_courses.course_code} Sec-${a.section} and ${b.master_courses.course_code} Sec-${b.section}.`,
+            },
+            { status: 400 }
+          );
+        }
+      }
     }
 
     const totalCredits = validCourses.reduce(
