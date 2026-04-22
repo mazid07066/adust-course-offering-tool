@@ -28,6 +28,7 @@ const navItems = [
   { href: "/admin/offering-template-import", label: "Offering Template Import" },
   { href: "/admin/offerings", label: "Offerings" },
   { href: "/admin/offering-drafts", label: "Draft Offerings" },
+  { href: "/admin/manual-special-offering", label: "Manual Special Offering" },
   { href: "/admin/co-offering-setup", label: "Co-offering Setup" },
   { href: "/admin/faculty-choice-control", label: "Faculty Choice Control" },
   { href: "/admin/faculty-course-choices", label: "Faculty Course Choices" },

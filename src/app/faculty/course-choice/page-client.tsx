@@ -33,6 +33,18 @@ type AvailableCourse = {
   teacherCodes: string[];
   schedule: CourseSchedule[];
   linkedSecondaryCourses: LinkedSecondaryCourse[];
+  selectionState:
+    | "FREE"
+    | "YOU_BUFFER"
+    | "YOU_FINAL"
+    | "TAKEN_FINAL"
+    | "BUFFERED_BY_OTHERS";
+  finalizedByOtherFaculty: {
+    teacherId: number;
+    teacherCode: string;
+    teacherName: string;
+  } | null;
+  bufferedByOtherFacultyCount: number;
 };
 
 type SelectionRow = {
@@ -312,7 +324,8 @@ export default function FacultyCourseChoicePageClient() {
             <div>
               <h1 className="text-2xl font-bold text-slate-900">Faculty Course Choice</h1>
               <p className="mt-1 text-sm text-slate-600">
-                All faculty may view the open offered pool. Only the active turn may edit and finalize choices.
+                All faculty may view the open offered pool. Only the active turn may edit and
+                finalize choices.
               </p>
             </div>
 
@@ -361,7 +374,9 @@ export default function FacultyCourseChoicePageClient() {
             <div>
               <div className="text-sm text-slate-500">Window Status</div>
               <div className="mt-2">
-                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses(windowStatus)}`}>
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses(windowStatus)}`}
+                >
                   {windowStatus}
                 </span>
               </div>
@@ -399,9 +414,7 @@ export default function FacultyCourseChoicePageClient() {
 
             <div className="rounded-xl bg-slate-50 p-4">
               <div className="text-sm text-slate-500">Selected Credits</div>
-              <div className="mt-1 font-semibold text-slate-900">
-                {liveSelectedCredits}
-              </div>
+              <div className="mt-1 font-semibold text-slate-900">{liveSelectedCredits}</div>
             </div>
           </div>
 
@@ -415,9 +428,7 @@ export default function FacultyCourseChoicePageClient() {
               className="w-full max-w-sm rounded-xl border px-4 py-3"
               disabled={loadingTerms}
             >
-              <option value="">
-                {loadingTerms ? "Loading terms..." : "Select Academic Term"}
-              </option>
+              <option value="">{loadingTerms ? "Loading terms..." : "Select Academic Term"}</option>
               {terms.map((term) => (
                 <option key={term.name} value={term.name}>
                   {term.name}
@@ -448,12 +459,8 @@ export default function FacultyCourseChoicePageClient() {
         <div className="grid gap-6 xl:grid-cols-2">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-slate-900">
-                Visible Offered Pool
-              </h2>
-              <span className="text-sm text-slate-500">
-                {availableCourses.length} section(s)
-              </span>
+              <h2 className="text-lg font-semibold text-slate-900">Visible Offered Pool</h2>
+              <span className="text-sm text-slate-500">{availableCourses.length} section(s)</span>
             </div>
 
             <div className="mt-4 space-y-3">
@@ -476,6 +483,25 @@ export default function FacultyCourseChoicePageClient() {
                         <div className="text-sm text-slate-500">
                           Offering Status: {course.offeringStatus}
                         </div>
+
+                        {course.selectionState === "YOU_BUFFER" ? (
+                          <div className="mt-2 inline-block rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
+                            Already in your buffer
+                          </div>
+                        ) : null}
+
+                        {course.selectionState === "YOU_FINAL" ? (
+                          <div className="mt-2 inline-block rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
+                            Already finalized by you
+                          </div>
+                        ) : null}
+
+                        {course.selectionState === "BUFFERED_BY_OTHERS" ? (
+                          <div className="mt-2 inline-block rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
+                            Buffered by {course.bufferedByOtherFacultyCount} other faculty
+                            member(s)
+                          </div>
+                        ) : null}
                       </div>
 
                       <button
@@ -511,8 +537,7 @@ export default function FacultyCourseChoicePageClient() {
                         Linked Co-offered:{" "}
                         {course.linkedSecondaryCourses
                           .map(
-                            (x) =>
-                              `${x.programCode} ${x.courseCode} Sec-${x.section}`
+                            (x) => `${x.programCode} ${x.courseCode} Sec-${x.section}`
                           )
                           .join(", ")}
                       </div>
@@ -531,12 +556,8 @@ export default function FacultyCourseChoicePageClient() {
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-slate-900">
-                Your Priority Buffer
-              </h2>
-              <span className="text-sm text-slate-500">
-                {selectedCourseIds.length} selected
-              </span>
+              <h2 className="text-lg font-semibold text-slate-900">Your Priority Buffer</h2>
+              <span className="text-sm text-slate-500">{selectedCourseIds.length} selected</span>
             </div>
 
             <div className="mt-4 space-y-3">

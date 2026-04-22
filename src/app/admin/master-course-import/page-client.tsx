@@ -22,10 +22,13 @@ type ImportResponse = {
   insertedCount?: number;
   updatedCount?: number;
   parsedCount?: number;
+  deactivatedReferencedCount?: number;
+  deletedUnreferencedCount?: number;
   programCode?: string;
   programName?: string;
   departmentCode?: string;
   departmentName?: string;
+  routeVersion?: string;
 };
 
 export default function MasterCourseImportPageClient() {
@@ -94,7 +97,9 @@ export default function MasterCourseImportPageClient() {
       const json: ImportResponse = await res.json();
 
       if (!res.ok) {
-        throw new Error(json.error || "Master course import failed.");
+        throw new Error(
+          `${json.error || "Master course import failed."}${json.routeVersion ? ` [${json.routeVersion}]` : ""}`
+        );
       }
 
       setResult(json);
@@ -142,7 +147,7 @@ export default function MasterCourseImportPageClient() {
           </div>
 
           {selectedProgram && (
-            <div className="grid gap-4 md:grid-cols-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">
+            <div className="grid gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm md:grid-cols-4">
               <div>
                 <span className="font-medium text-slate-700">Department:</span>{" "}
                 {selectedProgram.departmentCode}
@@ -204,7 +209,11 @@ export default function MasterCourseImportPageClient() {
               Import Completed
             </h4>
 
-            <div className="grid gap-4 md:grid-cols-3 text-sm">
+            <div className="grid gap-4 text-sm md:grid-cols-3">
+              <div>
+                <span className="font-medium text-green-900">Route Version:</span>{" "}
+                <span className="text-slate-700">{result.routeVersion || "-"}</span>
+              </div>
               <div>
                 <span className="font-medium text-green-900">Department:</span>{" "}
                 <span className="text-slate-700">
@@ -228,6 +237,14 @@ export default function MasterCourseImportPageClient() {
               <div>
                 <span className="font-medium text-green-900">Updated:</span>{" "}
                 <span className="text-slate-700">{result.updatedCount || 0}</span>
+              </div>
+              <div>
+                <span className="font-medium text-green-900">Deactivated Referenced:</span>{" "}
+                <span className="text-slate-700">{result.deactivatedReferencedCount || 0}</span>
+              </div>
+              <div>
+                <span className="font-medium text-green-900">Deleted Unreferenced:</span>{" "}
+                <span className="text-slate-700">{result.deletedUnreferencedCount || 0}</span>
               </div>
               <div>
                 <span className="font-medium text-green-900">Message:</span>{" "}

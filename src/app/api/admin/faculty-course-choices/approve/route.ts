@@ -37,17 +37,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await prisma.faculty_course_selections.updateMany({
+    const finalRows = await prisma.faculty_course_selections.findMany({
       where: {
         teacher_id: teacher.id,
         academic_term_id: term.id,
         status: "FINAL",
       },
-      data: {
-        status: "BUFFER",
-        confirmed_at: null,
-      },
+      select: { id: true },
     });
+
+    if (finalRows.length === 0) {
+      return NextResponse.json(
+        { error: "No final faculty choices found to approve." },
+        { status: 400 }
+      );
+    }
 
     const linkedUsers = await prisma.users.findMany({
       where: {
@@ -63,20 +67,20 @@ export async function POST(req: NextRequest) {
         recipientUserId: user.id,
         recipientTeacherId: teacher.id,
         createdByUserId: guard.id,
-        eventType: "FACULTY_CHOICE_REOPENED",
-        title: "Faculty choices reopened",
-        message: `Your final choices for ${term.name} were reopened by coordinator/admin. Please review and resubmit if required.`,
+        eventType: "FACULTY_CHOICE_APPROVED",
+        title: "Faculty choices approved",
+        message: `Your final course choices for ${term.name} were approved by coordinator/admin.`,
       });
     }
 
     return NextResponse.json({
       success: true,
-      message: "Faculty choices reopened successfully.",
+      message: "Faculty choices approved successfully.",
     });
   } catch (error) {
     console.error(error);
     return NextResponse.json(
-      { error: "Failed to reopen faculty choices." },
+      { error: "Failed to approve faculty choices." },
       { status: 500 }
     );
   }

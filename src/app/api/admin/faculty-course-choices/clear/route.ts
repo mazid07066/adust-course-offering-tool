@@ -37,15 +37,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await prisma.faculty_course_selections.updateMany({
+    await prisma.faculty_course_selections.deleteMany({
       where: {
         teacher_id: teacher.id,
         academic_term_id: term.id,
-        status: "FINAL",
-      },
-      data: {
-        status: "BUFFER",
-        confirmed_at: null,
       },
     });
 
@@ -63,20 +58,20 @@ export async function POST(req: NextRequest) {
         recipientUserId: user.id,
         recipientTeacherId: teacher.id,
         createdByUserId: guard.id,
-        eventType: "FACULTY_CHOICE_REOPENED",
-        title: "Faculty choices reopened",
-        message: `Your final choices for ${term.name} were reopened by coordinator/admin. Please review and resubmit if required.`,
+        eventType: "FACULTY_CHOICE_CLEARED",
+        title: "Faculty choices cleared",
+        message: `Your submitted choices for ${term.name} were cleared by coordinator/admin. Please submit your choices again.`,
       });
     }
 
     return NextResponse.json({
       success: true,
-      message: "Faculty choices reopened successfully.",
+      message: "Faculty choices cleared successfully.",
     });
   } catch (error) {
     console.error(error);
     return NextResponse.json(
-      { error: "Failed to reopen faculty choices." },
+      { error: "Failed to clear faculty choices." },
       { status: 500 }
     );
   }

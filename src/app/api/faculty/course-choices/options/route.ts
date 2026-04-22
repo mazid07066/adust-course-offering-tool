@@ -163,40 +163,81 @@ export async function GET(req: NextRequest) {
             },
           },
         },
+        faculty_course_selections: {
+          include: {
+            teachers: true,
+          },
+        },
       },
     });
 
     const availableCourses = offerings
       .filter((row) => canFacultyViewOfferingStatus(row.offerings.status))
-      .map((course) => ({
-        id: course.id,
-        section: course.section,
-        offeringStatus: course.offerings.status,
-        programCode: course.master_courses.program.short_name,
-        programName: course.master_courses.program.name,
-        courseCode: course.master_courses.course_code,
-        courseTitle: course.master_courses.course_title,
-        credit: Number(course.master_courses.credit || 0),
-        batchCodes: course.offered_course_batches.map((x) => x.batches.batch_code),
-        teacherCodes: course.offered_course_teachers.map(
-          (x) => x.teachers?.teacher_code || "-"
-        ),
-        schedule: course.offered_course_slots.map((slot) => ({
-          id: slot.id,
-          dayOfWeek: slot.day_of_week,
-          startTime: slot.start_time,
-          endTime: slot.end_time,
-          roomCode: slot.rooms?.room_code || "-",
-        })),
-        linkedSecondaryCourses: course.secondary_offered_courses.map((secondary) => ({
-          id: secondary.id,
-          courseCode: secondary.master_courses.course_code,
-          courseTitle: secondary.master_courses.course_title,
-          section: secondary.section,
-          programCode: secondary.master_courses.program.short_name,
-          batchCodes: secondary.offered_course_batches.map((x) => x.batches.batch_code),
-        })),
-      }));
+      .map((course) => {
+        const finalByOther = course.faculty_course_selections.find(
+          (x) => x.status === "FINAL" && x.teacher_id !== teacher.id
+        );
+
+        const bufferedByOthers = course.faculty_course_selections.filter(
+          (x) => x.status === "BUFFER" && x.teacher_id !== teacher.id
+        );
+
+        const ownFinal = course.faculty_course_selections.find(
+          (x) => x.status === "FINAL" && x.teacher_id === teacher.id
+        );
+
+        const ownBuffer = course.faculty_course_selections.find(
+          (x) => x.status === "BUFFER" && x.teacher_id === teacher.id
+        );
+
+        return {
+          id: course.id,
+          section: course.section,
+          offeringStatus: course.offerings.status,
+          programCode: course.master_courses.program.short_name,
+          programName: course.master_courses.program.name,
+          courseCode: course.master_courses.course_code,
+          courseTitle: course.master_courses.course_title,
+          credit: Number(course.master_courses.credit || 0),
+          batchCodes: course.offered_course_batches.map((x) => x.batches.batch_code),
+          teacherCodes: course.offered_course_teachers.map(
+            (x) => x.teachers?.teacher_code || "-"
+          ),
+          schedule: course.offered_course_slots.map((slot) => ({
+            id: slot.id,
+            dayOfWeek: slot.day_of_week,
+            startTime: slot.start_time,
+            endTime: slot.end_time,
+            roomCode: slot.rooms?.room_code || "-",
+          })),
+          linkedSecondaryCourses: course.secondary_offered_courses.map((secondary) => ({
+            id: secondary.id,
+            courseCode: secondary.master_courses.course_code,
+            courseTitle: secondary.master_courses.course_title,
+            section: secondary.section,
+            programCode: secondary.master_courses.program.short_name,
+            batchCodes: secondary.offered_course_batches.map((x) => x.batches.batch_code),
+          })),
+          selectionState: ownFinal
+            ? "YOU_FINAL"
+            : ownBuffer
+            ? "YOU_BUFFER"
+            : finalByOther
+            ? "TAKEN_FINAL"
+            : bufferedByOthers.length > 0
+            ? "BUFFERED_BY_OTHERS"
+            : "FREE",
+          finalizedByOtherFaculty: finalByOther
+            ? {
+                teacherId: finalByOther.teacher_id,
+                teacherCode: finalByOther.teachers?.teacher_code || "-",
+                teacherName: finalByOther.teachers?.full_name || "-",
+              }
+            : null,
+          bufferedByOtherFacultyCount: bufferedByOthers.length,
+        };
+      })
+      .filter((course) => course.selectionState !== "TAKEN_FINAL");
 
     const selections = await prisma.faculty_course_selections.findMany({
       where: {

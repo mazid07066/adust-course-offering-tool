@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AdminLayout from "@/components/admin-layout";
+import { useAcademicTerms } from "@/hooks/use-academic-terms";
 
 type LevelPolicy = {
   level: number;
@@ -9,9 +10,20 @@ type LevelPolicy = {
   maxCredits: number | null;
 };
 
+type ProgramOption = {
+  code: string;
+  label: string;
+};
+
 const SENIORITY_LEVELS = Array.from({ length: 20 }, (_, i) => i + 1);
 
 export default function PageClient() {
+  const { terms, termName, setTermName, loadingTerms } = useAcademicTerms();
+
+  const [programs, setPrograms] = useState<ProgramOption[]>([]);
+  const [programCode, setProgramCode] = useState("");
+  const [scopeMode, setScopeMode] = useState<"PROGRAM" | "ALL">("PROGRAM");
+
   const [sessionMinutes, setSessionMinutes] = useState(30);
   const [warningMinutes, setWarningMinutes] = useState(10);
   const [windowStatus, setWindowStatus] = useState("CLOSED");
@@ -23,7 +35,33 @@ export default function PageClient() {
 
   useEffect(() => {
     loadSettings();
+    loadPrograms();
   }, []);
+
+  async function loadPrograms() {
+    try {
+      const res = await fetch("/api/academic-catalog/options", {
+        cache: "no-store",
+      });
+      const json = await res.json();
+
+      if (!res.ok) return;
+
+      const rows = Array.isArray(json.programs) ? json.programs : [];
+      const mapped = rows.map((row: any) => ({
+        code: row.programCode,
+        label: row.displayLabel || row.programCode,
+      }));
+
+      setPrograms(mapped);
+
+      if (mapped.length > 0) {
+        setProgramCode((prev) => prev || mapped[0].code);
+      }
+    } catch {
+      // keep silent
+    }
+  }
 
   async function loadSettings() {
     setError("");
@@ -140,6 +178,74 @@ export default function PageClient() {
     );
   }
 
+  async function openFacultyChoice() {
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/faculty-choice/open", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          termName,
+          mode: scopeMode,
+          programCode,
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to open faculty choice.");
+      }
+
+      setMessage(json.message || "Faculty choice opened successfully.");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to open faculty choice."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function closeFacultyChoice() {
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/faculty-choice/close", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          termName,
+          mode: scopeMode,
+          programCode,
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to close faculty choice.");
+      }
+
+      setMessage(json.message || "Faculty choice closed successfully.");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to close faculty choice."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <AdminLayout title="Faculty Choice Control">
       <div className="space-y-6">
@@ -149,13 +255,17 @@ export default function PageClient() {
           </h1>
           <div className="mt-3 space-y-2 text-sm text-slate-700">
             <div>
-              All faculty may log in and view the open offered pool.
+              Draft publish only moves offerings to{" "}
+              <span className="font-semibold">BUFFER_READY</span>.
             </div>
             <div>
-              The system automatically grants edit access to the highest-seniority valid simultaneous session.
+              Faculty only see offerings in{" "}
+              <span className="font-semibold">FACULTY_CHOICE_BUFFER</span> or{" "}
+              <span className="font-semibold">FACULTY_CHOICE_FINALIZED</span>.
             </div>
             <div>
-              Seniority scale: <span className="font-semibold">1 = highest</span>, <span className="font-semibold">20 = lowest</span>.
+              Use the controls below to open one selected program or all programs
+              for the selected term.
             </div>
           </div>
         </div>
@@ -171,6 +281,86 @@ export default function PageClient() {
             {error}
           </div>
         ) : null}
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-medium text-slate-900">
+            Open / Close Faculty Choice by Term
+          </h2>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Academic Term
+              </label>
+              <select
+                value={termName}
+                onChange={(e) => setTermName(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+                disabled={loadingTerms}
+              >
+                <option value="">
+                  {loadingTerms ? "Loading terms..." : "Select Academic Term"}
+                </option>
+                {terms.map((term) => (
+                  <option key={term.name} value={term.name}>
+                    {term.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Scope
+              </label>
+              <select
+                value={scopeMode}
+                onChange={(e) => setScopeMode(e.target.value as "PROGRAM" | "ALL")}
+                className="w-full rounded-xl border px-4 py-3"
+              >
+                <option value="PROGRAM">Selected Program Only</option>
+                <option value="ALL">All Programs in Term</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Program
+              </label>
+              <select
+                value={programCode}
+                onChange={(e) => setProgramCode(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+                disabled={scopeMode === "ALL"}
+              >
+                <option value="">Select Program</option>
+                {programs.map((program) => (
+                  <option key={program.code} value={program.code}>
+                    {program.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button
+              onClick={openFacultyChoice}
+              disabled={loading || !termName || (scopeMode === "PROGRAM" && !programCode)}
+              className="rounded-xl bg-green-600 px-5 py-3 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-60"
+            >
+              Open for Faculty Choice
+            </button>
+
+            <button
+              onClick={closeFacultyChoice}
+              disabled={loading || !termName || (scopeMode === "PROGRAM" && !programCode)}
+              className="rounded-xl bg-amber-600 px-5 py-3 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60"
+            >
+              Close into Faculty Choice Finalized
+            </button>
+          </div>
+        </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
           <h2 className="text-lg font-medium text-slate-900">Session Timing</h2>
@@ -272,7 +462,10 @@ export default function PageClient() {
 
             <button
               onClick={() =>
-                updateSetting("FACULTY_AUTO_ADVANCE_ON_EXPIRY", autoAdvanceOnExpiry)
+                updateSetting(
+                  "FACULTY_AUTO_ADVANCE_ON_EXPIRY",
+                  autoAdvanceOnExpiry
+                )
               }
               className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
               disabled={loading}
@@ -287,7 +480,8 @@ export default function PageClient() {
             Seniority Level Credit Rules
           </h2>
           <p className="mt-2 text-sm text-slate-500">
-            Define optional minimum and maximum allowed credits for faculty levels 1 to 20.
+            Define optional minimum and maximum allowed credits for faculty levels
+            1 to 20.
           </p>
 
           <div className="mt-4 overflow-x-auto">

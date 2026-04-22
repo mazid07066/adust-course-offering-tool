@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { requireFacultyApi } from "@/lib/auth-guard";
-import { cookies } from "next/headers";
 import { canFacultyEdit } from "@/lib/faculty-access";
-import {
-  getFacultyLevelCreditPolicy,
-  getActiveFacultySeniorityLevel,
-} from "@/lib/system-settings";
+import { validateFacultySession } from "@/lib/faculty-session";
+import { getFacultyLevelCreditPolicy } from "@/lib/system-settings";
+import { createFacultyNotification } from "@/lib/faculty-notifications";
 
 export async function POST(req: NextRequest) {
   const guard = await requireFacultyApi();
@@ -15,7 +14,7 @@ export async function POST(req: NextRequest) {
   try {
     if (!guard.teacher_id) {
       return NextResponse.json(
-        { error: "Faculty account is not linked to a faculty record." },
+        { error: "Faculty account is not linked to a teacher record." },
         { status: 400 }
       );
     }
@@ -30,11 +29,41 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const access = await canFacultyEdit(sessionToken);
+    const sessionCheck = await validateFacultySession(sessionToken);
 
-    if (!access.allowed) {
+    if (!sessionCheck.valid || !sessionCheck.session) {
       return NextResponse.json(
-        { error: access.message || "Editing not allowed." },
+        { error: sessionCheck.message || "Faculty session is invalid." },
+        { status: 401 }
+      );
+    }
+
+    const teacher = await prisma.teachers.findUnique({
+      where: { id: guard.teacher_id },
+      select: {
+        id: true,
+        teacher_code: true,
+        full_name: true,
+        seniority_level: true,
+        is_active: true,
+      },
+    });
+
+    if (!teacher || !teacher.is_active) {
+      return NextResponse.json(
+        { error: "Faculty record is inactive or missing." },
+        { status: 403 }
+      );
+    }
+
+    const editAccess = await canFacultyEdit(sessionToken, {
+      id: teacher.id,
+      seniority_level: teacher.seniority_level,
+    });
+
+    if (!editAccess.allowed) {
+      return NextResponse.json(
+        { error: editAccess.message || "You are not the active faculty turn." },
         { status: 403 }
       );
     }
@@ -46,34 +75,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "termName is required." },
         { status: 400 }
-      );
-    }
-
-    const teacher = await prisma.teachers.findUnique({
-      where: { id: guard.teacher_id },
-      select: {
-        id: true,
-        seniority_level: true,
-      },
-    });
-
-    if (!teacher) {
-      return NextResponse.json(
-        { error: "Faculty record not found." },
-        { status: 404 }
-      );
-    }
-
-    const activeSeniorityLevel = await getActiveFacultySeniorityLevel();
-    const seniorityAllowed =
-      !activeSeniorityLevel ||
-      teacher.seniority_level === null ||
-      teacher.seniority_level === activeSeniorityLevel;
-
-    if (!seniorityAllowed) {
-      return NextResponse.json(
-        { error: "Your seniority level is not active for faculty choice right now." },
-        { status: 403 }
       );
     }
 
@@ -95,7 +96,6 @@ export async function POST(req: NextRequest) {
         academic_term_id: term.id,
         status: "BUFFER",
       },
-      orderBy: [{ priority_order: "asc" }, { id: "asc" }],
       include: {
         offered_courses: {
           include: {
@@ -108,6 +108,7 @@ export async function POST(req: NextRequest) {
           },
         },
       },
+      orderBy: [{ priority_order: "asc" }, { id: "asc" }],
     });
 
     if (currentBufferSelections.length === 0) {
@@ -118,12 +119,18 @@ export async function POST(req: NextRequest) {
     }
 
     const invalidSelections = currentBufferSelections.filter(
-      (row) => row.offered_courses.offerings.status !== "FACULTY_CHOICE_BUFFER"
+      (row) =>
+        !["FACULTY_CHOICE_BUFFER", "FACULTY_CHOICE_FINALIZED"].includes(
+          row.offered_courses.offerings.status
+        )
     );
 
     if (invalidSelections.length > 0) {
       return NextResponse.json(
-        { error: "One or more buffered choices are no longer in active faculty choice stage." },
+        {
+          error:
+            "One or more buffered choices are no longer available for faculty choice.",
+        },
         { status: 400 }
       );
     }
@@ -142,7 +149,7 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json(
         {
-          error: `Selected credits ${totalCredits} are below the minimum required ${creditPolicy.minCredits} for your seniority level.`,
+          error: `Selected credits ${totalCredits} are below your required minimum ${creditPolicy.minCredits}.`,
         },
         { status: 400 }
       );
@@ -155,7 +162,7 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json(
         {
-          error: `Selected credits ${totalCredits} exceed the maximum allowed ${creditPolicy.maxCredits} for your seniority level.`,
+          error: `Selected credits ${totalCredits} exceed your allowed maximum ${creditPolicy.maxCredits}.`,
         },
         { status: 400 }
       );
@@ -173,11 +180,18 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    await createFacultyNotification({
+      recipientUserId: guard.id,
+      recipientTeacherId: teacher.id,
+      eventType: "FACULTY_CHOICE_FINAL_SUBMITTED",
+      title: "Faculty choice final submission completed",
+      message: `${teacher.teacher_code} - ${teacher.full_name}, your final choices for ${term.name} have been submitted for coordinator/admin review.`,
+    });
+
     return NextResponse.json({
       success: true,
       message: "Final choice submission completed successfully.",
       totalCredits,
-      creditPolicy,
     });
   } catch (error) {
     console.error(error);

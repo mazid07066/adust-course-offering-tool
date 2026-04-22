@@ -35,51 +35,49 @@ export async function POST(req: NextRequest) {
     });
 
     if (!user || !user.is_active) {
-      return NextResponse.json({ error: "Invalid credentials." }, { status: 401 });
+      return NextResponse.json(
+        { error: "Invalid credentials." },
+        { status: 401 }
+      );
     }
 
     const valid = await bcrypt.compare(password, user.password_hash);
 
     if (!valid) {
-      return NextResponse.json({ error: "Invalid credentials." }, { status: 401 });
+      return NextResponse.json(
+        { error: "Invalid credentials." },
+        { status: 401 }
+      );
     }
 
-    let sessionToken: string | null = null;
-    let expiresAt: Date | null = null;
+    // Create a session for ALL roles, not only faculty.
+    const appSession = await createFacultyLoginSession({
+      userId: user.id,
+      teacherId: user.teacher_id ?? null,
+    });
 
-    if (user.role === "FACULTY") {
-      const facultySession = await createFacultyLoginSession({
-        userId: user.id,
-        teacherId: user.teacher_id ?? null,
-      });
+    // Only faculty users participate in faculty-turn notifications.
+    if (user.role === "FACULTY" && user.teacher_id) {
+      const activeTurn = await getCurrentActiveFacultyTurn();
 
-      sessionToken = facultySession.session_token;
-      expiresAt = facultySession.expires_at;
-
-      if (user.teacher_id) {
-        const activeTurn = await getCurrentActiveFacultyTurn();
-
-        if (activeTurn?.teacherId === user.teacher_id) {
-          await sendFacultyTurnNotification(user.teacher_id);
-        } else {
-          await sendFacultyQueueNotification(user.teacher_id);
-        }
+      if (activeTurn?.teacherId === user.teacher_id) {
+        await sendFacultyTurnNotification(user.teacher_id);
+      } else {
+        await sendFacultyQueueNotification(user.teacher_id);
       }
     }
 
     const res = NextResponse.json({
       success: true,
       role: user.role,
-      expiresAt,
+      expiresAt: appSession.expires_at,
     });
 
-    if (sessionToken) {
-      res.cookies.set("sessionToken", sessionToken, {
-        httpOnly: true,
-        path: "/",
-        sameSite: "lax",
-      });
-    }
+    res.cookies.set("sessionToken", appSession.session_token, {
+      httpOnly: true,
+      path: "/",
+      sameSite: "lax",
+    });
 
     return res;
   } catch (error) {

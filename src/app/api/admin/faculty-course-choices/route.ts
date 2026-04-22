@@ -33,11 +33,6 @@ export async function GET(req: NextRequest) {
       where: {
         academic_term_id: term.id,
       },
-      orderBy: [
-        { teacher_id: "asc" },
-        { priority_order: "asc" },
-        { id: "asc" },
-      ],
       include: {
         teachers: true,
         offered_courses: {
@@ -55,9 +50,14 @@ export async function GET(req: NextRequest) {
           },
         },
       },
+      orderBy: [
+        { teacher_id: "asc" },
+        { priority_order: "asc" },
+        { id: "asc" },
+      ],
     });
 
-    const groupedMap = new Map<
+    const map = new Map<
       number,
       {
         teacherId: number;
@@ -72,8 +72,8 @@ export async function GET(req: NextRequest) {
           offeredCourseId: number;
           priorityOrder: number | null;
           status: string;
-          selectedAt: Date | null;
-          confirmedAt: Date | null;
+          selectedAt: string | null;
+          confirmedAt: string | null;
           programCode: string;
           courseCode: string;
           courseTitle: string;
@@ -84,12 +84,12 @@ export async function GET(req: NextRequest) {
     >();
 
     for (const row of selections) {
-      if (!groupedMap.has(row.teacher_id)) {
-        groupedMap.set(row.teacher_id, {
+      if (!map.has(row.teacher_id)) {
+        map.set(row.teacher_id, {
           teacherId: row.teacher_id,
-          teacherCode: row.teachers.teacher_code,
-          teacherName: row.teachers.full_name,
-          designation: row.teachers.designation,
+          teacherCode: row.teachers?.teacher_code || "-",
+          teacherName: row.teachers?.full_name || "-",
+          designation: row.teachers?.designation || null,
           totalChoices: 0,
           finalizedCount: 0,
           bufferCount: 0,
@@ -97,22 +97,19 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      const item = groupedMap.get(row.teacher_id)!;
+      const group = map.get(row.teacher_id)!;
+      group.totalChoices += 1;
 
-      item.totalChoices += 1;
-      if (row.status === "FINAL") {
-        item.finalizedCount += 1;
-      } else {
-        item.bufferCount += 1;
-      }
+      if (row.status === "FINAL") group.finalizedCount += 1;
+      if (row.status === "BUFFER") group.bufferCount += 1;
 
-      item.choices.push({
+      group.choices.push({
         selectionId: row.id,
         offeredCourseId: row.offered_course_id,
         priorityOrder: row.priority_order,
         status: row.status,
-        selectedAt: row.selected_at,
-        confirmedAt: row.confirmed_at,
+        selectedAt: row.selected_at ? row.selected_at.toISOString() : null,
+        confirmedAt: row.confirmed_at ? row.confirmed_at.toISOString() : null,
         programCode: row.offered_courses.master_courses.program.short_name,
         courseCode: row.offered_courses.master_courses.course_code,
         courseTitle: row.offered_courses.master_courses.course_title,
@@ -123,30 +120,15 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const facultyChoices = Array.from(groupedMap.values()).map((group) => ({
-      teacherId: group.teacherId,
-      teacherCode: group.teacherCode,
-      teacherName: group.teacherName,
-      designation: group.designation,
-      totalChoices: group.totalChoices,
-      finalizedCount: group.finalizedCount,
-      bufferCount: group.bufferCount,
-      choices: group.choices.map((choice) => ({
-        ...choice,
-        selectedAt: choice.selectedAt ? choice.selectedAt.toISOString() : null,
-        confirmedAt: choice.confirmedAt ? choice.confirmedAt.toISOString() : null,
-      })),
-    }));
-
     return NextResponse.json({
       success: true,
       termName: term.name,
-      facultyChoices,
+      facultyChoices: Array.from(map.values()),
     });
   } catch (error) {
     console.error(error);
     return NextResponse.json(
-      { error: "Failed to load admin faculty course choices." },
+      { error: "Failed to load faculty course choices." },
       { status: 500 }
     );
   }

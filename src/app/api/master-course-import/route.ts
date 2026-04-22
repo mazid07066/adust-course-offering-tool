@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { resolveCanonicalProgram } from "@/lib/canonical-program";
 
+const ROUTE_VERSION = "master-course-import-final-no-tx-v4";
+
 type ParsedCourse = {
   course_code: string;
   course_title: string;
@@ -84,7 +86,11 @@ function extractGroupName(text: string) {
   if (/other engineering/i.test(value)) return value;
   if (/core courses?/i.test(value)) return value;
   if (/elective courses?/i.test(value)) return value;
-  if (/electronics|biomedical|communication|power division|computer engineering/i.test(value)) {
+  if (
+    /electronics|biomedical|communication|power division|computer engineering/i.test(
+      value
+    )
+  ) {
     return value;
   }
 
@@ -162,13 +168,14 @@ function parseHtmlTables(html: string): ParsedCourse[] {
     const rowMatches = tableHtml.match(/<tr[\s\S]*?<\/tr>/gi) || [];
 
     for (const rowHtml of rowMatches) {
-      const cellMatches = [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((m) =>
-        normalizeText(
-          m[1]
-            .replace(/<br\s*\/?>/gi, " ")
-            .replace(/<[^>]+>/g, " ")
-            .replace(/&nbsp;/gi, " ")
-        )
+      const cellMatches = [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(
+        (m) =>
+          normalizeText(
+            m[1]
+              .replace(/<br\s*\/?>/gi, " ")
+              .replace(/<[^>]+>/g, " ")
+              .replace(/&nbsp;/gi, " ")
+          )
       );
 
       if (!cellMatches.length) continue;
@@ -294,6 +301,16 @@ async function getCatalogProgramByCode(programCode: string): Promise<CatalogProg
   };
 }
 
+export async function GET() {
+  await requireCoordinatorOrAdminApi();
+
+  return NextResponse.json({
+    ok: true,
+    routeVersion: ROUTE_VERSION,
+    message: "master-course-import route is active",
+  });
+}
+
 export async function POST(request: NextRequest) {
   await requireCoordinatorOrAdminApi();
 
@@ -306,7 +323,7 @@ export async function POST(request: NextRequest) {
 
     if (!programCode || !file) {
       return NextResponse.json(
-        { error: "programCode and file are required." },
+        { error: "programCode and file are required.", routeVersion: ROUTE_VERSION },
         { status: 400 }
       );
     }
@@ -314,7 +331,10 @@ export async function POST(request: NextRequest) {
     const catalogProgram = await getCatalogProgramByCode(programCode);
     if (!catalogProgram) {
       return NextResponse.json(
-        { error: "Selected program/curriculum is not defined in academic setup." },
+        {
+          error: "Selected program/curriculum is not defined in academic setup.",
+          routeVersion: ROUTE_VERSION,
+        },
         { status: 400 }
       );
     }
@@ -345,17 +365,25 @@ export async function POST(request: NextRequest) {
       courses = await parseDocx(buffer);
     } else {
       return NextResponse.json(
-        { error: "Unsupported file type. Please upload Excel or DOCX." },
+        {
+          error: "Unsupported file type. Please upload Excel or DOCX.",
+          routeVersion: ROUTE_VERSION,
+        },
         { status: 400 }
       );
     }
 
     const dedupedMap = new Map<string, ParsedCourse>();
+
     for (const c of courses) {
       const key = toCompactCourseCode(c.course_code);
       if (!key) continue;
+
       if (!dedupedMap.has(key)) {
-        dedupedMap.set(key, { ...c, course_code: key });
+        dedupedMap.set(key, {
+          ...c,
+          course_code: key,
+        });
       }
     }
 
@@ -363,37 +391,46 @@ export async function POST(request: NextRequest) {
 
     if (!dedupedCourses.length) {
       return NextResponse.json(
-        { error: "No course rows could be parsed from the uploaded file." },
+        {
+          error: "No course rows could be parsed from the uploaded file.",
+          routeVersion: ROUTE_VERSION,
+        },
         { status: 400 }
       );
     }
 
-    if (replaceExisting) {
-      await prisma.master_courses.deleteMany({
-        where: {
-          curriculum_key: effectiveCurriculumKey,
-        },
-      });
+    const existingRows = await prisma.master_courses.findMany({
+      where: {
+        OR: [
+          { curriculum_key: effectiveCurriculumKey },
+          { program_id: program.id },
+        ],
+      },
+      select: {
+        id: true,
+        course_code: true,
+      },
+      orderBy: [{ id: "asc" }],
+    });
+
+    const existingByCode = new Map<string, { id: number }>();
+
+    for (const row of existingRows) {
+      const compactCode = toCompactCourseCode(row.course_code);
+      if (!compactCode) continue;
+      if (!existingByCode.has(compactCode)) {
+        existingByCode.set(compactCode, { id: row.id });
+      }
     }
 
     let insertedCount = 0;
     let updatedCount = 0;
 
     for (const c of dedupedCourses) {
-      const existing = await prisma.master_courses.findFirst({
-        where: {
-          OR: [
-            {
-              curriculum_key: effectiveCurriculumKey,
-              course_code: c.course_code,
-            },
-            {
-              program_id: program.id,
-              course_code: c.course_code,
-            },
-          ],
-        },
-      });
+      const compactCode = toCompactCourseCode(c.course_code);
+      if (!compactCode) continue;
+
+      const existing = existingByCode.get(compactCode);
 
       if (existing) {
         await prisma.master_courses.update({
@@ -401,6 +438,7 @@ export async function POST(request: NextRequest) {
           data: {
             program_id: program.id,
             curriculum_key: effectiveCurriculumKey,
+            course_code: compactCode,
             course_title: c.course_title,
             normalized_title: c.normalized_title,
             credit: c.credit,
@@ -416,7 +454,7 @@ export async function POST(request: NextRequest) {
           data: {
             program_id: program.id,
             curriculum_key: effectiveCurriculumKey,
-            course_code: c.course_code,
+            course_code: compactCode,
             course_title: c.course_title,
             normalized_title: c.normalized_title,
             credit: c.credit,
@@ -430,20 +468,86 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    let deactivatedReferencedCount = 0;
+    let deletedUnreferencedCount = 0;
+
+    if (replaceExisting) {
+      const incomingCodes = new Set(
+        dedupedCourses.map((c) => toCompactCourseCode(c.course_code))
+      );
+
+      const staleRows = existingRows.filter((row) => {
+        const compactCode = toCompactCourseCode(row.course_code);
+        return compactCode && !incomingCodes.has(compactCode);
+      });
+
+      const staleIds = staleRows.map((row) => row.id);
+
+      if (staleIds.length > 0) {
+        const referencedRows = await prisma.offered_courses.findMany({
+          where: {
+            master_course_id: {
+              in: staleIds,
+            },
+          },
+          select: {
+            master_course_id: true,
+          },
+          distinct: ["master_course_id"],
+        });
+
+        const referencedIds = new Set(
+          referencedRows.map((row) => row.master_course_id)
+        );
+
+        const referencedStaleIds = staleIds.filter((id) => referencedIds.has(id));
+        const unreferencedStaleIds = staleIds.filter((id) => !referencedIds.has(id));
+
+        if (referencedStaleIds.length > 0) {
+          const updated = await prisma.master_courses.updateMany({
+            where: {
+              id: { in: referencedStaleIds },
+            },
+            data: {
+              is_active: false,
+            },
+          });
+          deactivatedReferencedCount = updated.count;
+        }
+
+        if (unreferencedStaleIds.length > 0) {
+          const deleted = await prisma.master_courses.deleteMany({
+            where: {
+              id: { in: unreferencedStaleIds },
+            },
+          });
+          deletedUnreferencedCount = deleted.count;
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      message: `Curriculum import completed successfully for ${effectiveCurriculumKey}. Inserted ${insertedCount}, updated ${updatedCount}.`,
+      routeVersion: ROUTE_VERSION,
+      message: `Curriculum import completed successfully for ${effectiveCurriculumKey}. Inserted ${insertedCount}, updated ${updatedCount}, deactivated referenced stale ${deactivatedReferencedCount}, deleted unreferenced stale ${deletedUnreferencedCount}.`,
       insertedCount,
       updatedCount,
+      deactivatedReferencedCount,
+      deletedUnreferencedCount,
       parsedCount: dedupedCourses.length,
       programCode: catalogProgram.programCode,
       curriculumKey: effectiveCurriculumKey,
+      departmentCode: catalogProgram.departmentCode,
+      departmentName: catalogProgram.departmentName,
+      programName: catalogProgram.programTitle,
     });
   } catch (error) {
-    console.error(error);
+    console.error("MASTER COURSE IMPORT ERROR", error);
+
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Master course import failed.",
+        routeVersion: ROUTE_VERSION,
       },
       { status: 500 }
     );

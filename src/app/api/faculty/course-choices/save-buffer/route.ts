@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { requireFacultyApi } from "@/lib/auth-guard";
-import { cookies } from "next/headers";
 import { canFacultyEdit } from "@/lib/faculty-access";
-import {
-  getFacultyLevelCreditPolicy,
-  getActiveFacultySeniorityLevel,
-} from "@/lib/system-settings";
-
-const ALLOWED_OFFERING_STATUSES = ["FACULTY_CHOICE_BUFFER"];
+import { validateFacultySession } from "@/lib/faculty-session";
+import { getFacultyLevelCreditPolicy } from "@/lib/system-settings";
 
 export async function POST(req: NextRequest) {
   const guard = await requireFacultyApi();
@@ -17,7 +13,7 @@ export async function POST(req: NextRequest) {
   try {
     if (!guard.teacher_id) {
       return NextResponse.json(
-        { error: "Faculty account is not linked to a faculty record." },
+        { error: "Faculty account is not linked to a teacher record." },
         { status: 400 }
       );
     }
@@ -32,25 +28,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const access = await canFacultyEdit(sessionToken);
+    const sessionCheck = await validateFacultySession(sessionToken);
 
-    if (!access.allowed) {
+    if (!sessionCheck.valid || !sessionCheck.session) {
       return NextResponse.json(
-        { error: access.message || "Editing not allowed." },
-        { status: 403 }
-      );
-    }
-
-    const body = await req.json();
-    const termName = String(body.termName || "").trim().toUpperCase();
-    const offeredCourseIds = Array.isArray(body.offeredCourseIds)
-      ? body.offeredCourseIds.map((x: unknown) => Number(x)).filter(Boolean)
-      : [];
-
-    if (!termName) {
-      return NextResponse.json(
-        { error: "termName is required." },
-        { status: 400 }
+        { error: sessionCheck.message || "Faculty session is invalid." },
+        { status: 401 }
       );
     }
 
@@ -58,27 +41,44 @@ export async function POST(req: NextRequest) {
       where: { id: guard.teacher_id },
       select: {
         id: true,
+        teacher_code: true,
+        full_name: true,
         seniority_level: true,
+        is_active: true,
       },
     });
 
-    if (!teacher) {
+    if (!teacher || !teacher.is_active) {
       return NextResponse.json(
-        { error: "Faculty record not found." },
-        { status: 404 }
+        { error: "Faculty record is inactive or missing." },
+        { status: 403 }
       );
     }
 
-    const activeSeniorityLevel = await getActiveFacultySeniorityLevel();
-    const seniorityAllowed =
-      !activeSeniorityLevel ||
-      teacher.seniority_level === null ||
-      teacher.seniority_level === activeSeniorityLevel;
+    const editAccess = await canFacultyEdit(sessionToken, {
+      id: teacher.id,
+      seniority_level: teacher.seniority_level,
+    });
 
-    if (!seniorityAllowed) {
+    if (!editAccess.allowed) {
       return NextResponse.json(
-        { error: "Your seniority level is not active for faculty choice right now." },
+        { error: editAccess.message || "You are not the active faculty turn." },
         { status: 403 }
+      );
+    }
+
+    const body = await req.json();
+    const termName = String(body.termName || "").trim().toUpperCase();
+    const offeredCourseIds = Array.isArray(body.offeredCourseIds)
+      ? body.offeredCourseIds
+          .map((x: unknown) => Number(x))
+          .filter((x: number) => Number.isInteger(x) && x > 0)
+      : [];
+
+    if (!termName) {
+      return NextResponse.json(
+        { error: "termName is required." },
+        { status: 400 }
       );
     }
 
@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const existingFinal = await prisma.faculty_course_selections.findFirst({
+    const hasFinal = await prisma.faculty_course_selections.findFirst({
       where: {
         teacher_id: teacher.id,
         academic_term_id: term.id,
@@ -103,29 +103,34 @@ export async function POST(req: NextRequest) {
       select: { id: true },
     });
 
-    if (existingFinal) {
+    if (hasFinal) {
       return NextResponse.json(
-        { error: "Final submission already completed. Editing is locked." },
+        {
+          error:
+            "Your choices are already finally submitted. Coordinator/admin must reopen them before editing.",
+        },
         { status: 400 }
       );
     }
 
-    const selectedCourses = offeredCourseIds.length
+    const validCourses = offeredCourseIds.length
       ? await prisma.offered_courses.findMany({
           where: {
-            id: {
-              in: offeredCourseIds,
-            },
+            id: { in: offeredCourseIds },
             primary_offered_course_id: null,
             offerings: {
               academic_term_id: term.id,
               status: {
-                in: ALLOWED_OFFERING_STATUSES,
+                in: ["FACULTY_CHOICE_BUFFER", "FACULTY_CHOICE_FINALIZED"],
               },
             },
           },
-          select: {
-            id: true,
+          include: {
+            faculty_course_selections: {
+              include: {
+                teachers: true,
+              },
+            },
             master_courses: {
               select: {
                 credit: true,
@@ -135,14 +140,33 @@ export async function POST(req: NextRequest) {
         })
       : [];
 
-    if (selectedCourses.length !== offeredCourseIds.length) {
+    if (validCourses.length !== offeredCourseIds.length) {
       return NextResponse.json(
-        { error: "One or more selected courses are invalid for the selected term." },
+        {
+          error:
+            "One or more selected courses are invalid or not open for faculty choice in this term.",
+        },
         { status: 400 }
       );
     }
 
-    const totalCredits = selectedCourses.reduce(
+    const takenFinalByOther = validCourses.find((course) =>
+      course.faculty_course_selections.some(
+        (x) => x.status === "FINAL" && x.teacher_id !== teacher.id
+      )
+    );
+
+    if (takenFinalByOther) {
+      return NextResponse.json(
+        {
+          error:
+            "One or more selected sections have already been finalized by another faculty and are no longer available.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const totalCredits = validCourses.reduce(
       (sum, row) => sum + Number(row.master_courses.credit || 0),
       0
     );
@@ -156,7 +180,7 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json(
         {
-          error: `Selected credits ${totalCredits} exceed the maximum allowed ${creditPolicy.maxCredits} for your seniority level.`,
+          error: `Selected credits ${totalCredits} exceed your allowed maximum ${creditPolicy.maxCredits}.`,
         },
         { status: 400 }
       );
@@ -206,7 +230,6 @@ export async function POST(req: NextRequest) {
       success: true,
       message: "Choice buffer saved successfully.",
       totalCredits,
-      creditPolicy,
     });
   } catch (error) {
     console.error(error);
