@@ -9,13 +9,6 @@ import {
 } from "@/lib/system-settings";
 import { createFacultyNotification } from "@/lib/faculty-notifications";
 
-type CreateFacultySessionInput =
-  | number
-  | {
-      userId: number;
-      teacherId?: number | null;
-    };
-
 export function getRemainingMinutes(expiresAt: Date | string) {
   const ms = new Date(expiresAt).getTime() - Date.now();
   if (ms <= 0) return 0;
@@ -56,33 +49,13 @@ export async function createFacultyLoginSession(input: {
     },
   });
 
-  return {
-    ...session,
-    sessionToken: session.session_token,
-    expiresAt: session.expires_at,
-    userId: session.user_id,
-    teacherId: session.teacher_id,
-    revokedAt: session.revoked_at,
-    warnedAt: session.warned_at,
-    createdAt: session.created_at,
-  };
+  return session;
 }
 
-/**
- * Backward-compatible wrapper.
- * Supports both:
- *   createFacultySession(5)
- * and
- *   createFacultySession({ userId: 5, teacherId: 2 })
- */
-export async function createFacultySession(input: CreateFacultySessionInput) {
-  if (typeof input === "number") {
-    return createFacultyLoginSession({
-      userId: input,
-      teacherId: null,
-    });
-  }
-
+export async function createFacultySession(input: {
+  userId: number;
+  teacherId?: number | null;
+}) {
   return createFacultyLoginSession(input);
 }
 

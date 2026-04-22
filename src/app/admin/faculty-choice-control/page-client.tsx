@@ -29,7 +29,7 @@ export default function PageClient() {
     loadFaculties();
   }, []);
 
-    async function loadSettings() {
+      async function loadSettings() {
     setError("");
     try {
       const res = await fetch("/api/system-settings", { cache: "no-store" });
