@@ -36,6 +36,43 @@ function buildCanonicalProgramName(programTitle: string, studyShift: string) {
   return `${normalizeText(programTitle)} [${normalizeUpper(studyShift)}]`;
 }
 
+function sumCredits(rows: Array<{ credit: number | null }>) {
+  return Number(
+    rows.reduce((sum, row) => sum + Number(row.credit || 0), 0).toFixed(2)
+  );
+}
+
+function buildCodeSet(rows: Array<{ course_code: string }>) {
+  return new Set(
+    rows
+      .map((row) => normalizeComparableCourseCode(row.course_code))
+      .filter(Boolean)
+  );
+}
+
+function buildTitleSet(rows: Array<{ course_title: string }>) {
+  return new Set(
+    rows
+      .map((row) => normalizeComparableTitle(row.course_title))
+      .filter(Boolean)
+  );
+}
+
+function isMatched(
+  courseCode: string,
+  courseTitle: string,
+  codeSet: Set<string>,
+  titleSet: Set<string>
+) {
+  const normalizedCode = normalizeComparableCourseCode(courseCode);
+  if (normalizedCode) {
+    return codeSet.has(normalizedCode);
+  }
+
+  const normalizedTitle = normalizeComparableTitle(courseTitle);
+  return normalizedTitle ? titleSet.has(normalizedTitle) : false;
+}
+
 export async function GET(request: NextRequest) {
   await requireCoordinatorOrAdminApi();
 
@@ -136,6 +173,11 @@ export async function GET(request: NextRequest) {
           remaining: masterCourses.length,
           masterCourses: masterCourses.length,
         },
+        creditSummary: {
+          completedCredits: 0,
+          ongoingCredits: 0,
+          combinedCredits: 0,
+        },
         completedCourses: [],
         ongoingCourses: [],
         remainingCourses: masterCourses.map((row) => ({
@@ -166,10 +208,7 @@ export async function GET(request: NextRequest) {
       include: {
         academic_terms: true,
       },
-      orderBy: [
-        { academic_term_id: "asc" },
-        { course_code: "asc" },
-      ],
+      orderBy: [{ academic_term_id: "asc" }, { course_code: "asc" }],
     });
 
     const ongoingRows = await prisma.batch_current_registrations.findMany({
@@ -179,42 +218,47 @@ export async function GET(request: NextRequest) {
       include: {
         academic_terms: true,
       },
-      orderBy: [
-        { academic_term_id: "asc" },
-        { course_code: "asc" },
-      ],
+      orderBy: [{ academic_term_id: "asc" }, { course_code: "asc" }],
     });
 
-    const completedCodeSet = new Set(
-      completedRows.map((row) => normalizeComparableCourseCode(row.course_code))
-    );
-    const completedTitleSet = new Set(
-      completedRows.map((row) => normalizeComparableTitle(row.course_title)).filter(Boolean)
-    );
+    const completedCodeSet = buildCodeSet(completedRows);
+    const completedTitleSet = buildTitleSet(completedRows);
 
-    const ongoingCodeSet = new Set(
-      ongoingRows.map((row) => normalizeComparableCourseCode(row.course_code))
-    );
-    const ongoingTitleSet = new Set(
-      ongoingRows.map((row) => normalizeComparableTitle(row.course_title)).filter(Boolean)
-    );
+    const ongoingCodeSet = buildCodeSet(ongoingRows);
+    const ongoingTitleSet = buildTitleSet(ongoingRows);
 
     const remainingRows = masterCourses.filter((course) => {
-      const code = normalizeComparableCourseCode(course.course_code);
-      const title = normalizeComparableTitle(course.course_title);
+      const isCompleted = isMatched(
+        course.course_code,
+        course.course_title,
+        completedCodeSet,
+        completedTitleSet
+      );
 
-      const isCompleted = completedCodeSet.has(code) || (title && completedTitleSet.has(title));
-      const isOngoing = ongoingCodeSet.has(code) || (title && ongoingTitleSet.has(title));
+      const isOngoing = isMatched(
+        course.course_code,
+        course.course_title,
+        ongoingCodeSet,
+        ongoingTitleSet
+      );
 
       return !isCompleted && !isOngoing;
     });
 
     const statusRows = masterCourses.map((course) => {
-      const code = normalizeComparableCourseCode(course.course_code);
-      const title = normalizeComparableTitle(course.course_title);
+      const isCompleted = isMatched(
+        course.course_code,
+        course.course_title,
+        completedCodeSet,
+        completedTitleSet
+      );
 
-      const isCompleted = completedCodeSet.has(code) || (title && completedTitleSet.has(title));
-      const isOngoing = ongoingCodeSet.has(code) || (title && ongoingTitleSet.has(title));
+      const isOngoing = isMatched(
+        course.course_code,
+        course.course_title,
+        ongoingCodeSet,
+        ongoingTitleSet
+      );
 
       if (isCompleted) {
         return {
@@ -254,6 +298,10 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    const completedCredits = sumCredits(completedRows);
+    const ongoingCredits = sumCredits(ongoingRows);
+    const combinedCredits = Number((completedCredits + ongoingCredits).toFixed(2));
+
     return NextResponse.json({
       selectedProgram: {
         programCode: academicIdentity.program_code,
@@ -266,6 +314,11 @@ export async function GET(request: NextRequest) {
         ongoing: ongoingRows.length,
         remaining: remainingRows.length,
         masterCourses: masterCourses.length,
+      },
+      creditSummary: {
+        completedCredits,
+        ongoingCredits,
+        combinedCredits,
       },
       completedCourses: completedRows.map((row) => ({
         semester: row.academic_terms?.name || "-",

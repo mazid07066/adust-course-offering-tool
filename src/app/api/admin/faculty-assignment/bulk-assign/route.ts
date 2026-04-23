@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
           offered_course_id: course.id,
           teacher_id: winner.teacher_id,
           assigned_credit: Number(course.master_courses.credit || 0),
-          load_type: "BULK_CHOICE_ASSIGNMENT",
+          load_type: "BULK_ASSIGNMENT",
         },
       });
 

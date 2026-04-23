@@ -62,7 +62,7 @@ type DashboardResponse = {
   };
 };
 
-type LoadSheetResponse = {
+type SheetResponse = {
   success?: boolean;
   error?: string;
   faculty?: {
@@ -75,6 +75,7 @@ type LoadSheetResponse = {
   };
   termName?: string;
   submittedAt?: string | null;
+  assignedAt?: string | null;
   totals?: {
     theoryCredits: number;
     labCredits: number;
@@ -106,13 +107,206 @@ function badgeClasses(status: string) {
   return "bg-slate-100 text-slate-700";
 }
 
+function renderSheetCard(
+  title: string,
+  subtitle: string,
+  exportLabel: string,
+  exportHref: string,
+  sheet: SheetResponse | null
+) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+          <p className="text-sm text-slate-600">{subtitle}</p>
+        </div>
+
+        <a
+          href={exportHref}
+          className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          {exportLabel}
+        </a>
+      </div>
+
+      {sheet?.success && sheet.faculty ? (
+        <div className="mt-6 space-y-6">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Faculty's Department</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {sheet.faculty.departmentCode} | {sheet.faculty.departmentName}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Semester for given choices</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {sheet.termName || "-"}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Date and time</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {sheet.assignedAt
+                  ? new Date(sheet.assignedAt).toLocaleString()
+                  : sheet.submittedAt
+                  ? new Date(sheet.submittedAt).toLocaleString()
+                  : "-"}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Faculty's Full Name</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {sheet.faculty.fullName}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Faculty's Designation</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {sheet.faculty.designation}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Faculty's Initial</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {sheet.faculty.initial}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Total theory credits taken</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {sheet.totals?.theoryCredits ?? 0}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Total lab credits taken</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {sheet.totals?.labCredits ?? 0}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Total credits</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {sheet.totals?.totalCredits ?? 0}
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">
+              Total credits from which programs
+            </h3>
+            <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="border-b px-3 py-3 text-left">Program</th>
+                    <th className="border-b px-3 py-3 text-left">Theory Credits</th>
+                    <th className="border-b px-3 py-3 text-left">Lab Credits</th>
+                    <th className="border-b px-3 py-3 text-left">Total Credits</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(sheet.programTallies || []).map((item) => (
+                    <tr key={item.programCode}>
+                      <td className="border-b px-3 py-2">{item.programCode}</td>
+                      <td className="border-b px-3 py-2">{item.theoryCredits}</td>
+                      <td className="border-b px-3 py-2">{item.labCredits}</td>
+                      <td className="border-b px-3 py-2">{item.totalCredits}</td>
+                    </tr>
+                  ))}
+
+                  {(sheet.programTallies || []).length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
+                        No program tally found.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">
+              Full schedule of the courses
+            </h3>
+            <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="border-b px-3 py-3 text-left">Course Code</th>
+                    <th className="border-b px-3 py-3 text-left">Section</th>
+                    <th className="border-b px-3 py-3 text-left">Credit</th>
+                    <th className="border-b px-3 py-3 text-left">Day</th>
+                    <th className="border-b px-3 py-3 text-left">Time</th>
+                    <th className="border-b px-3 py-3 text-left">Room</th>
+                    <th className="border-b px-3 py-3 text-left">Category</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(sheet.scheduleRows || []).map((item, index) => (
+                    <tr key={`${item.courseCode}-${item.section}-${index}`}>
+                      <td className="border-b px-3 py-2">{item.courseCode}</td>
+                      <td className="border-b px-3 py-2">{item.section}</td>
+                      <td className="border-b px-3 py-2">{item.credit}</td>
+                      <td className="border-b px-3 py-2">{item.dayOfWeek}</td>
+                      <td className="border-b px-3 py-2">{item.timeText}</td>
+                      <td className="border-b px-3 py-2">{item.roomText}</td>
+                      <td className="border-b px-3 py-2">{item.category}</td>
+                    </tr>
+                  ))}
+
+                  {(sheet.scheduleRows || []).length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
+                        No rows found for this term.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="pt-8">
+            <div className="w-80 border-t border-slate-400 pt-2 text-sm text-slate-700">
+              {sheet.faculty.fullName}
+            </div>
+            <div className="text-sm text-slate-500">Faculty Signature</div>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-slate-500">
+          No sheet data found for the selected term.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function FacultyDashboardPageClient() {
   const { terms, termName, setTermName, loadingTerms } = useAcademicTerms();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
-  const [loadSheet, setLoadSheet] = useState<LoadSheetResponse | null>(null);
+  const [approvedSheet, setApprovedSheet] = useState<SheetResponse | null>(null);
+  const [choiceSheet, setChoiceSheet] = useState<SheetResponse | null>(null);
 
   async function loadDashboard(selectedTerm?: string) {
     setLoading(true);
@@ -124,8 +318,11 @@ export default function FacultyDashboardPageClient() {
         qs.set("termName", selectedTerm || termName);
       }
 
-      const [dashboardRes, loadSheetRes] = await Promise.all([
+      const [dashboardRes, approvedRes, choiceRes] = await Promise.all([
         fetch(`/api/faculty/dashboard?${qs.toString()}`, {
+          cache: "no-store",
+        }),
+        fetch(`/api/faculty/my-approved-assignment?${qs.toString()}`, {
           cache: "no-store",
         }),
         fetch(`/api/faculty/my-load-sheet?${qs.toString()}`, {
@@ -134,23 +331,21 @@ export default function FacultyDashboardPageClient() {
       ]);
 
       const dashboardJson: DashboardResponse = await dashboardRes.json();
-      const loadSheetJson: LoadSheetResponse = await loadSheetRes.json();
+      const approvedJson: SheetResponse = await approvedRes.json();
+      const choiceJson: SheetResponse = await choiceRes.json();
 
       if (!dashboardRes.ok) {
         throw new Error(dashboardJson.error || "Failed to load faculty dashboard.");
       }
 
       setDashboard(dashboardJson);
-
-      if (loadSheetRes.ok) {
-        setLoadSheet(loadSheetJson);
-      } else {
-        setLoadSheet(null);
-      }
+      setApprovedSheet(approvedRes.ok ? approvedJson : null);
+      setChoiceSheet(choiceRes.ok ? choiceJson : null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load faculty dashboard.");
       setDashboard(null);
-      setLoadSheet(null);
+      setApprovedSheet(null);
+      setChoiceSheet(null);
     } finally {
       setLoading(false);
     }
@@ -172,6 +367,11 @@ export default function FacultyDashboardPageClient() {
     return () => clearInterval(timer);
   }, [termName]);
 
+  const hasApprovedAssignedRows =
+    Boolean(approvedSheet?.success) &&
+    Boolean(approvedSheet?.scheduleRows) &&
+    (approvedSheet?.scheduleRows?.length || 0) > 0;
+
   return (
     <main className="min-h-screen bg-slate-100 p-6">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -180,7 +380,7 @@ export default function FacultyDashboardPageClient() {
             <div>
               <h1 className="text-2xl font-bold text-slate-900">Faculty Dashboard</h1>
               <p className="mt-1 text-sm text-slate-600">
-                View active faculty-choice policy, your session state, your notifications, and your finalized load sheet.
+                View active policy, your notifications, your approved assigned schedule, and your finalized chosen list.
               </p>
             </div>
 
@@ -365,194 +565,23 @@ export default function FacultyDashboardPageClient() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900">Your Finalized Load Sheet</h2>
-                  <p className="text-sm text-slate-600">
-                    Finalized choices for the selected term, ready for review and print/export.
-                  </p>
-                </div>
+            {renderSheetCard(
+              "Approved Assigned Schedule",
+              "This is the authoritative schedule assigned by coordinator/admin.",
+              "Export Approved Schedule Excel",
+              `/api/faculty/my-approved-assignment/export?termName=${encodeURIComponent(termName)}`,
+              approvedSheet
+            )}
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!termName) return;
-                    window.location.href = `/api/faculty/my-load-sheet/export?termName=${encodeURIComponent(
-                      termName
-                    )}`;
-                  }}
-                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                  disabled={!termName}
-                >
-                  Export Load Sheet Excel
-                </button>
-              </div>
-
-              {loadSheet?.success && loadSheet.faculty ? (
-                <div className="mt-6 space-y-6">
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-sm text-slate-500">Faculty's Department</div>
-                      <div className="mt-1 font-semibold text-slate-900">
-                        {loadSheet.faculty.departmentCode} | {loadSheet.faculty.departmentName}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-sm text-slate-500">Semester for given choices</div>
-                      <div className="mt-1 font-semibold text-slate-900">
-                        {loadSheet.termName || "-"}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-sm text-slate-500">Date and time of submission</div>
-                      <div className="mt-1 font-semibold text-slate-900">
-                        {loadSheet.submittedAt
-                          ? new Date(loadSheet.submittedAt).toLocaleString()
-                          : "-"}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-sm text-slate-500">Faculty's Full Name</div>
-                      <div className="mt-1 font-semibold text-slate-900">
-                        {loadSheet.faculty.fullName}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-sm text-slate-500">Faculty's Designation</div>
-                      <div className="mt-1 font-semibold text-slate-900">
-                        {loadSheet.faculty.designation}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-sm text-slate-500">Faculty's Initial</div>
-                      <div className="mt-1 font-semibold text-slate-900">
-                        {loadSheet.faculty.initial}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-sm text-slate-500">Total theory credits taken</div>
-                      <div className="mt-1 font-semibold text-slate-900">
-                        {loadSheet.totals?.theoryCredits ?? 0}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-sm text-slate-500">Total lab credits taken</div>
-                      <div className="mt-1 font-semibold text-slate-900">
-                        {loadSheet.totals?.labCredits ?? 0}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-sm text-slate-500">Total credits</div>
-                      <div className="mt-1 font-semibold text-slate-900">
-                        {loadSheet.totals?.totalCredits ?? 0}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="text-base font-semibold text-slate-900">
-                      Total credits from which programs
-                    </h3>
-                    <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-slate-50">
-                          <tr>
-                            <th className="border-b px-3 py-3 text-left">Program</th>
-                            <th className="border-b px-3 py-3 text-left">Theory Credits</th>
-                            <th className="border-b px-3 py-3 text-left">Lab Credits</th>
-                            <th className="border-b px-3 py-3 text-left">Total Credits</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(loadSheet.programTallies || []).map((item) => (
-                            <tr key={item.programCode}>
-                              <td className="border-b px-3 py-2">{item.programCode}</td>
-                              <td className="border-b px-3 py-2">{item.theoryCredits}</td>
-                              <td className="border-b px-3 py-2">{item.labCredits}</td>
-                              <td className="border-b px-3 py-2">{item.totalCredits}</td>
-                            </tr>
-                          ))}
-
-                          {(loadSheet.programTallies || []).length === 0 ? (
-                            <tr>
-                              <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
-                                No finalized program tally found.
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="text-base font-semibold text-slate-900">
-                      Full schedule of the courses
-                    </h3>
-                    <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-slate-50">
-                          <tr>
-                            <th className="border-b px-3 py-3 text-left">Course Code</th>
-                            <th className="border-b px-3 py-3 text-left">Section</th>
-                            <th className="border-b px-3 py-3 text-left">Credit</th>
-                            <th className="border-b px-3 py-3 text-left">Day</th>
-                            <th className="border-b px-3 py-3 text-left">Time</th>
-                            <th className="border-b px-3 py-3 text-left">Room</th>
-                            <th className="border-b px-3 py-3 text-left">Category</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(loadSheet.scheduleRows || []).map((item, index) => (
-                            <tr key={`${item.courseCode}-${item.section}-${index}`}>
-                              <td className="border-b px-3 py-2">{item.courseCode}</td>
-                              <td className="border-b px-3 py-2">{item.section}</td>
-                              <td className="border-b px-3 py-2">{item.credit}</td>
-                              <td className="border-b px-3 py-2">{item.dayOfWeek}</td>
-                              <td className="border-b px-3 py-2">{item.timeText}</td>
-                              <td className="border-b px-3 py-2">{item.roomText}</td>
-                              <td className="border-b px-3 py-2">{item.category}</td>
-                            </tr>
-                          ))}
-
-                          {(loadSheet.scheduleRows || []).length === 0 ? (
-                            <tr>
-                              <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
-                                No finalized courses found for this term.
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  <div className="pt-8">
-                    <div className="w-80 border-t border-slate-400 pt-2 text-sm text-slate-700">
-                      {loadSheet.faculty.fullName}
-                    </div>
-                    <div className="text-sm text-slate-500">Faculty Signature</div>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-slate-500">
-                  No finalized chosen course list found for the selected term.
-                </div>
-              )}
-            </div>
+            {!hasApprovedAssignedRows
+              ? renderSheetCard(
+                  "Your Finalized Chosen Course List",
+                  "No approved assignment is available yet, so your finalized chosen list is shown as reference.",
+                  "Export Finalized Choice Excel",
+                  `/api/faculty/my-load-sheet/export?termName=${encodeURIComponent(termName)}`,
+                  choiceSheet
+                )
+              : null}
           </>
         ) : !loading ? (
           <div className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-slate-500">

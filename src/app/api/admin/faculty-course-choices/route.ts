@@ -2,6 +2,32 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 
+type ChoiceRow = {
+  selectionId: number;
+  offeredCourseId: number;
+  priorityOrder: number | null;
+  status: string;
+  selectedAt: string | null;
+  confirmedAt: string | null;
+  programCode: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  batchCodes: string[];
+};
+
+type AssignmentRow = {
+  assignmentId: number;
+  offeredCourseId: number;
+  programCode: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  batchCodes: string[];
+  assignedCredit: number;
+  loadType: string;
+};
+
 export async function GET(req: NextRequest) {
   const guard = await requireCoordinatorOrAdminApi();
   if (guard instanceof Response) return guard;
@@ -29,33 +55,62 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const selections = await prisma.faculty_course_selections.findMany({
-      where: {
-        academic_term_id: term.id,
-      },
-      include: {
-        teachers: true,
-        offered_courses: {
-          include: {
-            master_courses: {
-              include: {
-                program: true,
+    const [selections, assignments] = await Promise.all([
+      prisma.faculty_course_selections.findMany({
+        where: {
+          academic_term_id: term.id,
+        },
+        include: {
+          teachers: true,
+          offered_courses: {
+            include: {
+              master_courses: {
+                include: {
+                  program: true,
+                },
               },
-            },
-            offered_course_batches: {
-              include: {
-                batches: true,
+              offered_course_batches: {
+                include: {
+                  batches: true,
+                },
               },
             },
           },
         },
-      },
-      orderBy: [
-        { teacher_id: "asc" },
-        { priority_order: "asc" },
-        { id: "asc" },
-      ],
-    });
+        orderBy: [
+          { teacher_id: "asc" },
+          { priority_order: "asc" },
+          { id: "asc" },
+        ],
+      }),
+      prisma.offered_course_teachers.findMany({
+        where: {
+          offered_courses: {
+            offerings: {
+              academic_term_id: term.id,
+            },
+          },
+        },
+        include: {
+          teachers: true,
+          offered_courses: {
+            include: {
+              master_courses: {
+                include: {
+                  program: true,
+                },
+              },
+              offered_course_batches: {
+                include: {
+                  batches: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: [{ teacher_id: "asc" }, { id: "asc" }],
+      }),
+    ]);
 
     const map = new Map<
       number,
@@ -67,19 +122,10 @@ export async function GET(req: NextRequest) {
         totalChoices: number;
         finalizedCount: number;
         bufferCount: number;
-        choices: Array<{
-          selectionId: number;
-          offeredCourseId: number;
-          priorityOrder: number | null;
-          status: string;
-          selectedAt: string | null;
-          confirmedAt: string | null;
-          programCode: string;
-          courseCode: string;
-          courseTitle: string;
-          section: string;
-          batchCodes: string[];
-        }>;
+        approvedAssignedCount: number;
+        approvedAssignedCredits: number;
+        choices: ChoiceRow[];
+        assignments: AssignmentRow[];
       }
     >();
 
@@ -93,7 +139,10 @@ export async function GET(req: NextRequest) {
           totalChoices: 0,
           finalizedCount: 0,
           bufferCount: 0,
+          approvedAssignedCount: 0,
+          approvedAssignedCredits: 0,
           choices: [],
+          assignments: [],
         });
       }
 
@@ -120,10 +169,48 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    for (const row of assignments) {
+      if (!map.has(row.teacher_id)) {
+        map.set(row.teacher_id, {
+          teacherId: row.teacher_id,
+          teacherCode: row.teachers?.teacher_code || "-",
+          teacherName: row.teachers?.full_name || "-",
+          designation: row.teachers?.designation || null,
+          totalChoices: 0,
+          finalizedCount: 0,
+          bufferCount: 0,
+          approvedAssignedCount: 0,
+          approvedAssignedCredits: 0,
+          choices: [],
+          assignments: [],
+        });
+      }
+
+      const group = map.get(row.teacher_id)!;
+      group.approvedAssignedCount += 1;
+      group.approvedAssignedCredits += Number(row.assigned_credit || 0);
+
+      group.assignments.push({
+        assignmentId: row.id,
+        offeredCourseId: row.offered_course_id,
+        programCode: row.offered_courses.master_courses.program.short_name,
+        courseCode: row.offered_courses.master_courses.course_code,
+        courseTitle: row.offered_courses.master_courses.course_title,
+        section: row.offered_courses.section,
+        batchCodes: row.offered_courses.offered_course_batches.map(
+          (x) => x.batches.batch_code
+        ),
+        assignedCredit: Number(row.assigned_credit || 0),
+        loadType: row.load_type,
+      });
+    }
+
     return NextResponse.json({
       success: true,
       termName: term.name,
-      facultyChoices: Array.from(map.values()),
+      facultyChoices: Array.from(map.values()).sort((a, b) =>
+        a.teacherCode.localeCompare(b.teacherCode)
+      ),
     });
   } catch (error) {
     console.error(error);

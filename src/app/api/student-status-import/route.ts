@@ -4,6 +4,7 @@ import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import {
   compareTerms,
   extractPdfText,
+  extractPdfTextVariants,
   getCompletedCourseMap,
   getFailedOnlyCodes,
   getLatestTerm,
@@ -39,6 +40,49 @@ type CatalogProgramRow = {
 function numbersClose(a: number | null, b: number | null, tolerance = 0.01) {
   if (a === null || b === null) return false;
   return Math.abs(a - b) <= tolerance;
+}
+
+function chooseBetterTranscriptParse(
+  primaryText: string,
+  alternateText: string
+) {
+  const primaryCourses = parseTranscriptCourses(primaryText);
+  const alternateCourses = parseTranscriptCourses(alternateText);
+
+  const primaryCompleted = Array.from(getCompletedCourseMap(primaryCourses).values());
+  const alternateCompleted = Array.from(getCompletedCourseMap(alternateCourses).values());
+
+  const primaryEarned = parseTranscriptEarnedCredits(primaryText);
+  const alternateEarned = parseTranscriptEarnedCredits(alternateText);
+
+  const primaryCompletedCredits = sumCourseCredits(primaryCompleted);
+  const alternateCompletedCredits = sumCourseCredits(alternateCompleted);
+
+  const primaryScore =
+    (primaryCourses.length * 10) +
+    (primaryCompleted.length * 5) +
+    (primaryEarned !== null && numbersClose(primaryEarned, primaryCompletedCredits) ? 1000 : 0);
+
+  const alternateScore =
+    (alternateCourses.length * 10) +
+    (alternateCompleted.length * 5) +
+    (alternateEarned !== null && numbersClose(alternateEarned, alternateCompletedCredits) ? 1000 : 0);
+
+  if (alternateScore > primaryScore) {
+    return {
+      chosenText: alternateText,
+      transcriptCourses: alternateCourses,
+      transcriptEarnedCredits: alternateEarned,
+      chosenSource: "alternate",
+    };
+  }
+
+  return {
+    chosenText: primaryText,
+    transcriptCourses: primaryCourses,
+    transcriptEarnedCredits: primaryEarned,
+    chosenSource: "primary",
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -82,9 +126,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const transcriptText = transcriptFile
-      ? await extractPdfText(Buffer.from(await transcriptFile.arrayBuffer()))
-      : "";
+    let transcriptText = "";
+    let transcriptCourses = [];
+    let transcriptEarnedCredits: number | null = null;
+    let transcriptParserSource = "primary";
+
+    if (transcriptFile) {
+      const transcriptBuffer = Buffer.from(await transcriptFile.arrayBuffer());
+      const transcriptVariants = await extractPdfTextVariants(transcriptBuffer);
+
+      const transcriptChoice = chooseBetterTranscriptParse(
+        transcriptVariants.primary,
+        transcriptVariants.alternate
+      );
+
+      transcriptText = transcriptChoice.chosenText;
+      transcriptCourses = transcriptChoice.transcriptCourses;
+      transcriptEarnedCredits = transcriptChoice.transcriptEarnedCredits;
+      transcriptParserSource = transcriptChoice.chosenSource;
+    }
 
     const registrationText = registrationFile
       ? await extractPdfText(Buffer.from(await registrationFile.arrayBuffer()))
@@ -102,11 +162,7 @@ export async function POST(request: NextRequest) {
         })) as CatalogProgramRow | null)
       : null;
 
-    const transcriptCourses = transcriptText ? parseTranscriptCourses(transcriptText) : [];
     const registrationCourses = registrationText ? parseRegistrationCourses(registrationText) : [];
-    const transcriptEarnedCredits = transcriptText
-      ? parseTranscriptEarnedCredits(transcriptText)
-      : null;
 
     const completedMap = getCompletedCourseMap(transcriptCourses);
 
@@ -209,11 +265,11 @@ export async function POST(request: NextRequest) {
 
       const matchedCompleted =
         completedComparableCodes.has(comparableCode) ||
-        (comparableTitle && completedComparableTitles.has(comparableTitle));
+        (!comparableCode && comparableTitle && completedComparableTitles.has(comparableTitle));
 
       const matchedOngoing =
         ongoingComparableCodes.has(comparableCode) ||
-        (comparableTitle && ongoingComparableTitles.has(comparableTitle));
+        (!comparableCode && comparableTitle && ongoingComparableTitles.has(comparableTitle));
 
       return !matchedCompleted && !matchedOngoing;
     });
@@ -283,6 +339,7 @@ export async function POST(request: NextRequest) {
         transcriptEarnedCredits,
         parsedCompletedCredits,
         completedCreditMismatch,
+        parserSource: transcriptParserSource,
       },
       registrationSummary: {
         parsedCount: registrationCourses.length,

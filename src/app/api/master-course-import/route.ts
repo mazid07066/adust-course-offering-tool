@@ -3,9 +3,8 @@ import * as XLSX from "xlsx";
 import mammoth from "mammoth";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
-import { resolveCanonicalProgram } from "@/lib/canonical-program";
 
-const ROUTE_VERSION = "master-course-import-final-no-tx-v4";
+const ROUTE_VERSION = "master-course-import-rae-unique-safe-v2";
 
 type ParsedCourse = {
   course_code: string;
@@ -19,6 +18,7 @@ type ParsedCourse = {
 };
 
 type CatalogProgram = {
+  id: number;
   departmentCode: string;
   departmentName: string;
   programCode: string;
@@ -76,28 +76,24 @@ function isNumericCredit(value: string) {
   return /^\d+(\.\d+)?$/.test(normalizeText(value));
 }
 
-function extractGroupName(text: string) {
-  const value = normalizeText(text);
-  if (!value) return null;
-
-  if (/group\s*-\s*[a-z0-9]+/i.test(value)) return value;
-  if (/ged|general education|language/i.test(value)) return value;
-  if (/basic science|mathematics/i.test(value)) return value;
-  if (/other engineering/i.test(value)) return value;
-  if (/core courses?/i.test(value)) return value;
-  if (/elective courses?/i.test(value)) return value;
-  if (
-    /electronics|biomedical|communication|power division|computer engineering/i.test(
-      value
-    )
-  ) {
-    return value;
-  }
-
-  return null;
+function normalizeHeader(value: string) {
+  return normalizeText(value).toLowerCase();
 }
 
-function parseExcel(buffer: Buffer): ParsedCourse[] {
+function pickHeaderValue(row: Record<string, unknown>, candidates: string[]) {
+  const entries = Object.entries(row);
+
+  for (const [key, value] of entries) {
+    const normalizedKey = normalizeHeader(key);
+    if (candidates.includes(normalizedKey)) {
+      return normalizeText(String(value ?? ""));
+    }
+  }
+
+  return "";
+}
+
+function parseExcelStrict(buffer: Buffer): ParsedCourse[] {
   const workbook = XLSX.read(buffer, { type: "buffer" });
   const courses: ParsedCourse[] = [];
 
@@ -109,48 +105,57 @@ function parseExcel(buffer: Buffer): ParsedCourse[] {
     });
 
     for (const row of rows) {
-      const rowValues = Object.values(row)
-        .map((v) => normalizeText(String(v || "")))
-        .filter(Boolean);
+      const code =
+        pickHeaderValue(row, ["course code", "coursecode", "code"]) || "";
 
-      const joined = rowValues.join(" | ");
-      const foundGroup = extractGroupName(joined);
+      const title =
+        pickHeaderValue(row, [
+          "course title",
+          "coursetitle",
+          "title",
+          "course name",
+          "coursename",
+          "description",
+        ]) || "";
 
-      let code = "";
-      let title = "";
-      let credit = "";
+      const credit =
+        pickHeaderValue(row, [
+          "credit",
+          "credits",
+          "credit hour",
+          "credit hours",
+          "credithour",
+          "credithours",
+        ]) || "";
 
-      for (let i = 0; i < rowValues.length; i++) {
-        const current = rowValues[i];
-        const next = rowValues[i + 1] || "";
-        const next2 = rowValues[i + 2] || "";
+      const type =
+        pickHeaderValue(row, ["type", "course type", "coursetype"]) || "";
 
-        if (!code && isLikelyCourseCode(current)) {
-          code = current;
+      const levelTerm =
+        pickHeaderValue(row, [
+          "level / term",
+          "level/term",
+          "level term",
+          "level_term",
+          "semester",
+          "term",
+        ]) || "";
 
-          if (!title && next && !isNumericCredit(next) && !isLikelyCourseCode(next)) {
-            title = next;
-          }
-
-          if (!credit && isNumericCredit(next2)) {
-            credit = next2;
-          } else if (!credit && isNumericCredit(next)) {
-            credit = next;
-          }
-        }
-      }
+      const groupName =
+        pickHeaderValue(row, ["group", "group name", "group_name", "category"]) || "";
 
       if (!code || !title || !credit) continue;
-      if (/course code|course title|credit/i.test(joined)) continue;
+      if (!isLikelyCourseCode(code)) continue;
+      if (!isNumericCredit(credit)) continue;
 
       courses.push({
         course_code: toCompactCourseCode(code),
         course_title: normalizeText(title),
         normalized_title: normalizeTitle(title),
         credit: Number(credit),
-        course_type: detectCourseType("", title),
-        level_term: sheetName || null,
-        group_name: foundGroup,
+        course_type: detectCourseType(type, title),
+        level_term: levelTerm ? normalizeText(levelTerm) : null,
+        group_name: groupName ? normalizeText(groupName) : null,
         is_active: true,
       });
     }
@@ -162,7 +167,6 @@ function parseExcel(buffer: Buffer): ParsedCourse[] {
 function parseHtmlTables(html: string): ParsedCourse[] {
   const courses: ParsedCourse[] = [];
   const tableMatches = html.match(/<table[\s\S]*?<\/table>/gi) || [];
-  let currentGroup: string | null = null;
 
   for (const tableHtml of tableMatches) {
     const rowMatches = tableHtml.match(/<tr[\s\S]*?<\/tr>/gi) || [];
@@ -179,13 +183,7 @@ function parseHtmlTables(html: string): ParsedCourse[] {
       );
 
       if (!cellMatches.length) continue;
-
-      const rowText = cellMatches.join(" | ");
-      const foundGroup = extractGroupName(rowText);
-      if (foundGroup) currentGroup = foundGroup;
-
-      if (cellMatches.some((c) => /course code/i.test(c))) continue;
-      if (cellMatches.every((c) => !c)) continue;
+      if (cellMatches.some((c) => /course code|course title|credit/i.test(c))) continue;
 
       let code = "";
       let title = "";
@@ -220,7 +218,7 @@ function parseHtmlTables(html: string): ParsedCourse[] {
         credit: Number(credit),
         course_type: detectCourseType("", title),
         level_term: null,
-        group_name: currentGroup,
+        group_name: null,
         is_active: true,
       });
     }
@@ -236,13 +234,9 @@ function parseDocxRawText(text: string): ParsedCourse[] {
     .filter(Boolean);
 
   const courses: ParsedCourse[] = [];
-  let currentGroup: string | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-
-    const foundGroup = extractGroupName(line);
-    if (foundGroup) currentGroup = foundGroup;
 
     if (!isLikelyCourseCode(line)) continue;
 
@@ -260,7 +254,7 @@ function parseDocxRawText(text: string): ParsedCourse[] {
       credit: Number(next2),
       course_type: detectCourseType("", next1),
       level_term: null,
-      group_name: currentGroup,
+      group_name: null,
       is_active: true,
     });
   }
@@ -269,159 +263,228 @@ function parseDocxRawText(text: string): ParsedCourse[] {
 }
 
 async function parseDocx(buffer: Buffer): Promise<ParsedCourse[]> {
-  const htmlResult = await mammoth.convertToHtml({ buffer });
-  const htmlCourses = parseHtmlTables(htmlResult.value || "");
-  if (htmlCourses.length > 0) return htmlCourses;
+  const result = await mammoth.extractRawText({ buffer });
+  const rawTextCourses = parseDocxRawText(result.value || "");
 
-  const rawResult = await mammoth.extractRawText({ buffer });
-  return parseDocxRawText(rawResult.value || "");
+  if (rawTextCourses.length > 0) {
+    return rawTextCourses;
+  }
+
+  const htmlResult = await mammoth.convertToHtml({ buffer });
+  return parseHtmlTables(htmlResult.value || "");
 }
 
-async function getCatalogProgramByCode(programCode: string): Promise<CatalogProgram | null> {
-  const row = await prisma.academic_catalog_entries.findFirst({
+function dedupeCourses(courses: ParsedCourse[]) {
+  const map = new Map<string, ParsedCourse>();
+
+  for (const course of courses) {
+    const key = toCompactCourseCode(course.course_code);
+    if (!key) continue;
+
+    map.set(key, {
+      ...course,
+      course_code: key,
+      course_title: normalizeText(course.course_title),
+      normalized_title: normalizeTitle(course.course_title),
+      level_term: course.level_term ? normalizeText(course.level_term) : null,
+      group_name: course.group_name ? normalizeText(course.group_name) : null,
+      course_type: detectCourseType(course.course_type, course.course_title),
+      is_active: true,
+    });
+  }
+
+  return Array.from(map.values()).sort((a, b) =>
+    a.course_code.localeCompare(b.course_code)
+  );
+}
+
+async function getCatalogProgram(programCode: string): Promise<CatalogProgram | null> {
+  const entry = await prisma.academic_catalog_entries.findUnique({
     where: {
       program_code: programCode,
-      is_active: true,
     },
   });
 
-  if (!row) return null;
+  if (!entry) return null;
 
   return {
-    departmentCode: row.department_code,
-    departmentName: row.department_name,
-    programCode: row.program_code,
-    programTitle: row.program_title,
-    programType: row.program_type,
-    studyShift: row.study_shift,
-    curriculumVersion: row.curriculum_version,
-    curriculumKey: row.curriculum_key,
-    studentIdSuffix: row.student_id_suffix,
-    displayLabel: row.display_label,
+    id: entry.id,
+    departmentCode: entry.department_code,
+    departmentName: entry.department_name,
+    programCode: entry.program_code,
+    programTitle: entry.program_title,
+    programType: entry.program_type,
+    studyShift: entry.study_shift,
+    curriculumVersion: entry.curriculum_version,
+    curriculumKey: entry.curriculum_key,
+    studentIdSuffix: entry.student_id_suffix,
+    displayLabel: entry.display_label,
   };
 }
 
-export async function GET() {
-  await requireCoordinatorOrAdminApi();
-
-  return NextResponse.json({
-    ok: true,
-    routeVersion: ROUTE_VERSION,
-    message: "master-course-import route is active",
+async function resolveDepartmentId(departmentCode: string, departmentName: string) {
+  const byShortName = await prisma.departments.findFirst({
+    where: {
+      short_name: departmentCode,
+    },
   });
+
+  if (byShortName) return byShortName.id;
+
+  const byName = await prisma.departments.findFirst({
+    where: {
+      name: departmentName,
+    },
+  });
+
+  if (byName) return byName.id;
+
+  const created = await prisma.departments.create({
+    data: {
+      short_name: departmentCode,
+      name: departmentName,
+    },
+  });
+
+  return created.id;
+}
+
+async function resolveProgramRowForExactAcademicIdentity(catalogProgram: CatalogProgram) {
+  const departmentId = await resolveDepartmentId(
+    catalogProgram.departmentCode,
+    catalogProgram.departmentName
+  );
+
+  const byShortName = await prisma.programs.findFirst({
+    where: {
+      short_name: catalogProgram.programCode,
+    },
+  });
+
+  if (byShortName) {
+    return byShortName;
+  }
+
+  const uniqueProgramName = catalogProgram.displayLabel;
+
+  const byDepartmentAndName = await prisma.programs.findFirst({
+    where: {
+      department_id: departmentId,
+      name: uniqueProgramName,
+    },
+  });
+
+  if (byDepartmentAndName) {
+    const updated = await prisma.programs.update({
+      where: { id: byDepartmentAndName.id },
+      data: {
+        short_name: catalogProgram.programCode,
+      },
+    });
+    return updated;
+  }
+
+  const created = await prisma.programs.create({
+    data: {
+      department_id: departmentId,
+      name: uniqueProgramName,
+      short_name: catalogProgram.programCode,
+    },
+  });
+
+  return created;
 }
 
 export async function POST(request: NextRequest) {
-  await requireCoordinatorOrAdminApi();
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
 
   try {
     const formData = await request.formData();
 
-    const programCode = String(formData.get("programCode") || "").trim().toUpperCase();
-    const replaceExisting = String(formData.get("replaceExisting") || "false") === "true";
+    const programCode = normalizeText(String(formData.get("programCode") || "")).toUpperCase();
+    const replaceExisting =
+      String(formData.get("replaceExisting") || "").toLowerCase() === "true";
+
     const file = formData.get("file") as File | null;
 
-    if (!programCode || !file) {
+    if (!programCode) {
       return NextResponse.json(
-        { error: "programCode and file are required.", routeVersion: ROUTE_VERSION },
+        { error: "programCode is required." },
         { status: 400 }
       );
     }
 
-    const catalogProgram = await getCatalogProgramByCode(programCode);
+    if (!file) {
+      return NextResponse.json(
+        { error: "Course list file is required." },
+        { status: 400 }
+      );
+    }
+
+    const catalogProgram = await getCatalogProgram(programCode);
+
     if (!catalogProgram) {
       return NextResponse.json(
-        {
-          error: "Selected program/curriculum is not defined in academic setup.",
-          routeVersion: ROUTE_VERSION,
-        },
-        { status: 400 }
+        { error: "Academic identity not found in Academic Setup." },
+        { status: 404 }
       );
     }
 
-    const effectiveCurriculumKey =
-      (catalogProgram.curriculumKey || "").trim().toUpperCase() || catalogProgram.programCode;
+    const exactProgramRow = await resolveProgramRowForExactAcademicIdentity(catalogProgram);
 
-    const program = await resolveCanonicalProgram({
-      department_code: catalogProgram.departmentCode,
-      department_name: catalogProgram.departmentName,
-      program_code: catalogProgram.programCode,
-      program_title: catalogProgram.programTitle,
-      study_shift: catalogProgram.studyShift,
-    });
+    const effectiveCurriculumKey =
+      catalogProgram.curriculumKey || catalogProgram.programCode;
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const lowerName = file.name.toLowerCase();
 
-    let courses: ParsedCourse[] = [];
+    let parsedCourses: ParsedCourse[] = [];
 
     if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) {
-      courses = parseExcel(buffer);
-    } else if (
-      lowerName.endsWith(".docx") ||
-      lowerName.endsWith(".doc") ||
-      lowerName.endsWith(".docm")
-    ) {
-      courses = await parseDocx(buffer);
+      parsedCourses = parseExcelStrict(buffer);
+    } else if (lowerName.endsWith(".docx")) {
+      parsedCourses = await parseDocx(buffer);
     } else {
       return NextResponse.json(
-        {
-          error: "Unsupported file type. Please upload Excel or DOCX.",
-          routeVersion: ROUTE_VERSION,
-        },
+        { error: "Unsupported file type. Use .xlsx, .xls, or .docx" },
         { status: 400 }
       );
     }
 
-    const dedupedMap = new Map<string, ParsedCourse>();
+    const dedupedCourses = dedupeCourses(parsedCourses);
 
-    for (const c of courses) {
-      const key = toCompactCourseCode(c.course_code);
-      if (!key) continue;
-
-      if (!dedupedMap.has(key)) {
-        dedupedMap.set(key, {
-          ...c,
-          course_code: key,
-        });
-      }
-    }
-
-    const dedupedCourses = Array.from(dedupedMap.values());
-
-    if (!dedupedCourses.length) {
+    if (dedupedCourses.length === 0) {
       return NextResponse.json(
         {
-          error: "No course rows could be parsed from the uploaded file.",
-          routeVersion: ROUTE_VERSION,
+          error:
+            "No valid courses could be parsed. Make sure the file has explicit columns like Course Code, Course Title, and Credit/Credits.",
         },
         { status: 400 }
       );
     }
 
-    const existingRows = await prisma.master_courses.findMany({
+    const existingRowsForCurriculum = await prisma.master_courses.findMany({
       where: {
-        OR: [
-          { curriculum_key: effectiveCurriculumKey },
-          { program_id: program.id },
-        ],
+        curriculum_key: effectiveCurriculumKey,
       },
-      select: {
-        id: true,
-        course_code: true,
-      },
-      orderBy: [{ id: "asc" }],
+      orderBy: [{ course_code: "asc" }],
     });
 
-    const existingByCode = new Map<string, { id: number }>();
+    const existingRowsForProgram = await prisma.master_courses.findMany({
+      where: {
+        program_id: exactProgramRow.id,
+      },
+      orderBy: [{ course_code: "asc" }],
+    });
 
-    for (const row of existingRows) {
-      const compactCode = toCompactCourseCode(row.course_code);
-      if (!compactCode) continue;
-      if (!existingByCode.has(compactCode)) {
-        existingByCode.set(compactCode, { id: row.id });
-      }
-    }
+    const existingByCurriculumCode = new Map(
+      existingRowsForCurriculum.map((row) => [toCompactCourseCode(row.course_code), row])
+    );
+
+    const existingByProgramCode = new Map(
+      existingRowsForProgram.map((row) => [toCompactCourseCode(row.course_code), row])
+    );
 
     let insertedCount = 0;
     let updatedCount = 0;
@@ -430,13 +493,17 @@ export async function POST(request: NextRequest) {
       const compactCode = toCompactCourseCode(c.course_code);
       if (!compactCode) continue;
 
-      const existing = existingByCode.get(compactCode);
+      const existingForCurriculum = existingByCurriculumCode.get(compactCode);
+      const existingForProgram = existingByProgramCode.get(compactCode);
+      const existing = existingForCurriculum || existingForProgram || null;
 
       if (existing) {
         await prisma.master_courses.update({
-          where: { id: existing.id },
+          where: {
+            id: existing.id,
+          },
           data: {
-            program_id: program.id,
+            program_id: exactProgramRow.id,
             curriculum_key: effectiveCurriculumKey,
             course_code: compactCode,
             course_title: c.course_title,
@@ -452,7 +519,7 @@ export async function POST(request: NextRequest) {
       } else {
         await prisma.master_courses.create({
           data: {
-            program_id: program.id,
+            program_id: exactProgramRow.id,
             curriculum_key: effectiveCurriculumKey,
             course_code: compactCode,
             course_title: c.course_title,
@@ -476,7 +543,7 @@ export async function POST(request: NextRequest) {
         dedupedCourses.map((c) => toCompactCourseCode(c.course_code))
       );
 
-      const staleRows = existingRows.filter((row) => {
+      const staleRows = existingRowsForCurriculum.filter((row) => {
         const compactCode = toCompactCourseCode(row.course_code);
         return compactCode && !incomingCodes.has(compactCode);
       });
@@ -512,6 +579,7 @@ export async function POST(request: NextRequest) {
               is_active: false,
             },
           });
+
           deactivatedReferencedCount = updated.count;
         }
 
@@ -521,6 +589,7 @@ export async function POST(request: NextRequest) {
               id: { in: unreferencedStaleIds },
             },
           });
+
           deletedUnreferencedCount = deleted.count;
         }
       }
@@ -537,17 +606,14 @@ export async function POST(request: NextRequest) {
       parsedCount: dedupedCourses.length,
       programCode: catalogProgram.programCode,
       curriculumKey: effectiveCurriculumKey,
-      departmentCode: catalogProgram.departmentCode,
-      departmentName: catalogProgram.departmentName,
-      programName: catalogProgram.programTitle,
+      exactProgramRowId: exactProgramRow.id,
+      exactProgramShortName: exactProgramRow.short_name,
     });
   } catch (error) {
-    console.error("MASTER COURSE IMPORT ERROR", error);
-
+    console.error(error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Master course import failed.",
-        routeVersion: ROUTE_VERSION,
       },
       { status: 500 }
     );
