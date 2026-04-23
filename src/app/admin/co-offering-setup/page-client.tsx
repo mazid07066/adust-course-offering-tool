@@ -110,9 +110,11 @@ export default function CoOfferingSetupPageClient() {
   }, [programs]);
 
   const selectedPrimarySection = useMemo(() => {
-    return primarySections.find(
-      (item) => String(item.id) === String(primaryOfferedCourseId)
-    ) || null;
+    return (
+      primarySections.find(
+        (item) => String(item.id) === String(primaryOfferedCourseId)
+      ) || null
+    );
   }, [primarySections, primaryOfferedCourseId]);
 
   async function loadOptions(e?: React.FormEvent) {
@@ -378,11 +380,21 @@ export default function CoOfferingSetupPageClient() {
                 setSecondarySections([]);
                 setExistingLinks([]);
               }}
-              className="w-full rounded-xl border px-4 py-3"
+              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900"
+              style={{ color: "#0f172a", backgroundColor: "#ffffff" }}
             >
-              <option value="">Select secondary academic identity</option>
+              <option
+                value=""
+                style={{ color: "#0f172a", backgroundColor: "#ffffff" }}
+              >
+                Select secondary academic identity
+              </option>
               {secondaryProgramOptions.map((item) => (
-                <option key={item.key} value={item.value}>
+                <option
+                  key={item.key}
+                  value={item.value}
+                  style={{ color: "#0f172a", backgroundColor: "#ffffff" }}
+                >
                   {item.label}
                 </option>
               ))}
@@ -426,12 +438,23 @@ export default function CoOfferingSetupPageClient() {
                 <select
                   value={primaryOfferedCourseId}
                   onChange={(e) => setPrimaryOfferedCourseId(e.target.value)}
-                  className="w-full rounded-xl border px-4 py-3"
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900"
+                  style={{ color: "#0f172a", backgroundColor: "#ffffff" }}
                 >
-                  <option value="">Select primary section</option>
+                  <option
+                    value=""
+                    style={{ color: "#0f172a", backgroundColor: "#ffffff" }}
+                  >
+                    Select primary section
+                  </option>
                   {primarySections.map((item) => (
-                    <option key={`primary-${item.id}`} value={item.id}>
-                      {item.label}
+                    <option
+                      key={item.id}
+                      value={String(item.id)}
+                      style={{ color: "#0f172a", backgroundColor: "#ffffff" }}
+                    >
+                      {item.label ||
+                        `${item.courseCode} — ${item.courseTitle} | Sec-${item.section}`}
                     </option>
                   ))}
                 </select>
@@ -444,12 +467,23 @@ export default function CoOfferingSetupPageClient() {
                 <select
                   value={secondaryOfferedCourseId}
                   onChange={(e) => setSecondaryOfferedCourseId(e.target.value)}
-                  className="w-full rounded-xl border px-4 py-3"
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900"
+                  style={{ color: "#0f172a", backgroundColor: "#ffffff" }}
                 >
-                  <option value="">Select secondary section</option>
+                  <option
+                    value=""
+                    style={{ color: "#0f172a", backgroundColor: "#ffffff" }}
+                  >
+                    Select secondary section
+                  </option>
                   {secondarySections.map((item) => (
-                    <option key={`secondary-${item.id}`} value={item.id}>
-                      {item.recommended ? `★ ${item.label}` : item.label}
+                    <option
+                      key={item.id}
+                      value={String(item.id)}
+                      style={{ color: "#0f172a", backgroundColor: "#ffffff" }}
+                    >
+                      {item.label ||
+                        `${item.courseCode} — ${item.courseTitle} | Sec-${item.section}`}
                     </option>
                   ))}
                 </select>
@@ -484,12 +518,23 @@ export default function CoOfferingSetupPageClient() {
                 <select
                   value={primaryOfferedCourseId}
                   onChange={(e) => setPrimaryOfferedCourseId(e.target.value)}
-                  className="w-full rounded-xl border px-4 py-3"
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900"
+                  style={{ color: "#0f172a", backgroundColor: "#ffffff" }}
                 >
-                  <option value="">Select primary section</option>
+                  <option
+                    value=""
+                    style={{ color: "#0f172a", backgroundColor: "#ffffff" }}
+                  >
+                    Select primary section
+                  </option>
                   {primarySections.map((item) => (
-                    <option key={`manual-primary-${item.id}`} value={item.id}>
-                      {item.label}
+                    <option
+                      key={`manual-${item.id}`}
+                      value={String(item.id)}
+                      style={{ color: "#0f172a", backgroundColor: "#ffffff" }}
+                    >
+                      {item.label ||
+                        `${item.courseCode} — ${item.courseTitle} | Sec-${item.section}`}
                     </option>
                   ))}
                 </select>

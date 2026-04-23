@@ -10,10 +10,79 @@ function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
 }
 
-export async function GET(req: NextRequest) {
-  try {
-    await requireCoordinatorOrAdminApi();
+async function resolveProgramIdsFromAcademicIdentity(programCode: string) {
+  const directPrograms = await prisma.programs.findMany({
+    where: {
+      short_name: programCode,
+    },
+    select: {
+      id: true,
+    },
+  });
 
+  const directIds = directPrograms.map((x) => x.id);
+
+  const catalog = await prisma.academic_catalog_entries.findFirst({
+    where: {
+      program_code: programCode,
+    },
+    select: {
+      curriculum_key: true,
+    },
+  });
+
+  if (!catalog?.curriculum_key) {
+    return uniqueStrings(directIds.map(String)).map(Number);
+  }
+
+  const curriculumPrograms = await prisma.master_courses.findMany({
+    where: {
+      curriculum_key: catalog.curriculum_key,
+    },
+    select: {
+      program_id: true,
+    },
+    distinct: ["program_id"],
+  });
+
+  const mergedIds = [
+    ...directIds,
+    ...curriculumPrograms.map((x) => x.program_id),
+  ];
+
+  return uniqueStrings(mergedIds.map(String)).map(Number);
+}
+
+function mapDraftSection(item: any) {
+  return {
+    id: item.id,
+    offeringId: item.offering_id,
+    section: item.section,
+    programCode: item.master_courses?.program?.short_name || "-",
+    programName: item.master_courses?.program?.name || "-",
+    courseCode: item.master_courses?.course_code || "-",
+    courseTitle: item.master_courses?.course_title || "-",
+    credit: Number(item.master_courses?.credit || 0),
+    batchCodes: uniqueStrings(
+      (item.offered_course_batches || []).map((x: any) => x.batches?.batch_code || "")
+    ),
+    slotCount: (item.offered_course_slots || []).length,
+    teacherCount: (item.offered_course_teachers || []).length,
+    manualCoofferedCodes: (item.offered_course_manual_cooffers || []).map((x: any) => ({
+      id: x.id,
+      coofferedCourseCode: x.cooffered_course_code,
+      note: x.note || "",
+    })),
+    isSecondary: item.primary_offered_course_id != null,
+    primaryOfferedCourseId: item.primary_offered_course_id ?? null,
+  };
+}
+
+export async function GET(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
     const { searchParams } = new URL(req.url);
     const termName = normalizeText(searchParams.get("termName"));
     const primaryProgramCode = normalizeText(searchParams.get("primaryProgramCode"));
@@ -29,218 +98,198 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const primaryPrograms = await prisma.programs.findMany({
-      where: { short_name: primaryProgramCode },
-      select: { id: true },
-    });
+    const [primaryProgramIds, secondaryProgramIds] = await Promise.all([
+      resolveProgramIdsFromAcademicIdentity(primaryProgramCode),
+      resolveProgramIdsFromAcademicIdentity(secondaryProgramCode),
+    ]);
 
-    const secondaryPrograms = await prisma.programs.findMany({
-      where: { short_name: secondaryProgramCode },
-      select: { id: true },
-    });
-
-    const primaryProgramIds = new Set(primaryPrograms.map((x) => x.id));
-    const secondaryProgramIds = new Set(secondaryPrograms.map((x) => x.id));
-
-    if (primaryProgramIds.size === 0) {
+    if (primaryProgramIds.length === 0) {
       return NextResponse.json(
         { ok: false, error: "Primary academic identity not found." },
         { status: 404 }
       );
     }
 
-    if (secondaryProgramIds.size === 0) {
+    if (secondaryProgramIds.length === 0) {
       return NextResponse.json(
         { ok: false, error: "Secondary academic identity not found." },
         { status: 404 }
       );
     }
 
-    const primarySectionsRaw = await prisma.offered_courses.findMany({
-      where: {
-        primary_offered_course_id: null,
-        offerings: {
-          status: "DRAFT",
-          academic_terms: {
-            name: termName,
-          },
-        },
-        master_courses: {
-          program_id: {
-            in: [...primaryProgramIds],
-          },
-        },
-      },
-      orderBy: [{ section: "asc" }, { id: "asc" }],
-      include: {
-        master_courses: {
-          include: {
-            program: true,
-          },
-        },
-        offered_course_batches: {
-          include: {
-            batches: true,
-          },
-        },
-        offered_course_slots: {
-          select: { id: true },
-        },
-        offered_course_teachers: {
-          select: { id: true },
-        },
-        offered_course_manual_cooffers: {
-          orderBy: [{ id: "asc" }],
-        },
-      },
-    });
-
-    const secondarySectionsRaw = await prisma.offered_courses.findMany({
-      where: {
-        primary_offered_course_id: null,
-        offerings: {
-          status: "DRAFT",
-          academic_terms: {
-            name: termName,
-          },
-        },
-        master_courses: {
-          program_id: {
-            in: [...secondaryProgramIds],
-          },
-        },
-      },
-      orderBy: [{ section: "asc" }, { id: "asc" }],
-      include: {
-        master_courses: {
-          include: {
-            program: true,
-          },
-        },
-        offered_course_batches: {
-          include: {
-            batches: true,
-          },
-        },
-      },
-    });
-
-    const linkedSections = await prisma.offered_courses.findMany({
-      where: {
-        primary_offered_course_id: {
-          not: null,
-        },
-        offerings: {
-          status: "DRAFT",
-          academic_terms: {
-            name: termName,
-          },
-        },
-      },
-      orderBy: [{ id: "asc" }],
-      include: {
-        master_courses: {
-          include: {
-            program: true,
-          },
-        },
-        offered_course_batches: {
-          include: {
-            batches: true,
-          },
-        },
-        primary_offered_course: {
-          include: {
-            master_courses: {
-              include: {
-                program: true,
-              },
+    const [primarySectionsRaw, secondarySectionsRaw, linkedRowsRaw] = await Promise.all([
+      prisma.offered_courses.findMany({
+        where: {
+          primary_offered_course_id: null,
+          offerings: {
+            status: "DRAFT",
+            academic_terms: {
+              name: termName,
             },
-            offered_course_batches: {
-              include: {
-                batches: true,
-              },
+          },
+          master_courses: {
+            program_id: {
+              in: primaryProgramIds,
             },
           },
         },
-      },
-    });
+        orderBy: [{ section: "asc" }, { id: "asc" }],
+        include: {
+          master_courses: {
+            include: {
+              program: true,
+            },
+          },
+          offered_course_batches: {
+            include: {
+              batches: true,
+            },
+          },
+          offered_course_slots: {
+            select: { id: true },
+          },
+          offered_course_teachers: {
+            select: { id: true },
+          },
+          offered_course_manual_cooffers: {
+            orderBy: [{ id: "asc" }],
+          },
+        },
+      }),
 
-    const primarySections = primarySectionsRaw.map((row) => {
-      const batchCodes = uniqueStrings(
-        row.offered_course_batches.map((x) => x.batches.batch_code)
-      );
+      prisma.offered_courses.findMany({
+        where: {
+          offerings: {
+            status: "DRAFT",
+            academic_terms: {
+              name: termName,
+            },
+          },
+          master_courses: {
+            program_id: {
+              in: secondaryProgramIds,
+            },
+          },
+        },
+        orderBy: [{ section: "asc" }, { id: "asc" }],
+        include: {
+          master_courses: {
+            include: {
+              program: true,
+            },
+          },
+          offered_course_batches: {
+            include: {
+              batches: true,
+            },
+          },
+          offered_course_slots: {
+            select: { id: true },
+          },
+          offered_course_teachers: {
+            select: { id: true },
+          },
+          offered_course_manual_cooffers: {
+            orderBy: [{ id: "asc" }],
+          },
+        },
+      }),
 
-      return {
-        id: row.id,
-        label: `${row.master_courses.course_code} | Sec-${row.section} | ${row.master_courses.program.short_name}`,
-        courseCode: row.master_courses.course_code,
-        courseTitle: row.master_courses.course_title,
-        section: row.section,
-        programCode: row.master_courses.program.short_name,
-        batchCodes,
-        hasOwnSlots: row.offered_course_slots.length > 0,
-        hasOwnTeachers: row.offered_course_teachers.length > 0,
-        manualCooffers: row.offered_course_manual_cooffers.map((item) => ({
-          id: item.id,
-          target_program_code: item.target_program_code,
-          manual_course_code: item.manual_course_code,
-          note: item.note,
-        })),
-      };
-    });
+      prisma.offered_courses.findMany({
+        where: {
+          primary_offered_course_id: {
+            not: null,
+          },
+          offerings: {
+            status: "DRAFT",
+            academic_terms: {
+              name: termName,
+            },
+          },
+          OR: [
+            {
+              master_courses: {
+                program_id: {
+                  in: secondaryProgramIds,
+                },
+              },
+            },
+            {
+              primary_offered_course: {
+                master_courses: {
+                  program_id: {
+                    in: primaryProgramIds,
+                  },
+                },
+              },
+            },
+          ],
+        },
+        orderBy: [{ id: "asc" }],
+        include: {
+          master_courses: {
+            include: {
+              program: true,
+            },
+          },
+          offered_course_batches: {
+            include: {
+              batches: true,
+            },
+          },
+          primary_offered_course: {
+            include: {
+              master_courses: {
+                include: {
+                  program: true,
+                },
+              },
+              offered_course_batches: {
+                include: {
+                  batches: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+    ]);
 
-    const primarySectionBySection = new Set(primarySections.map((x) => x.section));
+    const primarySections = primarySectionsRaw.map(mapDraftSection);
 
-    const secondarySections = secondarySectionsRaw.map((row) => {
-      const batchCodes = uniqueStrings(
-        row.offered_course_batches.map((x) => x.batches.batch_code)
-      );
+    const secondarySections = secondarySectionsRaw.map(mapDraftSection);
 
-      return {
-        id: row.id,
-        label: `${row.master_courses.course_code} | Sec-${row.section} | ${row.master_courses.program.short_name}`,
-        courseCode: row.master_courses.course_code,
-        courseTitle: row.master_courses.course_title,
-        section: row.section,
-        programCode: row.master_courses.program.short_name,
-        batchCodes,
-        recommended: primarySectionBySection.has(row.section),
-      };
-    });
-
-    const existingLinks = linkedSections
-      .filter((secondary) => {
-        const primary = secondary.primary_offered_course;
-        if (!primary) return false;
-
-        const primaryProgramMatch = primaryProgramIds.has(primary.master_courses.program_id);
-        const secondaryProgramMatch = secondaryProgramIds.has(secondary.master_courses.program_id);
-
-        return primaryProgramMatch && secondaryProgramMatch;
-      })
-      .map((secondary) => ({
-        primaryOfferedCourseId: secondary.primary_offered_course!.id,
-        primaryLabel: `${secondary.primary_offered_course!.master_courses.course_code} | Sec-${secondary.primary_offered_course!.section} | ${secondary.primary_offered_course!.master_courses.program.short_name}`,
-        secondaryOfferedCourseId: secondary.id,
-        secondaryLabel: `${secondary.master_courses.course_code} | Sec-${secondary.section} | ${secondary.master_courses.program.short_name}`,
-        primaryBatchCodes: secondary.primary_offered_course!.offered_course_batches.map(
-          (x) => x.batches.batch_code
-        ),
-        secondaryBatchCodes: secondary.offered_course_batches.map(
-          (x) => x.batches.batch_code
-        ),
-      }));
+    const linkedCoofferingSections = linkedRowsRaw.map((row) => ({
+      secondaryId: row.id,
+      secondaryProgramCode: row.master_courses?.program?.short_name || "-",
+      secondaryProgramName: row.master_courses?.program?.name || "-",
+      secondaryCourseCode: row.master_courses?.course_code || "-",
+      secondaryCourseTitle: row.master_courses?.course_title || "-",
+      secondarySection: row.section,
+      secondaryBatchCodes: uniqueStrings(
+        (row.offered_course_batches || []).map((x: any) => x.batches?.batch_code || "")
+      ),
+      primaryId: row.primary_offered_course?.id || null,
+      primaryProgramCode:
+        row.primary_offered_course?.master_courses?.program?.short_name || "-",
+      primaryProgramName:
+        row.primary_offered_course?.master_courses?.program?.name || "-",
+      primaryCourseCode: row.primary_offered_course?.master_courses?.course_code || "-",
+      primaryCourseTitle:
+        row.primary_offered_course?.master_courses?.course_title || "-",
+      primarySection: row.primary_offered_course?.section || "-",
+      primaryBatchCodes: uniqueStrings(
+        (row.primary_offered_course?.offered_course_batches || []).map(
+          (x: any) => x.batches?.batch_code || ""
+        )
+      ),
+    }));
 
     return NextResponse.json({
       ok: true,
-      termName,
       primarySections,
-      secondarySections: [
-        ...secondarySections.filter((x) => x.recommended),
-        ...secondarySections.filter((x) => !x.recommended),
-      ],
-      existingLinks,
+      secondarySections,
+      linkedCoofferingSections,
     });
   } catch (error) {
     const message =

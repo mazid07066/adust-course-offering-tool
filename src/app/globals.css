@@ -71,3 +71,27 @@ button {
 ::placeholder {
   color: #94a3b8;
 }
+
+select,
+option,
+optgroup {
+  color: #0f172a !important;
+  background-color: #ffffff !important;
+}
+
+select {
+  -webkit-text-fill-color: #0f172a !important;
+  appearance: auto;
+}
+
+select:disabled {
+  color: #64748b !important;
+  background-color: #f8fafc !important;
+  -webkit-text-fill-color: #64748b !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8 !important;
+  opacity: 1;
+}

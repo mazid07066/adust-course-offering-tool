@@ -37,15 +37,22 @@ type CatalogProgramRow = {
   is_active: boolean;
 };
 
+type ParsedTranscriptCourse = {
+  code: string;
+  comparableCode: string;
+  comparableTitle: string;
+  title: string;
+  credits: number;
+  grade: string;
+  semester: string;
+};
+
 function numbersClose(a: number | null, b: number | null, tolerance = 0.01) {
   if (a === null || b === null) return false;
   return Math.abs(a - b) <= tolerance;
 }
 
-function chooseBetterTranscriptParse(
-  primaryText: string,
-  alternateText: string
-) {
+function chooseBetterTranscriptParse(primaryText: string, alternateText: string) {
   const primaryCourses = parseTranscriptCourses(primaryText);
   const alternateCourses = parseTranscriptCourses(alternateText);
 
@@ -59,14 +66,18 @@ function chooseBetterTranscriptParse(
   const alternateCompletedCredits = sumCourseCredits(alternateCompleted);
 
   const primaryScore =
-    (primaryCourses.length * 10) +
-    (primaryCompleted.length * 5) +
-    (primaryEarned !== null && numbersClose(primaryEarned, primaryCompletedCredits) ? 1000 : 0);
+    primaryCourses.length * 10 +
+    primaryCompleted.length * 5 +
+    (primaryEarned !== null && numbersClose(primaryEarned, primaryCompletedCredits)
+      ? 1000
+      : 0);
 
   const alternateScore =
-    (alternateCourses.length * 10) +
-    (alternateCompleted.length * 5) +
-    (alternateEarned !== null && numbersClose(alternateEarned, alternateCompletedCredits) ? 1000 : 0);
+    alternateCourses.length * 10 +
+    alternateCompleted.length * 5 +
+    (alternateEarned !== null && numbersClose(alternateEarned, alternateCompletedCredits)
+      ? 1000
+      : 0);
 
   if (alternateScore > primaryScore) {
     return {
@@ -86,7 +97,8 @@ function chooseBetterTranscriptParse(
 }
 
 export async function POST(request: NextRequest) {
-  await requireCoordinatorOrAdminApi();
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
 
   try {
     const formData = await request.formData();
@@ -127,7 +139,7 @@ export async function POST(request: NextRequest) {
     }
 
     let transcriptText = "";
-    let transcriptCourses = [];
+    let transcriptCourses: ParsedTranscriptCourse[] = [];
     let transcriptEarnedCredits: number | null = null;
     let transcriptParserSource = "primary";
 
@@ -141,7 +153,7 @@ export async function POST(request: NextRequest) {
       );
 
       transcriptText = transcriptChoice.chosenText;
-      transcriptCourses = transcriptChoice.transcriptCourses;
+      transcriptCourses = transcriptChoice.transcriptCourses as ParsedTranscriptCourse[];
       transcriptEarnedCredits = transcriptChoice.transcriptEarnedCredits;
       transcriptParserSource = transcriptChoice.chosenSource;
     }
@@ -213,7 +225,19 @@ export async function POST(request: NextRequest) {
     const suggestedNextOfferingTerm =
       getNextTerm(currentRegistrationTerm || latestCompletedTerm || null);
 
-    let masterCourses = [];
+    let masterCourses: Array<{
+      id: number;
+      program_id: number;
+      course_code: string;
+      course_title: string;
+      normalized_title: string | null;
+      credit: number;
+      course_type: string | null;
+      level_term: string | null;
+      group_name: string | null;
+      curriculum_key: string | null;
+      is_active: boolean | null;
+    }> = [];
 
     if (selectedProgram.curriculum_key) {
       masterCourses = await prisma.master_courses.findMany({
@@ -265,11 +289,15 @@ export async function POST(request: NextRequest) {
 
       const matchedCompleted =
         completedComparableCodes.has(comparableCode) ||
-        (!comparableCode && comparableTitle && completedComparableTitles.has(comparableTitle));
+        (!comparableCode &&
+          Boolean(comparableTitle) &&
+          completedComparableTitles.has(comparableTitle));
 
       const matchedOngoing =
         ongoingComparableCodes.has(comparableCode) ||
-        (!comparableCode && comparableTitle && ongoingComparableTitles.has(comparableTitle));
+        (!comparableCode &&
+          Boolean(comparableTitle) &&
+          ongoingComparableTitles.has(comparableTitle));
 
       return !matchedCompleted && !matchedOngoing;
     });

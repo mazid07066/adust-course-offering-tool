@@ -34,6 +34,8 @@ const navItems = [
   { href: "/admin/faculty-course-choices", label: "Faculty Course Choices" },
   { href: "/admin/faculty-assignment", label: "Faculty Assignment" },
   { href: "/admin/offering-reports", label: "Confirmed Offering Reports" },
+  { href: "/admin/offering-summary", label: "Offering Summary" },
+  { href: "/admin/offering-validation", label: "Offering Validation" },
   { href: "/admin/faculty-load", label: "Faculty Load Report" },
   { href: "/admin/confirmed-schedule", label: "Confirmed Schedule" },
   { href: "/admin/batch-routine", label: "Batch Routine Report" },
