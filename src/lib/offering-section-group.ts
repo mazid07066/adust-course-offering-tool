@@ -141,3 +141,72 @@ export function buildDraftSectionGroups(courses: DraftCourseForGrouping[]) {
     };
   });
 }
+
+type MinimalTx = any;
+
+export async function deleteOfferedCourseCascade(
+  tx: MinimalTx,
+  offeredCourseId: number
+) {
+  const root = await tx.offered_courses.findUnique({
+    where: { id: offeredCourseId },
+    select: {
+      id: true,
+      primary_offered_course_id: true,
+
+      secondary_offered_courses: {
+        select: { id: true },
+      },
+    },
+  });
+
+  if (!root) return;
+
+  const targetIds =
+    root.primary_offered_course_id == null
+      ? [
+          root.id,
+          ...root.secondary_offered_courses.map((x: { id: number }) => x.id),
+        ]
+      : [root.id];
+
+  if (targetIds.length === 0) return;
+
+  if (tx.offered_course_manual_cooffers) {
+    await tx.offered_course_manual_cooffers.deleteMany({
+      where: {
+        offered_course_id: { in: targetIds },
+      },
+    });
+  }
+
+  await tx.faculty_course_selections.deleteMany({
+    where: {
+      offered_course_id: { in: targetIds },
+    },
+  });
+
+  await tx.offered_course_teachers.deleteMany({
+    where: {
+      offered_course_id: { in: targetIds },
+    },
+  });
+
+  await tx.offered_course_slots.deleteMany({
+    where: {
+      offered_course_id: { in: targetIds },
+    },
+  });
+
+  await tx.offered_course_batches.deleteMany({
+    where: {
+      offered_course_id: { in: targetIds },
+    },
+  });
+
+  await tx.offered_courses.deleteMany({
+    where: {
+      id: { in: targetIds },
+    },
+  });
+}
