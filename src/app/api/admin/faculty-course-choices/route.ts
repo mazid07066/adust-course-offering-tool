@@ -28,6 +28,10 @@ type AssignmentRow = {
   loadType: string;
 };
 
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
 export async function GET(req: NextRequest) {
   const guard = await requireCoordinatorOrAdminApi();
   if (guard instanceof Response) return guard;
@@ -169,13 +173,78 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    const assignmentMergeMap = new Map<
+      string,
+      {
+        teacherId: number;
+        teacherCode: string;
+        teacherName: string;
+        designation: string | null;
+        assignmentId: number;
+        offeredCourseId: number;
+        programCode: string;
+        courseCode: string;
+        courseTitle: string;
+        section: string;
+        batchCodes: string[];
+        assignedCredit: number;
+        loadType: string;
+      }
+    >();
+
     for (const row of assignments) {
-      if (!map.has(row.teacher_id)) {
-        map.set(row.teacher_id, {
-          teacherId: row.teacher_id,
-          teacherCode: row.teachers?.teacher_code || "-",
-          teacherName: row.teachers?.full_name || "-",
-          designation: row.teachers?.designation || null,
+      const teacherId = row.teacher_id;
+      const teacherCode = row.teachers?.teacher_code || "-";
+      const teacherName = row.teachers?.full_name || "-";
+      const designation = row.teachers?.designation || null;
+      const programCode = row.offered_courses.master_courses.program.short_name;
+      const courseCode = row.offered_courses.master_courses.course_code;
+      const courseTitle = row.offered_courses.master_courses.course_title;
+      const section = row.offered_courses.section;
+      const batchCodes = row.offered_courses.offered_course_batches.map(
+        (x) => x.batches.batch_code
+      );
+
+      const signature = [
+        teacherId,
+        programCode,
+        courseCode,
+        section,
+      ].join("::");
+
+      if (!assignmentMergeMap.has(signature)) {
+        assignmentMergeMap.set(signature, {
+          teacherId,
+          teacherCode,
+          teacherName,
+          designation,
+          assignmentId: row.id,
+          offeredCourseId: row.offered_course_id,
+          programCode,
+          courseCode,
+          courseTitle,
+          section,
+          batchCodes,
+          assignedCredit: Number(row.assigned_credit || 0),
+          loadType: row.load_type,
+        });
+      } else {
+        const current = assignmentMergeMap.get(signature)!;
+        current.batchCodes = uniqueStrings([...current.batchCodes, ...batchCodes]);
+        current.assignedCredit = Math.max(
+          current.assignedCredit,
+          Number(row.assigned_credit || 0)
+        );
+      }
+    }
+
+    for (const merged of assignmentMergeMap.values()) {
+      if (!map.has(merged.teacherId)) {
+        map.set(merged.teacherId, {
+          teacherId: merged.teacherId,
+          teacherCode: merged.teacherCode,
+          teacherName: merged.teacherName,
+          designation: merged.designation,
           totalChoices: 0,
           finalizedCount: 0,
           bufferCount: 0,
@@ -186,22 +255,20 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      const group = map.get(row.teacher_id)!;
+      const group = map.get(merged.teacherId)!;
       group.approvedAssignedCount += 1;
-      group.approvedAssignedCredits += Number(row.assigned_credit || 0);
+      group.approvedAssignedCredits += merged.assignedCredit;
 
       group.assignments.push({
-        assignmentId: row.id,
-        offeredCourseId: row.offered_course_id,
-        programCode: row.offered_courses.master_courses.program.short_name,
-        courseCode: row.offered_courses.master_courses.course_code,
-        courseTitle: row.offered_courses.master_courses.course_title,
-        section: row.offered_courses.section,
-        batchCodes: row.offered_courses.offered_course_batches.map(
-          (x) => x.batches.batch_code
-        ),
-        assignedCredit: Number(row.assigned_credit || 0),
-        loadType: row.load_type,
+        assignmentId: merged.assignmentId,
+        offeredCourseId: merged.offeredCourseId,
+        programCode: merged.programCode,
+        courseCode: merged.courseCode,
+        courseTitle: merged.courseTitle,
+        section: merged.section,
+        batchCodes: uniqueStrings(merged.batchCodes),
+        assignedCredit: merged.assignedCredit,
+        loadType: merged.loadType,
       });
     }
 

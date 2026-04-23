@@ -129,18 +129,28 @@ export async function GET(req: NextRequest) {
       orderBy: [{ id: "asc" }],
     });
 
-    let totalTheoryCredits = 0;
-    let totalLabCredits = 0;
-
-    const tallyMap = new Map<string, ProgramTallyRow>();
-    const scheduleRows: ScheduleRow[] = [];
+    const mergedMap = new Map<
+      string,
+      {
+        programCode: string;
+        courseCode: string;
+        courseTitle: string;
+        section: string;
+        credit: number;
+        category: "THEORY" | "LAB" | "PROJECT";
+        batchCodes: string[];
+        slots: Array<{
+          dayOfWeek: string;
+          timeText: string;
+          roomText: string;
+        }>;
+      }
+    >();
 
     for (const row of assignedRows) {
       const course = row.offered_courses;
       const master = course.master_courses;
-      const programCode = master.program.short_name;
       const credit = Number(master.credit || 0);
-
       const category: "THEORY" | "LAB" | "PROJECT" = isProjectLikeCourse(
         master.course_title,
         master.course_type
@@ -150,53 +160,86 @@ export async function GET(req: NextRequest) {
         ? "LAB"
         : "THEORY";
 
-      if (category === "LAB") totalLabCredits += credit;
-      else totalTheoryCredits += credit;
+      const signature = [
+        master.program.short_name,
+        master.course_code,
+        course.section,
+      ].join("::");
 
-      if (!tallyMap.has(programCode)) {
-        tallyMap.set(programCode, {
-          programCode,
+      const batchCodes = course.offered_course_batches.map((x) => x.batches.batch_code);
+      const slots =
+        course.offered_course_slots.length === 0
+          ? [{ dayOfWeek: "-", timeText: "-", roomText: "-" }]
+          : course.offered_course_slots.map((slot) => ({
+              dayOfWeek: slot.day_of_week,
+              timeText: `${slot.start_time} - ${slot.end_time}`,
+              roomText: slot.rooms?.room_code || "-",
+            }));
+
+      if (!mergedMap.has(signature)) {
+        mergedMap.set(signature, {
+          programCode: master.program.short_name,
+          courseCode: master.course_code,
+          courseTitle: master.course_title,
+          section: course.section,
+          credit,
+          category,
+          batchCodes,
+          slots,
+        });
+      } else {
+        const current = mergedMap.get(signature)!;
+        current.batchCodes = uniqueStrings([...current.batchCodes, ...batchCodes]);
+
+        const slotSignatureSet = new Set(
+          current.slots.map((s) => `${s.dayOfWeek}::${s.timeText}::${s.roomText}`)
+        );
+
+        for (const slot of slots) {
+          const key = `${slot.dayOfWeek}::${slot.timeText}::${slot.roomText}`;
+          if (!slotSignatureSet.has(key)) {
+            current.slots.push(slot);
+            slotSignatureSet.add(key);
+          }
+        }
+      }
+    }
+
+    let totalTheoryCredits = 0;
+    let totalLabCredits = 0;
+    const tallyMap = new Map<string, ProgramTallyRow>();
+    const scheduleRows: ScheduleRow[] = [];
+
+    for (const item of mergedMap.values()) {
+      if (item.category === "LAB") totalLabCredits += item.credit;
+      else totalTheoryCredits += item.credit;
+
+      if (!tallyMap.has(item.programCode)) {
+        tallyMap.set(item.programCode, {
+          programCode: item.programCode,
           theoryCredits: 0,
           labCredits: 0,
           totalCredits: 0,
         });
       }
 
-      const tally = tallyMap.get(programCode)!;
-      if (category === "LAB") tally.labCredits += credit;
-      else tally.theoryCredits += credit;
-      tally.totalCredits += credit;
+      const tally = tallyMap.get(item.programCode)!;
+      if (item.category === "LAB") tally.labCredits += item.credit;
+      else tally.theoryCredits += item.credit;
+      tally.totalCredits += item.credit;
 
-      const batchCodes = uniqueStrings(
-        course.offered_course_batches.map((x) => x.batches.batch_code)
-      );
-
-      if (course.offered_course_slots.length === 0) {
+      for (const slot of item.slots) {
         scheduleRows.push({
-          courseCode: master.course_code,
-          courseTitle: master.course_title,
-          section: course.section,
-          credit,
-          category,
-          dayOfWeek: "-",
-          timeText: "-",
-          roomText: "-",
-          batchCodes,
+          courseCode: item.courseCode,
+          courseTitle: item.courseTitle,
+          section: item.section,
+          credit: item.credit,
+          category: item.category,
+          dayOfWeek: slot.dayOfWeek,
+          timeText: slot.timeText,
+          roomText: slot.roomText,
+          batchCodes: uniqueStrings(item.batchCodes),
         });
-      } else {
-        for (const slot of course.offered_course_slots) {
-          scheduleRows.push({
-            courseCode: master.course_code,
-            courseTitle: master.course_title,
-            section: course.section,
-            credit,
-            category,
-            dayOfWeek: slot.day_of_week,
-            timeText: `${slot.start_time} - ${slot.end_time}`,
-            roomText: slot.rooms?.room_code || "-",
-            batchCodes,
-          });
-        }
       }
     }
 
