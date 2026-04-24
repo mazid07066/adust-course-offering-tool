@@ -18,6 +18,12 @@ import {
 
 export const runtime = "nodejs";
 
+type ProgramCandidate = {
+  id: number;
+  short_name: string;
+  name: string;
+};
+
 type CommitRow = {
   rowKey: string;
   batchCode: string;
@@ -44,6 +50,23 @@ type CommitRow = {
   }>;
   status: "READY" | "WARNING" | "BLOCKED";
 };
+
+function uniqueById<T extends { id: number }>(rows: T[]) {
+  const seen = new Set<number>();
+  const out: T[] = [];
+
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+
+  return out;
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
 
 function normalizeUpper(value: unknown) {
   return String(value ?? "").trim().toUpperCase();
@@ -188,20 +211,21 @@ async function resolveTargetProgram(requestedProgramCode: string) {
     throw new Error("Selected academic identity was not found in Academic Setup.");
   }
 
+  const candidates: ProgramCandidate[] = [];
+
   const exactProgram = await prisma.programs.findFirst({
     where: {
       short_name: requestedProgramCode,
     },
+    select: {
+      id: true,
+      short_name: true,
+      name: true,
+    },
   });
 
   if (exactProgram) {
-    return {
-      requestedProgramCode,
-      program: exactProgram,
-      matchedProgramCodes: [requestedProgramCode],
-      displayLabel: catalogEntry.display_label,
-      curriculumKey: catalogEntry.curriculum_key,
-    };
+    candidates.push(exactProgram);
   }
 
   const canonicalProgram = await resolveCanonicalProgram({
@@ -212,10 +236,42 @@ async function resolveTargetProgram(requestedProgramCode: string) {
     study_shift: catalogEntry.study_shift,
   });
 
+  candidates.push({
+    id: canonicalProgram.id,
+    short_name: canonicalProgram.short_name,
+    name: canonicalProgram.name,
+  });
+
+  if (catalogEntry.curriculum_key) {
+    const curriculumPrograms = await prisma.programs.findMany({
+      where: {
+        master_courses: {
+          some: {
+            curriculum_key: catalogEntry.curriculum_key,
+          },
+        },
+      },
+      select: {
+        id: true,
+        short_name: true,
+        name: true,
+      },
+    });
+
+    candidates.push(...curriculumPrograms);
+  }
+
+  const finalCandidates = uniqueById(candidates);
+  const primaryProgram = exactProgram || canonicalProgram;
+
   return {
     requestedProgramCode,
-    program: canonicalProgram,
-    matchedProgramCodes: [requestedProgramCode, canonicalProgram.short_name],
+    program: primaryProgram,
+    candidateProgramIds: finalCandidates.map((item) => item.id),
+    matchedProgramCodes: uniqueStrings([
+      requestedProgramCode,
+      ...finalCandidates.map((item) => item.short_name),
+    ]),
     displayLabel: catalogEntry.display_label,
     curriculumKey: catalogEntry.curriculum_key,
   };
@@ -238,6 +294,27 @@ async function ensureAcademicTerm(termName: string) {
       is_active: true,
     },
   });
+}
+
+async function resolvePreparedByUserId() {
+  const user = await prisma.users.findFirst({
+    where: {
+      is_active: true,
+      role: {
+        in: ["SUPER_ADMIN", "COORDINATOR"],
+      },
+    },
+    orderBy: {
+      id: "asc",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (user) return user.id;
+
+  throw new Error("No active SUPER_ADMIN or COORDINATOR user found.");
 }
 
 export async function POST(req: NextRequest) {
@@ -290,37 +367,59 @@ export async function POST(req: NextRequest) {
 
     const resolvedProgramInfo = await resolveTargetProgram(requestedProgramCode);
     const program = resolvedProgramInfo.program;
+    const candidateProgramIds = resolvedProgramInfo.candidateProgramIds;
     const academicTerm = await ensureAcademicTerm(termName);
+    const preparedByUserId = await resolvePreparedByUserId();
 
-    const [masterCourses, teachers, rooms, batches, existingOffering] = await Promise.all([
-      prisma.master_courses.findMany({
-        where: {
-          program_id: program.id,
-        },
-        orderBy: [{ course_code: "asc" }],
-      }),
-      prisma.teachers.findMany({
-        where: {
-          is_active: true,
-        },
-      }),
-      prisma.rooms.findMany({
-        where: {
-          is_active: true,
-        },
-      }),
-      prisma.batches.findMany({
-        where: {
-          program_id: program.id,
-        },
-      }),
-      prisma.offerings.findFirst({
-        where: {
-          academic_term_id: academicTerm.id,
-          program_id: program.id,
-        },
-      }),
-    ]);
+    const [masterCourses, teachers, rooms, batches, existingOffering] =
+      await Promise.all([
+        prisma.master_courses.findMany({
+          where: {
+            OR: [
+              {
+                program_id: {
+                  in: candidateProgramIds,
+                },
+              },
+              ...(resolvedProgramInfo.curriculumKey
+                ? [
+                    {
+                      curriculum_key: resolvedProgramInfo.curriculumKey,
+                    },
+                  ]
+                : []),
+            ],
+          },
+          orderBy: [{ course_code: "asc" }],
+        }),
+        prisma.teachers.findMany({
+          where: {
+            is_active: true,
+          },
+        }),
+        prisma.rooms.findMany({
+          where: {
+            is_active: true,
+          },
+        }),
+        prisma.batches.findMany({
+          where: {
+            program_id: {
+              in: candidateProgramIds,
+            },
+            is_active: true,
+          },
+          include: {
+            programs: true,
+          },
+        }),
+        prisma.offerings.findFirst({
+          where: {
+            academic_term_id: academicTerm.id,
+            program_id: program.id,
+          },
+        }),
+      ]);
 
     const offering =
       existingOffering ||
@@ -328,7 +427,7 @@ export async function POST(req: NextRequest) {
         data: {
           academic_term_id: academicTerm.id,
           program_id: program.id,
-          prepared_by_user_id: 1,
+          prepared_by_user_id: preparedByUserId,
           status: "DRAFT",
         },
       }));
@@ -340,13 +439,16 @@ export async function POST(req: NextRequest) {
     let addedSlotCount = 0;
     let addedManualCoofferCount = 0;
     let autoResolvedCoofferCount = 0;
+    let skippedRowCount = 0;
 
     for (const row of rows) {
       const resolvedCourse = resolveCourseByCodeOrTitle(row, masterCourses);
-      if (!resolvedCourse) continue;
-
       const resolvedBatch = resolveBatch(row.batchCode, batches);
-      if (!resolvedBatch) continue;
+
+      if (!resolvedCourse || !resolvedBatch) {
+        skippedRowCount += 1;
+        continue;
+      }
 
       const resolvedTeacher = isBlankLikeFaculty(row.facultyInitial)
         ? null
@@ -525,9 +627,11 @@ export async function POST(req: NextRequest) {
         addedSlotCount,
         addedManualCoofferCount,
         autoResolvedCoofferCount,
+        skippedRowCount,
       },
       requestedProgramCode,
       resolvedProgramCode: program.short_name,
+      matchedProgramCodes: resolvedProgramInfo.matchedProgramCodes,
       termName,
     });
   } catch (error) {

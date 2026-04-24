@@ -16,6 +16,12 @@ export const runtime = "nodejs";
 
 type PreviewRowStatus = "READY" | "WARNING" | "BLOCKED";
 
+type ProgramCandidate = {
+  id: number;
+  short_name: string;
+  name: string;
+};
+
 type ParsedSlot = {
   day: string;
   rawTime: string;
@@ -50,6 +56,7 @@ type PreviewRow = {
   resolvedCourseMatchedBy: string | null;
   resolvedCourseMatchedValue: string | null;
   resolvedBatchId: number | null;
+  resolvedBatchProgramCode: string | null;
   resolvedTeacherId: number | null;
   resolvedTeacherCode: string | null;
   resolvedRoomId: number | null;
@@ -59,6 +66,19 @@ type PreviewRow = {
 
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function uniqueById<T extends { id: number }>(rows: T[]) {
+  const seen = new Set<number>();
+  const out: T[] = [];
+
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+
+  return out;
 }
 
 function normalizeUpper(value: unknown) {
@@ -218,20 +238,21 @@ async function resolveTargetProgram(requestedProgramCode: string) {
     throw new Error("Selected academic identity was not found in Academic Setup.");
   }
 
+  const candidates: ProgramCandidate[] = [];
+
   const exactProgram = await prisma.programs.findFirst({
     where: {
       short_name: requestedProgramCode,
     },
+    select: {
+      id: true,
+      short_name: true,
+      name: true,
+    },
   });
 
   if (exactProgram) {
-    return {
-      requestedProgramCode,
-      program: exactProgram,
-      matchedProgramCodes: [requestedProgramCode],
-      displayLabel: catalogEntry.display_label,
-      curriculumKey: catalogEntry.curriculum_key,
-    };
+    candidates.push(exactProgram);
   }
 
   const canonicalProgram = await resolveCanonicalProgram({
@@ -242,10 +263,42 @@ async function resolveTargetProgram(requestedProgramCode: string) {
     study_shift: catalogEntry.study_shift,
   });
 
+  candidates.push({
+    id: canonicalProgram.id,
+    short_name: canonicalProgram.short_name,
+    name: canonicalProgram.name,
+  });
+
+  if (catalogEntry.curriculum_key) {
+    const curriculumPrograms = await prisma.programs.findMany({
+      where: {
+        master_courses: {
+          some: {
+            curriculum_key: catalogEntry.curriculum_key,
+          },
+        },
+      },
+      select: {
+        id: true,
+        short_name: true,
+        name: true,
+      },
+    });
+
+    candidates.push(...curriculumPrograms);
+  }
+
+  const finalCandidates = uniqueById(candidates);
+  const primaryProgram = exactProgram || canonicalProgram;
+
   return {
     requestedProgramCode,
-    program: canonicalProgram,
-    matchedProgramCodes: [requestedProgramCode, canonicalProgram.short_name],
+    program: primaryProgram,
+    candidateProgramIds: finalCandidates.map((item) => item.id),
+    matchedProgramCodes: uniqueStrings([
+      requestedProgramCode,
+      ...finalCandidates.map((item) => item.short_name),
+    ]),
     displayLabel: catalogEntry.display_label,
     curriculumKey: catalogEntry.curriculum_key,
   };
@@ -289,6 +342,7 @@ export async function POST(req: NextRequest) {
 
     const resolvedProgramInfo = await resolveTargetProgram(requestedProgramCode);
     const program = resolvedProgramInfo.program;
+    const candidateProgramIds = resolvedProgramInfo.candidateProgramIds;
 
     const fileBuffer = Buffer.from(await file.arrayBuffer());
     const parsed = parseOfferingTemplateWorkbook(fileBuffer);
@@ -296,7 +350,20 @@ export async function POST(req: NextRequest) {
     const [masterCourses, teachers, rooms, batches] = await Promise.all([
       prisma.master_courses.findMany({
         where: {
-          program_id: program.id,
+          OR: [
+            {
+              program_id: {
+                in: candidateProgramIds,
+              },
+            },
+            ...(resolvedProgramInfo.curriculumKey
+              ? [
+                  {
+                    curriculum_key: resolvedProgramInfo.curriculumKey,
+                  },
+                ]
+              : []),
+          ],
         },
         orderBy: [{ course_code: "asc" }],
       }),
@@ -314,7 +381,13 @@ export async function POST(req: NextRequest) {
       }),
       prisma.batches.findMany({
         where: {
-          program_id: program.id,
+          program_id: {
+            in: candidateProgramIds,
+          },
+          is_active: true,
+        },
+        include: {
+          programs: true,
         },
         orderBy: [{ batch_code: "asc" }],
       }),
@@ -329,14 +402,20 @@ export async function POST(req: NextRequest) {
 
       if (!resolvedCourse) {
         issues.push(
-          `Course could not be matched from ${row.courseCode || row.coofferedCourseCode || row.courseTitle}.`
+          `Course could not be matched from ${
+            row.courseCode || row.coofferedCourseCode || row.courseTitle
+          }.`
         );
         status = "BLOCKED";
       }
 
       const resolvedBatch = resolveBatch(row.batchCode, batches);
       if (!resolvedBatch) {
-        issues.push(`Batch ${row.batchCode} was not found under ${program.short_name}.`);
+        issues.push(
+          `Batch ${row.batchCode} was not found under any matched program: ${resolvedProgramInfo.matchedProgramCodes.join(
+            ", "
+          )}.`
+        );
         status = "BLOCKED";
       }
 
@@ -413,6 +492,7 @@ export async function POST(req: NextRequest) {
         resolvedCourseMatchedBy: courseResolution.matchedBy || null,
         resolvedCourseMatchedValue: courseResolution.matchedValue || null,
         resolvedBatchId: resolvedBatch?.id ?? null,
+        resolvedBatchProgramCode: resolvedBatch?.programs?.short_name ?? null,
         resolvedTeacherId: resolvedTeacher?.id ?? null,
         resolvedTeacherCode: resolvedTeacher?.teacher_code ?? null,
         resolvedRoomId: resolvedRoom?.id ?? null,

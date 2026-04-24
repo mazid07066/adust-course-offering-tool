@@ -1,0 +1,2314 @@
+
+
+===== FILE: src\app\api\offering-template-import\preview\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { parseOfferingTemplateWorkbook } from "@/lib/offering-template-parser";
+import {
+  isBlankLikeFaculty,
+  isSlotOptionalCourseType,
+  normalizeCourseCode,
+  normalizeCourseTitle,
+  normalizeTeacherCode,
+  parseOneCourseCodeAliases,
+} from "@/lib/offering-template-normalize";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
+
+export const runtime = "nodejs";
+
+type PreviewRowStatus = "READY" | "WARNING" | "BLOCKED";
+
+type ParsedSlot = {
+  day: string;
+  rawTime: string;
+  startTime: string;
+  endTime: string;
+  timeParseOk: boolean;
+  timeParseReason: string;
+};
+
+type PreviewRow = {
+  rowKey: string;
+  batchCode: string;
+  courseTitle: string;
+  courseCode: string;
+  coofferedCourseCode: string;
+  facultyInitial: string;
+  section: string;
+  credits: number;
+  day: string;
+  rawTime: string;
+  startTime: string;
+  endTime: string;
+  timeParseOk: boolean;
+  room: string;
+  courseType: string;
+  parsedSlots: ParsedSlot[];
+  status: PreviewRowStatus;
+  issues: string[];
+  resolvedCourseId: number | null;
+  resolvedCourseTitle: string | null;
+  resolvedCourseCode: string | null;
+  resolvedCourseMatchedBy: string | null;
+  resolvedCourseMatchedValue: string | null;
+  resolvedBatchId: number | null;
+  resolvedTeacherId: number | null;
+  resolvedTeacherCode: string | null;
+  resolvedRoomId: number | null;
+  resolvedRoomCode: string | null;
+  slotOptional: boolean;
+};
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function normalizeUpper(value: unknown) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function digitsOnly(value: unknown) {
+  return String(value ?? "").replace(/\D+/g, "").trim();
+}
+
+function safeRoomNumber(room: any) {
+  const raw = room?.room_number;
+  if (raw === null || raw === undefined) return "";
+  return String(raw).trim().toUpperCase();
+}
+
+function resolveRoom(inputRoom: string, rooms: any[]) {
+  const raw = String(inputRoom || "").trim();
+  if (!raw) return null;
+
+  const normalizedInput = normalizeUpper(raw);
+  const inputDigits = digitsOnly(raw);
+
+  for (const room of rooms) {
+    const roomCode = normalizeUpper(room.room_code);
+    const roomNumber = safeRoomNumber(room);
+    const roomCodeDigits = digitsOnly(room.room_code);
+    const roomNumberDigits = digitsOnly(room.room_number);
+
+    if (
+      normalizedInput === roomCode ||
+      normalizedInput === roomNumber ||
+      (inputDigits && inputDigits === roomCodeDigits) ||
+      (inputDigits && inputDigits === roomNumberDigits)
+    ) {
+      return room;
+    }
+  }
+
+  for (const room of rooms) {
+    const roomCode = normalizeUpper(room.room_code);
+    const roomNumber = safeRoomNumber(room);
+    const roomType = normalizeUpper(room.room_type);
+    const building = normalizeUpper(room.building);
+
+    const candidates = [
+      roomCode,
+      roomNumber,
+      `${roomCode}-${roomNumber}`,
+      `${roomType}-${roomNumber}`,
+      `${building}-${roomNumber}`,
+      `${roomType} (${roomNumber})`,
+      `${roomCode} (${roomNumber})`,
+    ].filter(Boolean);
+
+    if (candidates.includes(normalizedInput)) {
+      return room;
+    }
+  }
+
+  return null;
+}
+
+function resolveTeacher(inputTeacherCode: string, teachers: any[]) {
+  const normalized = normalizeTeacherCode(inputTeacherCode);
+  if (!normalized) return null;
+
+  return (
+    teachers.find(
+      (teacher) => normalizeTeacherCode(teacher.teacher_code) === normalized
+    ) || null
+  );
+}
+
+function resolveBatch(inputBatchCode: string, batches: any[]) {
+  const normalized = normalizeUpper(inputBatchCode);
+  if (!normalized) return null;
+
+  return (
+    batches.find((batch) => normalizeUpper(batch.batch_code) === normalized) || null
+  );
+}
+
+function resolveCourseByCodeOrTitle(
+  row: {
+    courseCode: string;
+    coofferedCourseCode: string;
+    courseTitle: string;
+  },
+  masterCourses: any[]
+) {
+  const directCodes = uniqueStrings([
+    normalizeCourseCode(row.courseCode),
+    normalizeCourseCode(row.coofferedCourseCode),
+    ...parseOneCourseCodeAliases(row.courseCode),
+    ...parseOneCourseCodeAliases(row.coofferedCourseCode),
+  ]);
+
+  for (const code of directCodes) {
+    if (!code) continue;
+
+    const matched = masterCourses.find(
+      (course) => normalizeCourseCode(course.course_code) === code
+    );
+
+    if (matched) {
+      return {
+        course: matched,
+        matchedBy: "COURSE_CODE",
+        matchedValue: code,
+      };
+    }
+  }
+
+  const normalizedTitle = normalizeCourseTitle(row.courseTitle);
+  if (normalizedTitle) {
+    const matched = masterCourses.find((course) => {
+      const courseTitle = normalizeCourseTitle(course.course_title);
+      const normalizedStored = normalizeUpper(course.normalized_title || "");
+      return courseTitle === normalizedTitle || normalizedStored === normalizedTitle;
+    });
+
+    if (matched) {
+      return {
+        course: matched,
+        matchedBy: "COURSE_TITLE",
+        matchedValue: normalizedTitle,
+      };
+    }
+  }
+
+  return {
+    course: null,
+    matchedBy: null,
+    matchedValue: null,
+  };
+}
+
+async function resolveTargetProgram(requestedProgramCode: string) {
+  const catalogEntry = await prisma.academic_catalog_entries.findFirst({
+    where: {
+      program_code: requestedProgramCode,
+      is_active: true,
+    },
+    select: {
+      department_code: true,
+      department_name: true,
+      program_code: true,
+      program_title: true,
+      study_shift: true,
+      display_label: true,
+      curriculum_key: true,
+    },
+  });
+
+  if (!catalogEntry) {
+    throw new Error("Selected academic identity was not found in Academic Setup.");
+  }
+
+  const exactProgram = await prisma.programs.findFirst({
+    where: {
+      short_name: requestedProgramCode,
+    },
+  });
+
+  if (exactProgram) {
+    return {
+      requestedProgramCode,
+      program: exactProgram,
+      matchedProgramCodes: [requestedProgramCode],
+      displayLabel: catalogEntry.display_label,
+      curriculumKey: catalogEntry.curriculum_key,
+    };
+  }
+
+  const canonicalProgram = await resolveCanonicalProgram({
+    department_code: catalogEntry.department_code,
+    department_name: catalogEntry.department_name,
+    program_code: catalogEntry.program_code,
+    program_title: catalogEntry.program_title,
+    study_shift: catalogEntry.study_shift,
+  });
+
+  return {
+    requestedProgramCode,
+    program: canonicalProgram,
+    matchedProgramCodes: [requestedProgramCode, canonicalProgram.short_name],
+    displayLabel: catalogEntry.display_label,
+    curriculumKey: catalogEntry.curriculum_key,
+  };
+}
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const formData = await req.formData();
+
+    const requestedProgramCode = String(formData.get("programCode") || "")
+      .trim()
+      .toUpperCase();
+    const termName = String(formData.get("termName") || "")
+      .trim()
+      .toUpperCase();
+    const file = formData.get("file") as File | null;
+
+    if (!requestedProgramCode) {
+      return NextResponse.json(
+        { ok: false, error: "programCode is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!termName) {
+      return NextResponse.json(
+        { ok: false, error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!file) {
+      return NextResponse.json(
+        { ok: false, error: "Excel file is required." },
+        { status: 400 }
+      );
+    }
+
+    const resolvedProgramInfo = await resolveTargetProgram(requestedProgramCode);
+    const program = resolvedProgramInfo.program;
+
+    const fileBuffer = Buffer.from(await file.arrayBuffer());
+    const parsed = parseOfferingTemplateWorkbook(fileBuffer);
+
+    const [masterCourses, teachers, rooms, batches] = await Promise.all([
+      prisma.master_courses.findMany({
+        where: {
+          program_id: program.id,
+        },
+        orderBy: [{ course_code: "asc" }],
+      }),
+      prisma.teachers.findMany({
+        where: {
+          is_active: true,
+        },
+        orderBy: [{ teacher_code: "asc" }],
+      }),
+      prisma.rooms.findMany({
+        where: {
+          is_active: true,
+        },
+        orderBy: [{ room_code: "asc" }],
+      }),
+      prisma.batches.findMany({
+        where: {
+          program_id: program.id,
+        },
+        orderBy: [{ batch_code: "asc" }],
+      }),
+    ]);
+
+    const previewRows: PreviewRow[] = parsed.rows.map((row) => {
+      const issues: string[] = [];
+      let status: PreviewRowStatus = "READY";
+
+      const courseResolution = resolveCourseByCodeOrTitle(row, masterCourses);
+      const resolvedCourse = courseResolution.course;
+
+      if (!resolvedCourse) {
+        issues.push(
+          `Course could not be matched from ${row.courseCode || row.coofferedCourseCode || row.courseTitle}.`
+        );
+        status = "BLOCKED";
+      }
+
+      const resolvedBatch = resolveBatch(row.batchCode, batches);
+      if (!resolvedBatch) {
+        issues.push(`Batch ${row.batchCode} was not found under ${program.short_name}.`);
+        status = "BLOCKED";
+      }
+
+      const resolvedTeacher = isBlankLikeFaculty(row.facultyInitial)
+        ? null
+        : resolveTeacher(row.facultyInitial, teachers);
+
+      const resolvedRoom = row.room ? resolveRoom(row.room, rooms) : null;
+      const slotOptional = isSlotOptionalCourseType(row.courseType, row.courseTitle);
+
+      if (!slotOptional) {
+        if (!row.parsedSlots.length) {
+          issues.push("No valid slot parsed from Slot 1 / Slot 2 + Time.");
+          status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+        }
+
+        const invalidSlot = row.parsedSlots.find((slot) => !slot.timeParseOk);
+        if (invalidSlot) {
+          issues.push(
+            `Time parse issue: ${invalidSlot.timeParseReason || "invalid time format"}.`
+          );
+          status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+        }
+
+        if (!row.room) {
+          issues.push("Room is missing.");
+          status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+        }
+
+        if (row.room && !resolvedRoom) {
+          issues.push(
+            `Room ${row.room} was not matched to an active room entry. Slot import will be skipped unless room mapping is fixed.`
+          );
+          status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+        }
+      }
+
+      if (!isBlankLikeFaculty(row.facultyInitial) && row.facultyInitial && !resolvedTeacher) {
+        issues.push(
+          `Faculty initial ${row.facultyInitial} was not matched to an active faculty.`
+        );
+        status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+      }
+
+      if (slotOptional) {
+        issues.push(
+          "Slot/room is optional for this course type and will not be required during import."
+        );
+        status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+      }
+
+      return {
+        rowKey: row.rowKey,
+        batchCode: row.batchCode,
+        courseTitle: row.courseTitle,
+        courseCode: row.courseCode,
+        coofferedCourseCode: row.coofferedCourseCode,
+        facultyInitial: row.facultyInitial,
+        section: row.section,
+        credits: row.credits,
+        day: row.day,
+        rawTime: row.rawTime,
+        startTime: row.startTime,
+        endTime: row.endTime,
+        timeParseOk: row.timeParseOk,
+        room: row.room,
+        courseType: row.courseType,
+        parsedSlots: row.parsedSlots,
+        status,
+        issues,
+        resolvedCourseId: resolvedCourse?.id ?? null,
+        resolvedCourseTitle: resolvedCourse?.course_title ?? null,
+        resolvedCourseCode: resolvedCourse?.course_code ?? null,
+        resolvedCourseMatchedBy: courseResolution.matchedBy || null,
+        resolvedCourseMatchedValue: courseResolution.matchedValue || null,
+        resolvedBatchId: resolvedBatch?.id ?? null,
+        resolvedTeacherId: resolvedTeacher?.id ?? null,
+        resolvedTeacherCode: resolvedTeacher?.teacher_code ?? null,
+        resolvedRoomId: resolvedRoom?.id ?? null,
+        resolvedRoomCode: resolvedRoom?.room_code ?? null,
+        slotOptional,
+      };
+    });
+
+    const readyCount = previewRows.filter((x) => x.status === "READY").length;
+    const warningCount = previewRows.filter((x) => x.status === "WARNING").length;
+    const blockedCount = previewRows.filter((x) => x.status === "BLOCKED").length;
+    const detectedBatchCodes = uniqueStrings(previewRows.map((x) => x.batchCode));
+
+    return NextResponse.json({
+      ok: true,
+      fileName: file.name,
+      requestedProgramCode: resolvedProgramInfo.requestedProgramCode,
+      resolvedProgramCode: program.short_name,
+      resolvedProgramName: program.name,
+      matchedProgramCodes: resolvedProgramInfo.matchedProgramCodes,
+      termName,
+      sheetName: parsed.sheetName,
+      summary: {
+        totalRows: previewRows.length,
+        totalBatchBlocks: parsed.summary.totalBatchBlocks,
+        detectedBatchCodes,
+        readyCount,
+        warningCount,
+        blockedCount,
+      },
+      previewRows,
+    });
+  } catch (error) {
+    console.error(error);
+
+    const message =
+      error instanceof Error ? error.message : "Failed to preview offering template.";
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: message,
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\offering-template-import\commit\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { parseAcademicTerm } from "@/lib/semester-utils";
+import {
+  isBlankLikeFaculty,
+  isSlotOptionalCourseType,
+  normalizeCourseCode,
+  normalizeCourseTitle,
+  normalizeTeacherCode,
+  parseOneCourseCodeAliases,
+} from "@/lib/offering-template-normalize";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
+import {
+  buildPendingManualCoofferNote,
+  tryAutoResolvePendingManualCoofferForImportedSection,
+} from "@/lib/offering-template-cooffer";
+
+export const runtime = "nodejs";
+
+type CommitRow = {
+  rowKey: string;
+  batchCode: string;
+  courseTitle: string;
+  courseCode: string;
+  coofferedCourseCode: string;
+  facultyInitial: string;
+  section: string;
+  credits: number;
+  day: string;
+  rawTime: string;
+  startTime: string;
+  endTime: string;
+  timeParseOk: boolean;
+  room: string;
+  courseType: string;
+  parsedSlots?: Array<{
+    day: string;
+    rawTime: string;
+    startTime: string;
+    endTime: string;
+    timeParseOk: boolean;
+    timeParseReason: string;
+  }>;
+  status: "READY" | "WARNING" | "BLOCKED";
+};
+
+function normalizeUpper(value: unknown) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function digitsOnly(value: unknown) {
+  return String(value ?? "").replace(/\D+/g, "").trim();
+}
+
+function safeRoomNumber(room: any) {
+  const raw = room?.room_number;
+  if (raw === null || raw === undefined) return "";
+  return String(raw).trim().toUpperCase();
+}
+
+function resolveRoom(inputRoom: string, rooms: any[]) {
+  const raw = String(inputRoom || "").trim();
+  if (!raw) return null;
+
+  const normalizedInput = normalizeUpper(raw);
+  const inputDigits = digitsOnly(raw);
+
+  for (const room of rooms) {
+    const roomCode = normalizeUpper(room.room_code);
+    const roomNumber = safeRoomNumber(room);
+    const roomCodeDigits = digitsOnly(room.room_code);
+    const roomNumberDigits = digitsOnly(room.room_number);
+
+    if (
+      normalizedInput === roomCode ||
+      normalizedInput === roomNumber ||
+      (inputDigits && inputDigits === roomCodeDigits) ||
+      (inputDigits && inputDigits === roomNumberDigits)
+    ) {
+      return room;
+    }
+  }
+
+  for (const room of rooms) {
+    const roomCode = normalizeUpper(room.room_code);
+    const roomNumber = safeRoomNumber(room);
+    const roomType = normalizeUpper(room.room_type);
+    const building = normalizeUpper(room.building);
+
+    const candidates = [
+      roomCode,
+      roomNumber,
+      `${roomCode}-${roomNumber}`,
+      `${roomType}-${roomNumber}`,
+      `${building}-${roomNumber}`,
+      `${roomType} (${roomNumber})`,
+      `${roomCode} (${roomNumber})`,
+    ].filter(Boolean);
+
+    if (candidates.includes(normalizedInput)) {
+      return room;
+    }
+  }
+
+  return null;
+}
+
+function resolveTeacher(inputTeacherCode: string, teachers: any[]) {
+  const normalized = normalizeTeacherCode(inputTeacherCode);
+  if (!normalized) return null;
+
+  return (
+    teachers.find(
+      (teacher) => normalizeTeacherCode(teacher.teacher_code) === normalized
+    ) || null
+  );
+}
+
+function resolveBatch(inputBatchCode: string, batches: any[]) {
+  const normalized = normalizeUpper(inputBatchCode);
+  if (!normalized) return null;
+
+  return (
+    batches.find((batch) => normalizeUpper(batch.batch_code) === normalized) || null
+  );
+}
+
+function resolveCourseByCodeOrTitle(
+  row: {
+    courseCode: string;
+    coofferedCourseCode: string;
+    courseTitle: string;
+  },
+  masterCourses: any[]
+) {
+  const directCodes = Array.from(
+    new Set(
+      [
+        normalizeCourseCode(row.courseCode),
+        normalizeCourseCode(row.coofferedCourseCode),
+        ...parseOneCourseCodeAliases(row.courseCode),
+        ...parseOneCourseCodeAliases(row.coofferedCourseCode),
+      ].filter(Boolean)
+    )
+  );
+
+  for (const code of directCodes) {
+    const matched = masterCourses.find(
+      (course) => normalizeCourseCode(course.course_code) === code
+    );
+
+    if (matched) return matched;
+  }
+
+  const normalizedTitle = normalizeCourseTitle(row.courseTitle);
+  if (normalizedTitle) {
+    const matched = masterCourses.find((course) => {
+      const courseTitle = normalizeCourseTitle(course.course_title);
+      const normalizedStored = normalizeUpper(course.normalized_title || "");
+      return courseTitle === normalizedTitle || normalizedStored === normalizedTitle;
+    });
+
+    if (matched) return matched;
+  }
+
+  return null;
+}
+
+async function resolveTargetProgram(requestedProgramCode: string) {
+  const catalogEntry = await prisma.academic_catalog_entries.findFirst({
+    where: {
+      program_code: requestedProgramCode,
+      is_active: true,
+    },
+    select: {
+      department_code: true,
+      department_name: true,
+      program_code: true,
+      program_title: true,
+      study_shift: true,
+      display_label: true,
+      curriculum_key: true,
+    },
+  });
+
+  if (!catalogEntry) {
+    throw new Error("Selected academic identity was not found in Academic Setup.");
+  }
+
+  const exactProgram = await prisma.programs.findFirst({
+    where: {
+      short_name: requestedProgramCode,
+    },
+  });
+
+  if (exactProgram) {
+    return {
+      requestedProgramCode,
+      program: exactProgram,
+      matchedProgramCodes: [requestedProgramCode],
+      displayLabel: catalogEntry.display_label,
+      curriculumKey: catalogEntry.curriculum_key,
+    };
+  }
+
+  const canonicalProgram = await resolveCanonicalProgram({
+    department_code: catalogEntry.department_code,
+    department_name: catalogEntry.department_name,
+    program_code: catalogEntry.program_code,
+    program_title: catalogEntry.program_title,
+    study_shift: catalogEntry.study_shift,
+  });
+
+  return {
+    requestedProgramCode,
+    program: canonicalProgram,
+    matchedProgramCodes: [requestedProgramCode, canonicalProgram.short_name],
+    displayLabel: catalogEntry.display_label,
+    curriculumKey: catalogEntry.curriculum_key,
+  };
+}
+
+async function ensureAcademicTerm(termName: string) {
+  const existing = await prisma.academic_terms.findFirst({
+    where: { name: termName },
+  });
+
+  if (existing) return existing;
+
+  const parsed = parseAcademicTerm(termName);
+
+  return prisma.academic_terms.create({
+    data: {
+      name: termName,
+      year: parsed.year,
+      term_type: parsed.season,
+      is_active: true,
+    },
+  });
+}
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await req.json();
+
+    const requestedProgramCode = String(body.programCode || "")
+      .trim()
+      .toUpperCase();
+    const termName = String(body.termName || "")
+      .trim()
+      .toUpperCase();
+    const rows = Array.isArray(body.rows) ? (body.rows as CommitRow[]) : [];
+
+    if (!requestedProgramCode) {
+      return NextResponse.json(
+        { ok: false, error: "programCode is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!termName) {
+      return NextResponse.json(
+        { ok: false, error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!rows.length) {
+      return NextResponse.json(
+        { ok: false, error: "No preview rows were provided for commit." },
+        { status: 400 }
+      );
+    }
+
+    const blockedRows = rows.filter((row) => row.status === "BLOCKED");
+    if (blockedRows.length > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Blocked rows exist in preview. Fix them before commit.",
+          blockedRowCount: blockedRows.length,
+        },
+        { status: 400 }
+      );
+    }
+
+    const resolvedProgramInfo = await resolveTargetProgram(requestedProgramCode);
+    const program = resolvedProgramInfo.program;
+    const academicTerm = await ensureAcademicTerm(termName);
+
+    const [masterCourses, teachers, rooms, batches, existingOffering] = await Promise.all([
+      prisma.master_courses.findMany({
+        where: {
+          program_id: program.id,
+        },
+        orderBy: [{ course_code: "asc" }],
+      }),
+      prisma.teachers.findMany({
+        where: {
+          is_active: true,
+        },
+      }),
+      prisma.rooms.findMany({
+        where: {
+          is_active: true,
+        },
+      }),
+      prisma.batches.findMany({
+        where: {
+          program_id: program.id,
+        },
+      }),
+      prisma.offerings.findFirst({
+        where: {
+          academic_term_id: academicTerm.id,
+          program_id: program.id,
+        },
+      }),
+    ]);
+
+    const offering =
+      existingOffering ||
+      (await prisma.offerings.create({
+        data: {
+          academic_term_id: academicTerm.id,
+          program_id: program.id,
+          prepared_by_user_id: 1,
+          status: "DRAFT",
+        },
+      }));
+
+    let createdCourseCount = 0;
+    let reusedCourseCount = 0;
+    let attachedBatchCount = 0;
+    let attachedTeacherCount = 0;
+    let addedSlotCount = 0;
+    let addedManualCoofferCount = 0;
+    let autoResolvedCoofferCount = 0;
+
+    for (const row of rows) {
+      const resolvedCourse = resolveCourseByCodeOrTitle(row, masterCourses);
+      if (!resolvedCourse) continue;
+
+      const resolvedBatch = resolveBatch(row.batchCode, batches);
+      if (!resolvedBatch) continue;
+
+      const resolvedTeacher = isBlankLikeFaculty(row.facultyInitial)
+        ? null
+        : resolveTeacher(row.facultyInitial, teachers);
+
+      let offeredCourse = await prisma.offered_courses.findFirst({
+        where: {
+          offering_id: offering.id,
+          master_course_id: resolvedCourse.id,
+          section: row.section,
+        },
+      });
+
+      if (!offeredCourse) {
+        offeredCourse = await prisma.offered_courses.create({
+          data: {
+            offering_id: offering.id,
+            master_course_id: resolvedCourse.id,
+            section: row.section,
+            is_cooffered: false,
+            notes: null,
+          },
+        });
+        createdCourseCount += 1;
+      } else {
+        reusedCourseCount += 1;
+      }
+
+      const existingBatch = await prisma.offered_course_batches.findFirst({
+        where: {
+          offered_course_id: offeredCourse.id,
+          batch_id: resolvedBatch.id,
+        },
+        select: { id: true },
+      });
+
+      if (!existingBatch) {
+        await prisma.offered_course_batches.create({
+          data: {
+            offered_course_id: offeredCourse.id,
+            batch_id: resolvedBatch.id,
+          },
+        });
+        attachedBatchCount += 1;
+      }
+
+      if (resolvedTeacher) {
+        const existingTeacher = await prisma.offered_course_teachers.findFirst({
+          where: {
+            offered_course_id: offeredCourse.id,
+            teacher_id: resolvedTeacher.id,
+          },
+          select: { id: true },
+        });
+
+        if (!existingTeacher) {
+          await prisma.offered_course_teachers.create({
+            data: {
+              offered_course_id: offeredCourse.id,
+              teacher_id: resolvedTeacher.id,
+              assigned_credit: Number(resolvedCourse.credit || row.credits || 0),
+              load_type: "IMPORTED",
+            },
+          });
+          attachedTeacherCount += 1;
+        }
+      }
+
+      if (row.coofferedCourseCode) {
+        const normalizedManualCode = normalizeCourseCode(row.coofferedCourseCode);
+
+        const existingManual = await prisma.offered_course_manual_cooffers.findFirst({
+          where: {
+            offered_course_id: offeredCourse.id,
+            manual_course_code: normalizedManualCode,
+          },
+          select: { id: true },
+        });
+
+        if (!existingManual) {
+          await prisma.offered_course_manual_cooffers.create({
+            data: {
+              offered_course_id: offeredCourse.id,
+              target_program_code: requestedProgramCode,
+              manual_course_code: normalizedManualCode,
+              note: buildPendingManualCoofferNote({
+                sourceProgramCode: requestedProgramCode,
+                section: row.section,
+                batchCode: row.batchCode,
+                importedFrom: "prepared-offering-template",
+              }),
+            },
+          });
+          addedManualCoofferCount += 1;
+        }
+      }
+
+      const autoResolved = await prisma.$transaction(async (tx) => {
+        return tryAutoResolvePendingManualCoofferForImportedSection({
+          tx,
+          currentOfferedCourseId: offeredCourse.id,
+          currentCourseCode: row.courseCode,
+          currentSection: row.section,
+        });
+      });
+
+      if (autoResolved?.autoLinked) {
+        autoResolvedCoofferCount += 1;
+      }
+
+      const slotOptional = isSlotOptionalCourseType(row.courseType, row.courseTitle);
+
+      if (!slotOptional && row.room) {
+        const room = resolveRoom(row.room, rooms);
+
+        if (room) {
+          const slotsToCreate =
+            Array.isArray(row.parsedSlots) && row.parsedSlots.length > 0
+              ? row.parsedSlots.filter(
+                  (slot) =>
+                    slot.day &&
+                    slot.timeParseOk &&
+                    slot.startTime &&
+                    slot.endTime
+                )
+              : row.day && row.timeParseOk && row.startTime && row.endTime
+                ? [
+                    {
+                      day: row.day,
+                      startTime: row.startTime,
+                      endTime: row.endTime,
+                    },
+                  ]
+                : [];
+
+          for (const slot of slotsToCreate) {
+            const existingSlot = await prisma.offered_course_slots.findFirst({
+              where: {
+                offered_course_id: offeredCourse.id,
+                day_of_week: slot.day,
+                start_time: slot.startTime,
+                end_time: slot.endTime,
+                room_id: room.id,
+              },
+              select: { id: true },
+            });
+
+            if (!existingSlot) {
+              await prisma.offered_course_slots.create({
+                data: {
+                  offered_course_id: offeredCourse.id,
+                  day_of_week: slot.day,
+                  start_time: slot.startTime,
+                  end_time: slot.endTime,
+                  room_id: room.id,
+                  slot_type: "CLASS",
+                },
+              });
+              addedSlotCount += 1;
+            }
+          }
+        }
+      }
+    }
+
+    return NextResponse.json({
+      ok: true,
+      message: "Offering template committed into draft successfully.",
+      draftId: offering.id,
+      offeringId: offering.id,
+      summary: {
+        createdCourseCount,
+        reusedCourseCount,
+        attachedBatchCount,
+        attachedTeacherCount,
+        addedSlotCount,
+        addedManualCoofferCount,
+        autoResolvedCoofferCount,
+      },
+      requestedProgramCode,
+      resolvedProgramCode: program.short_name,
+      termName,
+    });
+  } catch (error) {
+    console.error(error);
+
+    const message =
+      error instanceof Error ? error.message : "Failed to commit offering template.";
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: message,
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\offering-template-import\validate\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+
+type PreviewRow = {
+  status?: string;
+  batchCode?: string;
+  courseCode?: string;
+  courseTitle?: string;
+  coofferedCourseCode?: string;
+  facultyInitial?: string;
+  section?: string;
+  credit?: number;
+  day?: string;
+  time?: string;
+  room?: string;
+  issues?: string[];
+};
+
+function normalize(value: unknown) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function extractTimeParts(input: string) {
+  const text = String(input || "").replace(/\s+/g, " ").trim().toUpperCase();
+
+  const regex =
+    /(\d{1,2}:\d{2}\s*(?:AM|PM)?)[\s-]+(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i;
+
+  const match = text.match(regex);
+  if (!match) return null;
+
+  return {
+    start: match[1].replace(/\s+/g, ""),
+    end: match[2].replace(/\s+/g, ""),
+  };
+}
+
+function toMinutes(value: string) {
+  const raw = normalize(value).replace(/\s+/g, "");
+  const matched = raw.match(/^(\d{1,2}):(\d{2})(AM|PM)?$/);
+
+  if (!matched) return null;
+
+  let hour = Number(matched[1]);
+  const minute = Number(matched[2]);
+  const meridiem = matched[3] || null;
+
+  if (meridiem === "AM") {
+    if (hour === 12) hour = 0;
+  } else if (meridiem === "PM") {
+    if (hour !== 12) hour += 12;
+  }
+
+  return hour * 60 + minute;
+}
+
+function overlaps(startA: number, endA: number, startB: number, endB: number) {
+  return startA < endB && startB < endA;
+}
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await req.json();
+    const termName = normalize(body.termName);
+    const rows = Array.isArray(body.rows) ? (body.rows as PreviewRow[]) : [];
+
+    if (!termName) {
+      return NextResponse.json(
+        { error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: { name: termName },
+      select: { id: true, name: true },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const existing = await prisma.offered_courses.findMany({
+      where: {
+        offerings: {
+          academic_term_id: term.id,
+        },
+      },
+      include: {
+        offered_course_batches: {
+          include: {
+            batches: true,
+          },
+        },
+        offered_course_slots: {
+          include: {
+            rooms: true,
+          },
+        },
+        offered_course_teachers: {
+          include: {
+            teachers: true,
+          },
+        },
+        primary_offered_course: {
+          include: {
+            offered_course_slots: {
+              include: {
+                rooms: true,
+              },
+            },
+            offered_course_teachers: {
+              include: {
+                teachers: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const existingEvents = existing.flatMap((course) => {
+      const slots =
+        course.primary_offered_course?.offered_course_slots.length
+          ? course.primary_offered_course.offered_course_slots
+          : course.offered_course_slots;
+
+      const teachers =
+        course.primary_offered_course?.offered_course_teachers.length
+          ? course.primary_offered_course.offered_course_teachers
+          : course.offered_course_teachers;
+
+      const batchCodes = course.offered_course_batches.map((x) => normalize(x.batches.batch_code));
+
+      return slots
+        .map((slot) => {
+          const start = toMinutes(slot.start_time);
+          const end = toMinutes(slot.end_time);
+          if (start == null || end == null) return null;
+
+          return {
+            day: normalize(slot.day_of_week),
+            room: normalize(slot.rooms?.room_code || "-"),
+            teacherInitials: teachers.map((x) => normalize(x.teachers.teacher_code)),
+            batchCodes,
+            start,
+            end,
+          };
+        })
+        .filter(Boolean) as Array<{
+        day: string;
+        room: string;
+        teacherInitials: string[];
+        batchCodes: string[];
+        start: number;
+        end: number;
+      }>;
+    });
+
+    const uploadEvents: Array<{
+      index: number;
+      day: string;
+      room: string;
+      facultyInitial: string;
+      batchCode: string;
+      start: number;
+      end: number;
+    }> = [];
+
+    const validatedRows = rows.map((row, index) => {
+      const issues = [...(row.issues || [])];
+      const conflictTypes: string[] = [];
+
+      if (normalize(row.status) === "BLOCKED") {
+        return {
+          ...row,
+          validationStatus: "BLOCKED",
+          conflictTypes,
+          issues,
+        };
+      }
+
+      const timeParts = extractTimeParts(String(row.time || ""));
+      const start = timeParts ? toMinutes(timeParts.start) : null;
+      const end = timeParts ? toMinutes(timeParts.end) : null;
+      const day = normalize(row.day);
+      const room = normalize(row.room);
+      const facultyInitial = normalize(row.facultyInitial);
+      const batchCode = normalize(row.batchCode);
+
+      if (day && start != null && end != null) {
+        uploadEvents.push({
+          index,
+          day,
+          room,
+          facultyInitial,
+          batchCode,
+          start,
+          end,
+        });
+      }
+
+      return {
+        ...row,
+        validationStatus: "OK",
+        conflictTypes,
+        issues,
+      };
+    });
+
+    for (const event of uploadEvents) {
+      const row = validatedRows[event.index];
+
+      for (const other of uploadEvents) {
+        if (other.index === event.index) continue;
+        if (other.day !== event.day) continue;
+        if (!overlaps(event.start, event.end, other.start, other.end)) continue;
+
+        if (event.room && other.room && event.room === other.room) {
+          row.conflictTypes.push("UPLOAD_ROOM_CONFLICT");
+        }
+
+        if (
+          event.facultyInitial &&
+          other.facultyInitial &&
+          event.facultyInitial === other.facultyInitial
+        ) {
+          row.conflictTypes.push("UPLOAD_FACULTY_CONFLICT");
+        }
+
+        if (event.batchCode && other.batchCode && event.batchCode === other.batchCode) {
+          row.conflictTypes.push("UPLOAD_BATCH_CONFLICT");
+        }
+      }
+
+      for (const existingEvent of existingEvents) {
+        if (existingEvent.day !== event.day) continue;
+        if (!overlaps(event.start, event.end, existingEvent.start, existingEvent.end)) continue;
+
+        if (event.room && existingEvent.room && event.room === existingEvent.room) {
+          row.conflictTypes.push("EXISTING_ROOM_CONFLICT");
+        }
+
+        if (
+          event.facultyInitial &&
+          existingEvent.teacherInitials.includes(event.facultyInitial)
+        ) {
+          row.conflictTypes.push("EXISTING_FACULTY_CONFLICT");
+        }
+
+        if (
+          event.batchCode &&
+          existingEvent.batchCodes.includes(event.batchCode)
+        ) {
+          row.conflictTypes.push("EXISTING_BATCH_CONFLICT");
+        }
+      }
+
+      row.conflictTypes = Array.from(new Set(row.conflictTypes));
+
+      if (row.conflictTypes.length > 0) {
+        row.validationStatus = "CONFLICT";
+        row.issues = [
+          ...row.issues,
+          ...row.conflictTypes.map((x) => x.replaceAll("_", " ")),
+        ];
+      }
+    }
+
+    const summary = {
+      totalRows: validatedRows.length,
+      okRows: validatedRows.filter((x) => x.validationStatus === "OK").length,
+      conflictRows: validatedRows.filter((x) => x.validationStatus === "CONFLICT").length,
+      blockedRows: validatedRows.filter((x) => x.validationStatus === "BLOCKED").length,
+    };
+
+    return NextResponse.json({
+      success: true,
+      termName: term.name,
+      summary,
+      rows: validatedRows,
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      { error: "Failed to validate offering template rows." },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\lib\canonical-program.ts =====
+
+import { prisma } from "@/lib/prisma";
+
+type AcademicIdentity = {
+  department_code: string;
+  department_name: string;
+  program_code: string;
+  program_title: string;
+  study_shift: string;
+};
+
+function normalizeText(value: string) {
+  return String(value || "").trim();
+}
+
+function normalizeUpper(value: string) {
+  return normalizeText(value).toUpperCase();
+}
+
+function slugCompact(value: string) {
+  return normalizeUpper(value).replace(/[^A-Z0-9]+/g, "");
+}
+
+function buildCanonicalProgramName(identity: AcademicIdentity) {
+  return `${normalizeText(identity.program_title)} [${normalizeUpper(identity.study_shift)}]`;
+}
+
+function buildCanonicalProgramShortName(identity: AcademicIdentity) {
+  const raw = `CANON-${normalizeUpper(identity.department_code)}-${normalizeUpper(identity.study_shift)}-${slugCompact(identity.program_title)}`;
+  return raw.slice(0, 50);
+}
+
+export async function resolveCanonicalDepartment(identity: AcademicIdentity) {
+  const departmentCode = normalizeUpper(identity.department_code);
+  const departmentName = normalizeText(identity.department_name);
+
+  let department = await prisma.departments.findFirst({
+    where: {
+      OR: [{ short_name: departmentCode }, { name: departmentName }],
+    },
+  });
+
+  if (!department) {
+    department = await prisma.departments.create({
+      data: {
+        short_name: departmentCode,
+        name: departmentName,
+      },
+    });
+  }
+
+  return department;
+}
+
+export async function resolveCanonicalProgram(identity: AcademicIdentity) {
+  const department = await resolveCanonicalDepartment(identity);
+  const canonicalName = buildCanonicalProgramName(identity);
+  const canonicalShortName = buildCanonicalProgramShortName(identity);
+
+  let program = await prisma.programs.findFirst({
+    where: {
+      department_id: department.id,
+      name: canonicalName,
+    },
+  });
+
+  if (!program) {
+    program = await prisma.programs.findFirst({
+      where: {
+        short_name: canonicalShortName,
+      },
+    });
+  }
+
+  if (!program) {
+    program = await prisma.programs.create({
+      data: {
+        department_id: department.id,
+        name: canonicalName,
+        short_name: canonicalShortName,
+      },
+    });
+  } else {
+    program = await prisma.programs.update({
+      where: { id: program.id },
+      data: {
+        department_id: department.id,
+        name: canonicalName,
+        short_name: canonicalShortName,
+      },
+    });
+  }
+
+  return program;
+}
+
+
+===== FILE: src\lib\academic-catalog.ts =====
+
+export type CatalogProgram = {
+  id: string;
+  departmentCode: string;
+  departmentName: string;
+  programCode: string;
+  programTitle: string;
+  programType: string;
+  studyShift: "REG" | "EVE" | "ACC" | "OTH" | "NONE";
+  curriculumVersion: "OLD" | "NEW" | "NONE";
+  displayLabel: string;
+  active: boolean;
+};
+
+export const ACADEMIC_CATALOG: CatalogProgram[] = [
+  {
+    id: "BSC-EEE-REG-NEW",
+    departmentCode: "EEE",
+    departmentName: "Department of Electrical and Electronic Engineering",
+    programCode: "BSC-EEE-REG-NEW",
+    programTitle: "BSc in Electrical and Electronic Engineering",
+    programType: "Bachelor",
+    studyShift: "REG",
+    curriculumVersion: "NEW",
+    displayLabel: "EEE | BSc EEE | Regular | New Curriculum",
+    active: true,
+  },
+  {
+    id: "BSC-EEE-EVE-NEW",
+    departmentCode: "EEE",
+    departmentName: "Department of Electrical and Electronic Engineering",
+    programCode: "BSC-EEE-EVE-NEW",
+    programTitle: "BSc in Electrical and Electronic Engineering",
+    programType: "Bachelor",
+    studyShift: "EVE",
+    curriculumVersion: "NEW",
+    displayLabel: "EEE | BSc EEE | Evening | New Curriculum",
+    active: true,
+  },
+  {
+    id: "BSC-EEE-REG-OLD",
+    departmentCode: "EEE",
+    departmentName: "Department of Electrical and Electronic Engineering",
+    programCode: "BSC-EEE-REG-OLD",
+    programTitle: "BSc in Electrical and Electronic Engineering",
+    programType: "Bachelor",
+    studyShift: "REG",
+    curriculumVersion: "OLD",
+    displayLabel: "EEE | BSc EEE | Regular | Old Curriculum",
+    active: true,
+  },
+  {
+    id: "BSC-EEE-EVE-OLD",
+    departmentCode: "EEE",
+    departmentName: "Department of Electrical and Electronic Engineering",
+    programCode: "BSC-EEE-EVE-OLD",
+    programTitle: "BSc in Electrical and Electronic Engineering",
+    programType: "Bachelor",
+    studyShift: "EVE",
+    curriculumVersion: "OLD",
+    displayLabel: "EEE | BSc EEE | Evening | Old Curriculum",
+    active: true,
+  },
+  {
+    id: "BSC-RAE-REG-OLD",
+    departmentCode: "RAE",
+    departmentName: "Department of Robotics and Automation Engineering",
+    programCode: "BSC-RAE-REG-OLD",
+    programTitle: "BSc in Robotics and Automation Engineering",
+    programType: "Bachelor",
+    studyShift: "REG",
+    curriculumVersion: "OLD",
+    displayLabel: "RAE | BSc RAE | Regular | Old Curriculum",
+    active: true,
+  },
+  {
+    id: "BSC-RAE-REG-NEW",
+    departmentCode: "RAE",
+    departmentName: "Department of Robotics and Automation Engineering",
+    programCode: "BSC-RAE-REG-NEW",
+    programTitle: "BSc in Robotics and Automation Engineering",
+    programType: "Bachelor",
+    studyShift: "REG",
+    curriculumVersion: "NEW",
+    displayLabel: "RAE | BSc RAE | Regular | New Curriculum",
+    active: true,
+  },
+];
+
+export function getCatalogProgramByCode(code: string) {
+  const normalized = String(code || "").trim().toUpperCase();
+  return ACADEMIC_CATALOG.find((item) => item.programCode === normalized) || null;
+}
+
+export function getCatalogDepartmentOptions() {
+  const seen = new Map<string, { code: string; name: string }>();
+
+  for (const item of ACADEMIC_CATALOG) {
+    if (!seen.has(item.departmentCode)) {
+      seen.set(item.departmentCode, {
+        code: item.departmentCode,
+        name: item.departmentName,
+      });
+    }
+  }
+
+  return Array.from(seen.values()).sort((a, b) => a.code.localeCompare(b.code));
+}
+
+export function getCatalogProgramOptions() {
+  return ACADEMIC_CATALOG.filter((item) => item.active).sort((a, b) =>
+    a.displayLabel.localeCompare(b.displayLabel)
+  );
+}
+
+
+===== FILE: src\app\api\offering-context\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { buildOfferingContext } from "@/lib/offering-context";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+
+export async function GET(req: NextRequest) {
+  try {
+    await requireCoordinatorOrAdminApi();
+
+    const { searchParams } = new URL(req.url);
+    const programCode = String(searchParams.get("programCode") || "").trim();
+    const batchCode = String(searchParams.get("batchCode") || "").trim();
+
+    if (!programCode) {
+      return NextResponse.json(
+        {
+          ok: false,
+          success: false,
+          error: "programCode is required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (!batchCode) {
+      return NextResponse.json(
+        {
+          ok: false,
+          success: false,
+          error: "batchCode is required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const result = await buildOfferingContext({
+      programCode,
+      batchCode,
+    });
+
+    return NextResponse.json(result);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to load offering context.";
+
+    return NextResponse.json(
+      {
+        ok: false,
+        success: false,
+        error: message,
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\program-batches\by-program-code\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+
+export async function GET(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const { searchParams } = new URL(req.url);
+
+    const programCode = String(
+      searchParams.get("programCode") ||
+        searchParams.get("code") ||
+        searchParams.get("shortName") ||
+        ""
+    )
+      .trim()
+      .toUpperCase();
+
+    if (!programCode) {
+      return NextResponse.json(
+        { error: "programCode is required." },
+        { status: 400 }
+      );
+    }
+
+    const program = await prisma.programs.findFirst({
+      where: {
+        short_name: programCode,
+      },
+      select: {
+        id: true,
+        short_name: true,
+        name: true,
+      },
+    });
+
+    if (!program) {
+      return NextResponse.json(
+        { error: `Program ${programCode} was not found.` },
+        { status: 404 }
+      );
+    }
+
+    const batches = await prisma.batches.findMany({
+      where: {
+        program_id: program.id,
+        is_active: true,
+      },
+      orderBy: [{ batch_code: "asc" }],
+      select: {
+        id: true,
+        batch_code: true,
+        admission_term: true,
+        is_active: true,
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      program,
+      batches: batches.map((batch) => ({
+        id: batch.id,
+        batchCode: batch.batch_code,
+        batch_code: batch.batch_code,
+        admissionTerm: batch.admission_term,
+        admission_term: batch.admission_term,
+        isActive: batch.is_active,
+        is_active: batch.is_active,
+      })),
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load batches by program code.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\batches\manage\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { getCatalogProgramByCode } from "@/lib/academic-catalog";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
+
+type ProgramCandidate = {
+  id: number;
+  short_name: string;
+  name: string;
+  source:
+    | "EXACT_PROGRAM_CODE"
+    | "CANONICAL_PROGRAM"
+    | "CURRICULUM_RELATED_PROGRAM";
+};
+
+function uniqueById<T extends { id: number }>(rows: T[]): T[] {
+  const seen = new Set<number>();
+  const out: T[] = [];
+
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+
+  return out;
+}
+
+async function getProgramCandidates(programCode: string): Promise<{
+  requestedProgramCode: string;
+  curriculumKey: string | null;
+  candidates: ProgramCandidate[];
+}> {
+  const normalizedProgramCode = String(programCode || "").trim().toUpperCase();
+
+  if (!normalizedProgramCode) {
+    throw new Error("programCode is required.");
+  }
+
+  const staticCatalog = getCatalogProgramByCode(normalizedProgramCode);
+  if (!staticCatalog) {
+    throw new Error("Invalid academic identity programCode.");
+  }
+
+  const catalogEntry = await prisma.academic_catalog_entries.findUnique({
+    where: {
+      program_code: normalizedProgramCode,
+    },
+    select: {
+      program_code: true,
+      curriculum_key: true,
+      department_code: true,
+      department_name: true,
+      program_title: true,
+      study_shift: true,
+    },
+  });
+
+  const candidates: ProgramCandidate[] = [];
+
+  const exactProgram = await prisma.programs.findFirst({
+    where: {
+      short_name: normalizedProgramCode,
+    },
+    select: {
+      id: true,
+      short_name: true,
+      name: true,
+    },
+  });
+
+  if (exactProgram) {
+    candidates.push({
+      ...exactProgram,
+      source: "EXACT_PROGRAM_CODE",
+    });
+  }
+
+  const canonicalProgram = await resolveCanonicalProgram({
+    department_code: catalogEntry?.department_code || staticCatalog.departmentCode,
+    department_name: catalogEntry?.department_name || staticCatalog.departmentName,
+    program_code: normalizedProgramCode,
+    program_title: catalogEntry?.program_title || staticCatalog.programTitle,
+    study_shift: catalogEntry?.study_shift || staticCatalog.studyShift,
+  });
+
+  if (!candidates.some((item) => item.id === canonicalProgram.id)) {
+    candidates.push({
+      id: canonicalProgram.id,
+      short_name: canonicalProgram.short_name,
+      name: canonicalProgram.name,
+      source: "CANONICAL_PROGRAM",
+    });
+  }
+
+  const curriculumKey = catalogEntry?.curriculum_key || null;
+
+  if (curriculumKey) {
+    const relatedPrograms = await prisma.programs.findMany({
+      where: {
+        master_courses: {
+          some: {
+            curriculum_key: curriculumKey,
+          },
+        },
+      },
+      select: {
+        id: true,
+        short_name: true,
+        name: true,
+      },
+      orderBy: [{ short_name: "asc" }],
+    });
+
+    for (const program of relatedPrograms) {
+      if (!candidates.some((item) => item.id === program.id)) {
+        candidates.push({
+          ...program,
+          source: "CURRICULUM_RELATED_PROGRAM",
+        });
+      }
+    }
+  }
+
+  return {
+    requestedProgramCode: normalizedProgramCode,
+    curriculumKey,
+    candidates: uniqueById(candidates),
+  };
+}
+
+function sourcePriority(source: ProgramCandidate["source"]) {
+  switch (source) {
+    case "EXACT_PROGRAM_CODE":
+      return 1;
+    case "CANONICAL_PROGRAM":
+      return 2;
+    case "CURRICULUM_RELATED_PROGRAM":
+      return 3;
+    default:
+      return 999;
+  }
+}
+
+export async function GET() {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const rows = await prisma.batches.findMany({
+      include: {
+        programs: true,
+      },
+      orderBy: [{ batch_code: "asc" }, { id: "asc" }],
+    });
+
+    return NextResponse.json({
+      ok: true,
+      batches: rows.map((row) => ({
+        id: row.id,
+        programId: row.program_id,
+        programCode: row.programs.short_name,
+        programName: row.programs.name,
+        batchCode: row.batch_code,
+        admissionTerm: row.admission_term || "",
+        active: Boolean(row.is_active),
+      })),
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      { ok: false, error: "Failed to load batches." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await request.json();
+
+    const requestedProgramCode = String(body.programCode || "")
+      .trim()
+      .toUpperCase();
+    const batchCode = String(body.batchCode || "").trim().toUpperCase();
+    const admissionTerm = String(body.admissionTerm || "").trim().toUpperCase();
+    const isActive = body.isActive !== false;
+
+    if (!requestedProgramCode) {
+      return NextResponse.json(
+        { ok: false, error: "programCode is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!batchCode) {
+      return NextResponse.json(
+        { ok: false, error: "batchCode is required." },
+        { status: 400 }
+      );
+    }
+
+    const resolved = await getProgramCandidates(requestedProgramCode);
+
+    if (resolved.candidates.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: "No target program could be resolved." },
+        { status: 400 }
+      );
+    }
+
+    const targetProgram = [...resolved.candidates].sort((a, b) => {
+      return sourcePriority(a.source) - sourcePriority(b.source);
+    })[0];
+
+    const existing = await prisma.batches.findFirst({
+      where: {
+        program_id: targetProgram.id,
+        batch_code: batchCode,
+      },
+      include: {
+        programs: true,
+      },
+    });
+
+    if (existing) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Batch ${batchCode} already exists under ${existing.programs.short_name}.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    const created = await prisma.batches.create({
+      data: {
+        program_id: targetProgram.id,
+        batch_code: batchCode,
+        admission_term: admissionTerm || null,
+        is_active: isActive,
+      },
+      include: {
+        programs: true,
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      message: "Batch created successfully.",
+      batch: {
+        id: created.id,
+        programId: created.program_id,
+        programCode: created.programs.short_name,
+        programName: created.programs.name,
+        batchCode: created.batch_code,
+        admissionTerm: created.admission_term || "",
+        active: Boolean(created.is_active),
+      },
+      resolvedProgram: {
+        requestedProgramCode,
+        actualProgramCode: created.programs.short_name,
+        actualProgramName: created.programs.name,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    const message =
+      error instanceof Error ? error.message : "Failed to create batch.";
+    return NextResponse.json(
+      { ok: false, error: message },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: prisma\schema.prisma =====
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model academic_terms {
+  id                          Int                           @id @default(autoincrement())
+  name                        String                        @unique @db.VarChar(100)
+  year                        Int
+  term_type                   String                        @db.VarChar(30)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  faculty_course_selections   faculty_course_selections[]
+  offerings                   offerings[]
+}
+
+model batch_completed_courses {
+  id                Int             @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int?
+  course_code       String          @db.VarChar(100)
+  course_title      String          @db.VarChar(300)
+  normalized_title  String          @db.VarChar(300)
+  credit            Float
+  grade             String?         @db.VarChar(20)
+  source_student_id String?         @db.VarChar(100)
+  source_file_name  String?         @db.VarChar(300)
+  academic_terms    academic_terms? @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batch_current_registrations {
+  id                Int            @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int
+  course_code       String         @db.VarChar(100)
+  course_title      String         @db.VarChar(300)
+  normalized_title  String         @db.VarChar(300)
+  credit            Float
+  source_student_id String?        @db.VarChar(100)
+  source_file_name  String?        @db.VarChar(300)
+  academic_terms    academic_terms @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches        @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batches {
+  id                          Int                           @id @default(autoincrement())
+  program_id                  Int
+  batch_code                  String                        @db.VarChar(100)
+  admission_term              String?                       @db.VarChar(100)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  programs                    programs                      @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_course_batches      offered_course_batches[]
+
+  @@unique([program_id, batch_code], map: "uq_program_batch")
+}
+
+model departments {
+  id         Int        @id @default(autoincrement())
+  name       String     @unique @db.VarChar(200)
+  short_name String     @unique @db.VarChar(50)
+  programs   programs[]
+  teachers   teachers[]
+}
+
+model master_courses {
+  id               Int               @id @default(autoincrement())
+  program_id       Int
+  course_code      String
+  course_title     String
+  normalized_title String
+  credit           Float
+  course_type      String
+  level_term       String?
+  group_name       String?
+  is_active        Boolean           @default(true)
+  created_at       DateTime          @default(now())
+  curriculum_key   String?
+  updated_at       DateTime          @default(now()) @updatedAt
+  program          programs          @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  offered_courses  offered_courses[]
+
+  @@unique([program_id, course_code])
+  @@unique([curriculum_key, course_code])
+  @@index([curriculum_key])
+}
+
+model offered_course_batches {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  batch_id          Int
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_slots {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  day_of_week       String          @db.VarChar(20)
+  start_time        String          @db.VarChar(10)
+  end_time          String          @db.VarChar(10)
+  room_id           Int
+  slot_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rooms             rooms           @relation(fields: [room_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_teachers {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  assigned_credit   Float
+  load_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_courses {
+  id                        Int                         @id @default(autoincrement())
+  offering_id               Int
+  master_course_id          Int
+  section                   String                      @db.VarChar(20)
+  is_cooffered              Boolean?                    @default(false)
+  primary_offered_course_id Int?
+  notes                     String?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_batches    offered_course_batches[]
+  offered_course_slots      offered_course_slots[]
+  offered_course_teachers   offered_course_teachers[]
+  master_courses            master_courses              @relation(fields: [master_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offerings                 offerings                   @relation(fields: [offering_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+    offered_course_manual_cooffers offered_course_manual_cooffers[]
+  primary_offered_course    offered_courses?            @relation("offered_course_cooffer_links", fields: [primary_offered_course_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  secondary_offered_courses offered_courses[]           @relation("offered_course_cooffer_links")
+
+  @@index([offering_id, section], map: "ix_offered_courses_offering_section")
+  @@index([primary_offered_course_id], map: "ix_offered_courses_primary_offered_course_id")
+}
+
+model offerings {
+  id                  Int               @id @default(autoincrement())
+  academic_term_id    Int
+  program_id          Int
+  prepared_by_user_id Int
+  status              String            @db.VarChar(30)
+  created_at          DateTime?         @default(now()) @db.Timestamptz(6)
+  offered_courses     offered_courses[]
+  academic_terms      academic_terms    @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users               users             @relation(fields: [prepared_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  programs            programs          @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_course_selections {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  academic_term_id  Int
+  priority_order    Int?
+  status            String          @db.VarChar(30)
+  selected_at       DateTime?       @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?       @default(now()) @updatedAt @db.Timestamptz(6)
+  confirmed_at      DateTime?       @db.Timestamptz(6)
+  academic_terms    academic_terms  @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([offered_course_id, teacher_id], map: "uq_faculty_course_selection")
+  @@index([teacher_id], map: "ix_faculty_course_selections_teacher_id")
+  @@index([academic_term_id], map: "ix_faculty_course_selections_term_id")
+  @@index([status], map: "ix_faculty_course_selections_status")
+  @@index([teacher_id, academic_term_id], map: "ix_faculty_course_selections_teacher_term")
+}
+
+model programs {
+  id             Int              @id @default(autoincrement())
+  department_id  Int
+  name           String           @db.VarChar(200)
+  short_name     String           @db.VarChar(50)
+  batches        batches[]
+  master_courses master_courses[]
+  offerings      offerings[]
+  departments    departments      @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([department_id, name], map: "uq_program_department_name")
+}
+
+model rooms {
+  id                   Int                    @id @default(autoincrement())
+  room_code            String                 @unique @db.VarChar(100)
+  room_type            String                 @db.VarChar(50)
+  capacity             Int?
+  is_active            Boolean?
+  offered_course_slots offered_course_slots[]
+}
+
+model student_report_logs {
+  id                        Int       @id @default(autoincrement())
+  student_id                String    @db.VarChar(100)
+  student_name              String?   @db.VarChar(200)
+  uploaded_by_user_id       Int
+  transcript_filename       String?   @db.VarChar(300)
+  registration_filename     String?   @db.VarChar(300)
+  latest_completed_semester String?   @db.VarChar(100)
+  registration_semester     String?   @db.VarChar(100)
+  total_earned_credits      Float?
+  gpa                       Float?
+  generated_excel_path      String?   @db.VarChar(500)
+  created_at                DateTime? @default(now()) @db.Timestamptz(6)
+  users                     users     @relation(fields: [uploaded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([id], map: "ix_student_report_logs_id")
+  @@index([student_id], map: "ix_student_report_logs_student_id")
+}
+
+model teachers {
+  id                        Int                         @id @default(autoincrement())
+  department_id             Int
+  teacher_code              String                      @unique @db.VarChar(100)
+  full_name                 String                      @db.VarChar(200)
+  designation               String?                     @db.VarChar(150)
+  email                     String?                     @db.VarChar(200)
+  phone                     String?                     @db.VarChar(50)
+  seniority_level           Int?
+  is_active                 Boolean?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_teachers   offered_course_teachers[]
+  departments               departments                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                     users[]
+
+  @@index([department_id], map: "ix_teachers_department_id")
+  @@index([seniority_level], map: "ix_teachers_seniority_level")
+}
+
+model users {
+  id                  Int                   @id @default(autoincrement())
+  username            String                @unique(map: "ix_users_username") @db.VarChar(100)
+  full_name           String                @db.VarChar(200)
+  password_hash       String
+  role                String                @db.VarChar(50)
+  is_active           Boolean?
+  teacher_id          Int?
+  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  offerings           offerings[]
+  student_report_logs student_report_logs[]
+  teachers            teachers?             @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  // ? ADD THIS LINE ONLY
+  faculty_login_sessions FacultyLoginSession[]
+
+  @@index([id], map: "ix_users_id")
+}
+
+model academic_catalog_entries {
+  id                 Int      @id @default(autoincrement())
+  department_code    String
+  department_name    String
+  program_code       String   @unique
+  program_title      String
+  program_type       String
+  study_shift        String
+  curriculum_version String
+  student_id_suffix  String?  @unique
+  display_label      String
+  is_active          Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @default(now()) @updatedAt
+  curriculum_key     String?
+
+  @@index([department_code])
+  @@index([program_type])
+  @@index([study_shift])
+  @@index([curriculum_version])
+  @@index([curriculum_key])
+}
+model SystemSetting {
+  id               Int      @id @default(autoincrement())
+  settingKey       String   @unique
+  settingValue     String
+  updatedByUserId  Int?
+  updatedAt        DateTime @updatedAt
+}
+
+model FacultyLoginSession {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  sessionToken  String   @unique
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+
+  user          users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model offered_course_manual_cooffers {
+  id                  Int             @id @default(autoincrement())
+  offered_course_id   Int
+  target_program_code String?         @db.VarChar(100)
+  manual_course_code  String          @db.VarChar(100)
+  note                String?         @db.VarChar(300)
+  created_at          DateTime        @default(now())
+  offered_courses     offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([offered_course_id], map: "ix_offered_course_manual_cooffers_offered_course_id")
+  @@index([target_program_code], map: "ix_offered_course_manual_cooffers_target_program_code")
+}
+model faculty_login_sessions {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  teacher_id    Int?
+  session_token String   @unique @db.VarChar(191)
+  created_at    DateTime @default(now())
+  expires_at    DateTime
+  warned_at     DateTime?
+  revoked_at    DateTime?
+
+  @@index([user_id], map: "ix_faculty_login_sessions_user_id")
+  @@index([teacher_id], map: "ix_faculty_login_sessions_teacher_id")
+  @@index([expires_at], map: "ix_faculty_login_sessions_expires_at")
+}
+
+model notifications {
+  id                Int      @id @default(autoincrement())
+  recipient_user_id Int?
+  recipient_teacher_id Int?
+  event_type        String   @db.VarChar(100)
+  title             String   @db.VarChar(200)
+  message           String   @db.Text
+  is_read           Boolean  @default(false)
+  created_by_user_id Int?
+  created_at        DateTime @default(now())
+  read_at           DateTime?
+
+  @@index([recipient_user_id], map: "ix_notifications_recipient_user_id")
+  @@index([recipient_teacher_id], map: "ix_notifications_recipient_teacher_id")
+  @@index([event_type], map: "ix_notifications_event_type")
+  @@index([is_read], map: "ix_notifications_is_read")
+}
