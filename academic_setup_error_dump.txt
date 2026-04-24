@@ -1,0 +1,880 @@
+
+
+===== FILE: src\app\admin\academic-setup\page-client.tsx =====
+
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+type SetupRow = {
+  id: number;
+  department_code: string;
+  department_name: string;
+  program_code: string;
+  program_title: string;
+  program_type: string;
+  study_shift: string;
+  curriculum_version: string;
+  curriculum_key: string | null;
+  student_id_suffix: string | null;
+  display_label: string;
+  is_active: boolean;
+};
+
+const PROGRAM_TYPES = ["REG", "EVE", "ACCELERATED", "OTHER"];
+const SHIFTS = ["REG", "EVE", "ACCELERATED", "OTHER"];
+const CURRICULUMS = ["NEW", "OLD", "OTHER"];
+
+export default function AcademicSetupPageClient() {
+  const [items, setItems] = useState<SetupRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const [departmentCode, setDepartmentCode] = useState("");
+  const [departmentName, setDepartmentName] = useState("");
+  const [programCode, setProgramCode] = useState("");
+  const [programTitle, setProgramTitle] = useState("");
+  const [programType, setProgramType] = useState("REG");
+  const [studyShift, setStudyShift] = useState("REG");
+  const [curriculumVersion, setCurriculumVersion] = useState("NEW");
+  const [curriculumMode, setCurriculumMode] = useState("UNIQUE");
+  const [curriculumKey, setCurriculumKey] = useState("");
+  const [studentIdSuffix, setStudentIdSuffix] = useState("");
+  const [isActive, setIsActive] = useState(true);
+
+  const generatedUniqueKey = useMemo(() => {
+    return programCode.trim().toUpperCase();
+  }, [programCode]);
+
+  const generatedSharedKey = useMemo(() => {
+    const dept = departmentCode.trim().toUpperCase();
+    const shift = studyShift.trim().toUpperCase();
+    return dept && shift ? `${dept}-${shift}-SHARED` : "";
+  }, [departmentCode, studyShift]);
+
+  const resolvedCurriculumKey = useMemo(() => {
+    if (curriculumMode === "UNIQUE") return generatedUniqueKey;
+    if (curriculumMode === "SHARED") return curriculumKey.trim().toUpperCase() || generatedSharedKey;
+    return generatedUniqueKey;
+  }, [curriculumMode, generatedUniqueKey, curriculumKey, generatedSharedKey]);
+
+  async function loadData() {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/academic-setup/manage", { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to load academic setup.");
+      }
+      setItems(data.items || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load academic setup.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  useEffect(() => {
+    if (curriculumMode === "SHARED" && !curriculumKey && generatedSharedKey) {
+      setCurriculumKey(generatedSharedKey);
+    }
+  }, [curriculumMode, curriculumKey, generatedSharedKey]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setMessage("");
+    setError("");
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/academic-setup/manage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          departmentCode,
+          departmentName,
+          programCode,
+          programTitle,
+          programType,
+          studyShift,
+          curriculumVersion,
+          curriculumKey: resolvedCurriculumKey,
+          studentIdSuffix,
+          isActive,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to save academic setup.");
+      }
+
+      setMessage(data.message || "Academic setup saved successfully.");
+      setDepartmentCode("");
+      setDepartmentName("");
+      setProgramCode("");
+      setProgramTitle("");
+      setProgramType("REG");
+      setStudyShift("REG");
+      setCurriculumVersion("NEW");
+      setCurriculumMode("UNIQUE");
+      setCurriculumKey("");
+      setStudentIdSuffix("");
+      setIsActive(true);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save academic setup.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div>
+          <h2 className="text-xl font-bold text-slate-900">Primary Academic Identity Setup</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Define academic identities clearly. Use unique curriculum when this identity has its own course list. Use shared curriculum only when two identities truly use the same exact course list.
+          </p>
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-5 text-sm leading-7 text-slate-700">
+          <p className="font-semibold text-slate-900">Professional rule</p>
+          <p className="mt-2">
+            <span className="font-semibold">RAE REG OLD</span> and <span className="font-semibold">RAE REG NEW</span> may share one curriculum key.
+          </p>
+          <p className="mt-2">
+            <span className="font-semibold">EEE REG NEW</span> and <span className="font-semibold">EEE EVE NEW</span> should use different curriculum keys.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-sm font-medium">Department Code</label>
+            <input
+              value={departmentCode}
+              onChange={(e) => setDepartmentCode(e.target.value.toUpperCase())}
+              className="w-full rounded-2xl border px-3 py-2"
+              placeholder="EEE"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Department Name</label>
+            <input
+              value={departmentName}
+              onChange={(e) => setDepartmentName(e.target.value)}
+              className="w-full rounded-2xl border px-3 py-2"
+              placeholder="Electrical and Electronic Engineering"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Program Code</label>
+            <input
+              value={programCode}
+              onChange={(e) => setProgramCode(e.target.value.toUpperCase())}
+              className="w-full rounded-2xl border px-3 py-2"
+              placeholder="BSC-EEE-REG-NEW"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Program Title</label>
+            <input
+              value={programTitle}
+              onChange={(e) => setProgramTitle(e.target.value)}
+              className="w-full rounded-2xl border px-3 py-2"
+              placeholder="BSc EEE"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Program Type</label>
+            <select
+              value={programType}
+              onChange={(e) => setProgramType(e.target.value)}
+              className="w-full rounded-2xl border px-3 py-2"
+            >
+              {PROGRAM_TYPES.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Study Shift</label>
+            <select
+              value={studyShift}
+              onChange={(e) => setStudyShift(e.target.value)}
+              className="w-full rounded-2xl border px-3 py-2"
+            >
+              {SHIFTS.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Curriculum Version</label>
+            <select
+              value={curriculumVersion}
+              onChange={(e) => setCurriculumVersion(e.target.value)}
+              className="w-full rounded-2xl border px-3 py-2"
+            >
+              {CURRICULUMS.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Curriculum Type</label>
+            <select
+              value={curriculumMode}
+              onChange={(e) => setCurriculumMode(e.target.value)}
+              className="w-full rounded-2xl border px-3 py-2"
+            >
+              <option value="UNIQUE">Unique Curriculum</option>
+              <option value="SHARED">Shared Curriculum</option>
+            </select>
+          </div>
+
+          {curriculumMode === "SHARED" ? (
+            <div className="md:col-span-2">
+              <label className="mb-1 block text-sm font-medium">Shared Curriculum Key</label>
+              <select
+                value={curriculumKey}
+                onChange={(e) => setCurriculumKey(e.target.value)}
+                className="w-full rounded-2xl border px-3 py-2"
+              >
+                <option value={generatedSharedKey}>{generatedSharedKey || "Generate shared key first"}</option>
+                <option value={`${departmentCode.trim().toUpperCase()}-COMMON-SHARED`}>
+                  {(departmentCode.trim().toUpperCase() ? `${departmentCode.trim().toUpperCase()}-COMMON-SHARED` : "DEPT-COMMON-SHARED")}
+                </option>
+              </select>
+            </div>
+          ) : (
+            <div className="md:col-span-2">
+              <label className="mb-1 block text-sm font-medium">Resolved Unique Curriculum Key</label>
+              <input
+                value={generatedUniqueKey}
+                readOnly
+                className="w-full rounded-2xl border bg-slate-50 px-3 py-2"
+              />
+            </div>
+          )}
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Student ID Suffix (ZZZ)</label>
+            <input
+              value={studentIdSuffix}
+              onChange={(e) => setStudentIdSuffix(e.target.value.toUpperCase())}
+              className="w-full rounded-2xl border px-3 py-2"
+              placeholder="206"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 pt-8">
+            <input
+              id="isActive"
+              type="checkbox"
+              checked={isActive}
+              onChange={(e) => setIsActive(e.target.checked)}
+            />
+            <label htmlFor="isActive" className="text-sm font-medium">
+              Active
+            </label>
+          </div>
+
+          <div className="md:col-span-2 rounded-2xl border bg-slate-50 p-4 text-sm">
+            <span className="font-semibold text-slate-900">Final curriculum key that will be saved:</span>{" "}
+            <span className="font-mono">{resolvedCurriculumKey || "-"}</span>
+          </div>
+
+          <div className="md:col-span-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+            >
+              {loading ? "Saving..." : "Save Academic Setup"}
+            </button>
+          </div>
+        </form>
+
+        {message ? (
+          <p className="mt-4 rounded-xl bg-green-50 px-4 py-3 text-sm text-green-700">{message}</p>
+        ) : null}
+        {error ? (
+          <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
+        ) : null}
+      </div>
+
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-bold text-slate-900">Configured Academic Identities</h2>
+
+        <div className="mt-5 overflow-x-auto">
+          <table className="min-w-full border-collapse text-sm">
+            <thead>
+              <tr className="border-b bg-slate-50 text-left">
+                <th className="px-3 py-2">Department</th>
+                <th className="px-3 py-2">Program Code</th>
+                <th className="px-3 py-2">Program Title</th>
+                <th className="px-3 py-2">Curriculum Key</th>
+                <th className="px-3 py-2">Shift</th>
+                <th className="px-3 py-2">Curriculum</th>
+                <th className="px-3 py-2">Suffix</th>
+                <th className="px-3 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id} className="border-b">
+                  <td className="px-3 py-2">{item.department_code}</td>
+                  <td className="px-3 py-2">{item.program_code}</td>
+                  <td className="px-3 py-2">{item.program_title}</td>
+                  <td className="px-3 py-2">{item.curriculum_key || "-"}</td>
+                  <td className="px-3 py-2">{item.study_shift}</td>
+                  <td className="px-3 py-2">{item.curriculum_version}</td>
+                  <td className="px-3 py-2">{item.student_id_suffix || "-"}</td>
+                  <td className="px-3 py-2">{item.is_active ? "Active" : "Inactive"}</td>
+                </tr>
+              ))}
+              {!items.length ? (
+                <tr>
+                  <td className="px-3 py-4 text-slate-500" colSpan={8}>
+                    No academic setup rows found yet.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+===== FILE: src\app\admin\academic-setup\page.tsx =====
+
+import AdminLayout from "@/components/admin-layout";
+import PageClient from "./page-client";
+
+export default function AcademicSetupPage() {
+  return (
+    <AdminLayout title="Academic Setup">
+      <PageClient />
+    </AdminLayout>
+  );
+}
+
+
+===== FILE: src\app\api\academic-setup\manage\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+
+function normalizeText(value: string) {
+  return value.trim();
+}
+
+function normalizeUpper(value: string) {
+  return value.trim().toUpperCase();
+}
+
+function buildDisplayLabel(input: {
+  departmentCode: string;
+  programTitle: string;
+  studyShift: string;
+  curriculumVersion: string;
+}) {
+  return `${input.departmentCode} | ${input.programTitle} | ${input.studyShift} | ${input.curriculumVersion}`;
+}
+
+export async function GET() {
+  await requireCoordinatorOrAdminApi();
+
+  const rows = await prisma.academic_catalog_entries.findMany({
+    orderBy: [
+      { department_code: "asc" },
+      { program_title: "asc" },
+      { study_shift: "asc" },
+      { curriculum_version: "asc" },
+    ],
+  });
+
+  return NextResponse.json({ items: rows });
+}
+
+export async function POST(req: NextRequest) {
+  await requireCoordinatorOrAdminApi();
+
+  const body = await req.json();
+
+  const departmentCode = normalizeUpper(body.departmentCode || "");
+  const departmentName = normalizeText(body.departmentName || "");
+  const programCode = normalizeUpper(body.programCode || "");
+  const programTitle = normalizeText(body.programTitle || "");
+  const programType = normalizeUpper(body.programType || "");
+  const studyShift = normalizeUpper(body.studyShift || "");
+  const curriculumVersion = normalizeUpper(body.curriculumVersion || "");
+  const curriculumKeyRaw = normalizeUpper(body.curriculumKey || "");
+  const curriculumKey = curriculumKeyRaw || programCode;
+  const studentIdSuffixRaw = (body.studentIdSuffix || "").trim();
+  const studentIdSuffix = studentIdSuffixRaw ? normalizeUpper(studentIdSuffixRaw) : null;
+  const isActive = Boolean(body.isActive ?? true);
+
+  if (!departmentCode) {
+    return NextResponse.json({ error: "Department code is required." }, { status: 400 });
+  }
+  if (!departmentName) {
+    return NextResponse.json({ error: "Department name is required." }, { status: 400 });
+  }
+  if (!programCode) {
+    return NextResponse.json({ error: "Program code is required." }, { status: 400 });
+  }
+  if (!programTitle) {
+    return NextResponse.json({ error: "Program title is required." }, { status: 400 });
+  }
+  if (!programType) {
+    return NextResponse.json({ error: "Program type is required." }, { status: 400 });
+  }
+  if (!studyShift) {
+    return NextResponse.json({ error: "Study shift is required." }, { status: 400 });
+  }
+  if (!curriculumVersion) {
+    return NextResponse.json({ error: "Curriculum version is required." }, { status: 400 });
+  }
+
+  const displayLabel = buildDisplayLabel({
+    departmentCode,
+    programTitle,
+    studyShift,
+    curriculumVersion,
+  });
+
+  const saved = await prisma.academic_catalog_entries.upsert({
+    where: { program_code: programCode },
+    update: {
+      department_code: departmentCode,
+      department_name: departmentName,
+      program_title: programTitle,
+      program_type: programType,
+      study_shift: studyShift,
+      curriculum_version: curriculumVersion,
+      curriculum_key: curriculumKey,
+      student_id_suffix: studentIdSuffix,
+      display_label: displayLabel,
+      is_active: isActive,
+    },
+    create: {
+      department_code: departmentCode,
+      department_name: departmentName,
+      program_code: programCode,
+      program_title: programTitle,
+      program_type: programType,
+      study_shift: studyShift,
+      curriculum_version: curriculumVersion,
+      curriculum_key: curriculumKey,
+      student_id_suffix: studentIdSuffix,
+      display_label: displayLabel,
+      is_active: isActive,
+    },
+  });
+
+  return NextResponse.json({
+    message: "Academic setup saved successfully.",
+    item: saved,
+  });
+}
+
+
+===== FILE: src\lib\prisma.ts =====
+
+import { PrismaClient } from "@prisma/client";
+
+declare global {
+  // eslint-disable-next-line no-var
+  var prismaGlobal: PrismaClient | undefined;
+}
+
+export const prisma =
+  global.prismaGlobal ??
+  new PrismaClient({
+    log: ["error", "warn"],
+  });
+
+if (process.env.NODE_ENV !== "production") {
+  global.prismaGlobal = prisma;
+}
+
+
+===== FILE: prisma\schema.prisma =====
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model academic_terms {
+  id                          Int                           @id @default(autoincrement())
+  name                        String                        @unique @db.VarChar(100)
+  year                        Int
+  term_type                   String                        @db.VarChar(30)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  faculty_course_selections   faculty_course_selections[]
+  offerings                   offerings[]
+}
+
+model batch_completed_courses {
+  id                Int             @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int?
+  course_code       String          @db.VarChar(100)
+  course_title      String          @db.VarChar(300)
+  normalized_title  String          @db.VarChar(300)
+  credit            Float
+  grade             String?         @db.VarChar(20)
+  source_student_id String?         @db.VarChar(100)
+  source_file_name  String?         @db.VarChar(300)
+  academic_terms    academic_terms? @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batch_current_registrations {
+  id                Int            @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int
+  course_code       String         @db.VarChar(100)
+  course_title      String         @db.VarChar(300)
+  normalized_title  String         @db.VarChar(300)
+  credit            Float
+  source_student_id String?        @db.VarChar(100)
+  source_file_name  String?        @db.VarChar(300)
+  academic_terms    academic_terms @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches        @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batches {
+  id                          Int                           @id @default(autoincrement())
+  program_id                  Int
+  batch_code                  String                        @db.VarChar(100)
+  admission_term              String?                       @db.VarChar(100)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  programs                    programs                      @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_course_batches      offered_course_batches[]
+
+  @@unique([program_id, batch_code], map: "uq_program_batch")
+}
+
+model departments {
+  id         Int        @id @default(autoincrement())
+  name       String     @unique @db.VarChar(200)
+  short_name String     @unique @db.VarChar(50)
+  programs   programs[]
+  teachers   teachers[]
+}
+
+model master_courses {
+  id               Int               @id @default(autoincrement())
+  program_id       Int
+  course_code      String
+  course_title     String
+  normalized_title String
+  credit           Float
+  course_type      String
+  level_term       String?
+  group_name       String?
+  is_active        Boolean           @default(true)
+  created_at       DateTime          @default(now())
+  curriculum_key   String?
+  updated_at       DateTime          @default(now()) @updatedAt
+  program          programs          @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  offered_courses  offered_courses[]
+
+  @@unique([program_id, course_code])
+  @@unique([curriculum_key, course_code])
+  @@index([curriculum_key])
+}
+
+model offered_course_batches {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  batch_id          Int
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_slots {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  day_of_week       String          @db.VarChar(20)
+  start_time        String          @db.VarChar(10)
+  end_time          String          @db.VarChar(10)
+  room_id           Int
+  slot_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rooms             rooms           @relation(fields: [room_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_teachers {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  assigned_credit   Float
+  load_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_courses {
+  id                        Int                         @id @default(autoincrement())
+  offering_id               Int
+  master_course_id          Int
+  section                   String                      @db.VarChar(20)
+  is_cooffered              Boolean?                    @default(false)
+  primary_offered_course_id Int?
+  notes                     String?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_batches    offered_course_batches[]
+  offered_course_slots      offered_course_slots[]
+  offered_course_teachers   offered_course_teachers[]
+  master_courses            master_courses              @relation(fields: [master_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offerings                 offerings                   @relation(fields: [offering_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+    offered_course_manual_cooffers offered_course_manual_cooffers[]
+  primary_offered_course    offered_courses?            @relation("offered_course_cooffer_links", fields: [primary_offered_course_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  secondary_offered_courses offered_courses[]           @relation("offered_course_cooffer_links")
+
+  @@index([offering_id, section], map: "ix_offered_courses_offering_section")
+  @@index([primary_offered_course_id], map: "ix_offered_courses_primary_offered_course_id")
+}
+
+model offerings {
+  id                  Int               @id @default(autoincrement())
+  academic_term_id    Int
+  program_id          Int
+  prepared_by_user_id Int
+  status              String            @db.VarChar(30)
+  created_at          DateTime?         @default(now()) @db.Timestamptz(6)
+  offered_courses     offered_courses[]
+  academic_terms      academic_terms    @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users               users             @relation(fields: [prepared_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  programs            programs          @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_course_selections {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  academic_term_id  Int
+  priority_order    Int?
+  status            String          @db.VarChar(30)
+  selected_at       DateTime?       @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?       @default(now()) @updatedAt @db.Timestamptz(6)
+  confirmed_at      DateTime?       @db.Timestamptz(6)
+  academic_terms    academic_terms  @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([offered_course_id, teacher_id], map: "uq_faculty_course_selection")
+  @@index([teacher_id], map: "ix_faculty_course_selections_teacher_id")
+  @@index([academic_term_id], map: "ix_faculty_course_selections_term_id")
+  @@index([status], map: "ix_faculty_course_selections_status")
+  @@index([teacher_id, academic_term_id], map: "ix_faculty_course_selections_teacher_term")
+}
+
+model programs {
+  id             Int              @id @default(autoincrement())
+  department_id  Int
+  name           String           @db.VarChar(200)
+  short_name     String           @db.VarChar(50)
+  batches        batches[]
+  master_courses master_courses[]
+  offerings      offerings[]
+  departments    departments      @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([department_id, name], map: "uq_program_department_name")
+}
+
+model rooms {
+  id                   Int                    @id @default(autoincrement())
+  room_code            String                 @unique @db.VarChar(100)
+  room_type            String                 @db.VarChar(50)
+  capacity             Int?
+  is_active            Boolean?
+  offered_course_slots offered_course_slots[]
+}
+
+model student_report_logs {
+  id                        Int       @id @default(autoincrement())
+  student_id                String    @db.VarChar(100)
+  student_name              String?   @db.VarChar(200)
+  uploaded_by_user_id       Int
+  transcript_filename       String?   @db.VarChar(300)
+  registration_filename     String?   @db.VarChar(300)
+  latest_completed_semester String?   @db.VarChar(100)
+  registration_semester     String?   @db.VarChar(100)
+  total_earned_credits      Float?
+  gpa                       Float?
+  generated_excel_path      String?   @db.VarChar(500)
+  created_at                DateTime? @default(now()) @db.Timestamptz(6)
+  users                     users     @relation(fields: [uploaded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([id], map: "ix_student_report_logs_id")
+  @@index([student_id], map: "ix_student_report_logs_student_id")
+}
+
+model teachers {
+  id                        Int                         @id @default(autoincrement())
+  department_id             Int
+  teacher_code              String                      @unique @db.VarChar(100)
+  full_name                 String                      @db.VarChar(200)
+  designation               String?                     @db.VarChar(150)
+  email                     String?                     @db.VarChar(200)
+  phone                     String?                     @db.VarChar(50)
+  seniority_level           Int?
+  is_active                 Boolean?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_teachers   offered_course_teachers[]
+  departments               departments                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                     users[]
+
+  @@index([department_id], map: "ix_teachers_department_id")
+  @@index([seniority_level], map: "ix_teachers_seniority_level")
+}
+
+model users {
+  id                  Int                   @id @default(autoincrement())
+  username            String                @unique(map: "ix_users_username") @db.VarChar(100)
+  full_name           String                @db.VarChar(200)
+  password_hash       String
+  role                String                @db.VarChar(50)
+  is_active           Boolean?
+  teacher_id          Int?
+  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  offerings           offerings[]
+  student_report_logs student_report_logs[]
+  teachers            teachers?             @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  // ? ADD THIS LINE ONLY
+  faculty_login_sessions FacultyLoginSession[]
+
+  @@index([id], map: "ix_users_id")
+}
+
+model academic_catalog_entries {
+  id                 Int      @id @default(autoincrement())
+  department_code    String
+  department_name    String
+  program_code       String   @unique
+  program_title      String
+  program_type       String
+  study_shift        String
+  curriculum_version String
+  student_id_suffix  String?  @unique
+  display_label      String
+  is_active          Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @default(now()) @updatedAt
+  curriculum_key     String?
+
+  @@index([department_code])
+  @@index([program_type])
+  @@index([study_shift])
+  @@index([curriculum_version])
+  @@index([curriculum_key])
+}
+model SystemSetting {
+  id               Int      @id @default(autoincrement())
+  settingKey       String   @unique
+  settingValue     String
+  updatedByUserId  Int?
+  updatedAt        DateTime @updatedAt
+}
+
+model FacultyLoginSession {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  sessionToken  String   @unique
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+
+  user          users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model offered_course_manual_cooffers {
+  id                  Int             @id @default(autoincrement())
+  offered_course_id   Int
+  target_program_code String?         @db.VarChar(100)
+  manual_course_code  String          @db.VarChar(100)
+  note                String?         @db.VarChar(300)
+  created_at          DateTime        @default(now())
+  offered_courses     offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([offered_course_id], map: "ix_offered_course_manual_cooffers_offered_course_id")
+  @@index([target_program_code], map: "ix_offered_course_manual_cooffers_target_program_code")
+}
+model faculty_login_sessions {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  teacher_id    Int?
+  session_token String   @unique @db.VarChar(191)
+  created_at    DateTime @default(now())
+  expires_at    DateTime
+  warned_at     DateTime?
+  revoked_at    DateTime?
+
+  @@index([user_id], map: "ix_faculty_login_sessions_user_id")
+  @@index([teacher_id], map: "ix_faculty_login_sessions_teacher_id")
+  @@index([expires_at], map: "ix_faculty_login_sessions_expires_at")
+}
+
+model notifications {
+  id                Int      @id @default(autoincrement())
+  recipient_user_id Int?
+  recipient_teacher_id Int?
+  event_type        String   @db.VarChar(100)
+  title             String   @db.VarChar(200)
+  message           String   @db.Text
+  is_read           Boolean  @default(false)
+  created_by_user_id Int?
+  created_at        DateTime @default(now())
+  read_at           DateTime?
+
+  @@index([recipient_user_id], map: "ix_notifications_recipient_user_id")
+  @@index([recipient_teacher_id], map: "ix_notifications_recipient_teacher_id")
+  @@index([event_type], map: "ix_notifications_event_type")
+  @@index([is_read], map: "ix_notifications_is_read")
+}
