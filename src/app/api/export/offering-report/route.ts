@@ -12,6 +12,12 @@ import {
 
 export const runtime = "nodejs";
 
+const REPORT_VISIBLE_OFFERING_STATUSES = [
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
 function normalizeTermName(value: string) {
   return String(value || "").trim().toUpperCase();
 }
@@ -76,7 +82,13 @@ export async function GET(request: NextRequest) {
         primary_offered_course_id: null,
         offerings: {
           academic_term_id: term.id,
-          ...(status ? { status } : {}),
+          ...(status
+            ? { status }
+            : {
+                status: {
+                  in: REPORT_VISIBLE_OFFERING_STATUSES,
+                },
+              }),
         },
       },
       include: {
@@ -142,7 +154,9 @@ export async function GET(request: NextRequest) {
     ws.getCell("A1").value = `Offering Report - ${term.name}`;
     styleTitleRow(ws.getRow(1));
 
-    ws.getCell("A2").value = status ? `Status Filter: ${status}` : "Status Filter: ALL";
+    ws.getCell("A2").value = status
+      ? `Status Filter: ${status}`
+      : `Status Filter: ${REPORT_VISIBLE_OFFERING_STATUSES.join(", ")}`;
 
     ws.addRow([]);
 
@@ -249,7 +263,13 @@ export async function GET(request: NextRequest) {
       ]);
     }
 
-    styleAllBorders(ws, headerRowNumber, headerRowNumber + Math.max(offeredCourses.length, 1), 12);
+    styleAllBorders(
+      ws,
+      headerRowNumber,
+      headerRowNumber + Math.max(offeredCourses.length, 1),
+      12
+    );
+
     autoWidth(ws, [8, 22, 20, 18, 40, 12, 10, 22, 36, 42, 38, 26]);
 
     const buffer = await workbookToBuffer(workbook);

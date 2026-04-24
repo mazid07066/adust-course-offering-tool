@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 
+const REPORT_VISIBLE_OFFERING_STATUSES = [
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
 function csvEscape(value: string | number | null | undefined) {
   const text = String(value ?? "");
   if (text.includes(",") || text.includes('"') || text.includes("\n")) {
@@ -39,7 +45,9 @@ export async function GET(req: NextRequest) {
       where: {
         offerings: {
           academic_term_id: term.id,
-          status: "CONFIRMED",
+          status: {
+            in: REPORT_VISIBLE_OFFERING_STATUSES,
+          },
         },
       },
       include: {

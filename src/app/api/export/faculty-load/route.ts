@@ -6,6 +6,12 @@ import {
   getFacultyLoadMessage,
 } from "@/lib/faculty-assignment-policy";
 
+const REPORT_VISIBLE_OFFERING_STATUSES = [
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
 function csvEscape(value: string | number | null | undefined) {
   const text = String(value ?? "");
   if (text.includes(",") || text.includes('"') || text.includes("\n")) {
@@ -47,14 +53,13 @@ export async function GET(req: NextRequest) {
           primary_offered_course_id: null,
           offerings: {
             academic_term_id: term.id,
-            status: "CONFIRMED",
+            status: {
+              in: REPORT_VISIBLE_OFFERING_STATUSES,
+            },
           },
         },
       },
-      orderBy: [
-        { teacher_id: "asc" },
-        { offered_course_id: "asc" },
-      ],
+      orderBy: [{ teacher_id: "asc" }, { offered_course_id: "asc" }],
       include: {
         teachers: true,
         offered_courses: {
@@ -95,10 +100,12 @@ export async function GET(req: NextRequest) {
     ];
 
     const teacherCreditMap = new Map<number, number>();
+
     for (const row of assignments) {
       teacherCreditMap.set(
         row.teacher_id,
-        (teacherCreditMap.get(row.teacher_id) || 0) + Number(row.assigned_credit || 0)
+        (teacherCreditMap.get(row.teacher_id) || 0) +
+          Number(row.assigned_credit || 0)
       );
     }
 
