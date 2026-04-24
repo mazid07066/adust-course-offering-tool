@@ -71,16 +71,30 @@ export async function GET(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
-    const termName = String(searchParams.get("termName") || "")
-      .trim()
-      .toUpperCase();
 
-    if (!termName) {
-      return NextResponse.json(
-        { error: "termName is required." },
-        { status: 400 }
-      );
-    }
+let termName = String(searchParams.get("termName") || "")
+  .trim()
+  .toUpperCase();
+
+if (!termName) {
+  const latestVisibleOffering = await prisma.offerings.findFirst({
+    where: {
+      status: {
+        in: FACULTY_VISIBLE_OFFERING_STATUSES,
+      },
+    },
+    orderBy: [{ academic_term_id: "desc" }, { id: "desc" }],
+    include: {
+      academic_terms: {
+        select: {
+          name: true,
+        },
+      },
+    },
+  });
+
+  termName = latestVisibleOffering?.academic_terms?.name || "SUMMER 2026";
+}
 
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get("sessionToken")?.value;

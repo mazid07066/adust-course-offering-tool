@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+const ACTIVE_TERM_NAME = "SUMMER 2026";
+
 type CourseSchedule = {
   id: number;
   dayOfWeek: string;
@@ -145,7 +147,7 @@ export default function FacultyCourseChoicePageClient() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  const [activeTermName, setActiveTermName] = useState("");
+  const [activeTermName, setActiveTermName] = useState(ACTIVE_TERM_NAME);
   const [teacherName, setTeacherName] = useState("");
   const [teacherCode, setTeacherCode] = useState("");
   const [designation, setDesignation] = useState("");
@@ -175,7 +177,10 @@ export default function FacultyCourseChoicePageClient() {
     setMessage("");
 
     try {
-      const res = await fetch("/api/faculty/course-choices/options", {
+      const qs = new URLSearchParams();
+      qs.set("termName", ACTIVE_TERM_NAME);
+
+      const res = await fetch(`/api/faculty/course-choices/options?${qs.toString()}`, {
         cache: "no-store",
       });
 
@@ -185,7 +190,7 @@ export default function FacultyCourseChoicePageClient() {
         throw new Error(json.error || "Failed to load faculty choice page.");
       }
 
-      setActiveTermName(json.term?.name || "");
+      setActiveTermName(json.term?.name || ACTIVE_TERM_NAME);
       setTeacherName(json.teacher?.full_name || "");
       setTeacherCode(json.teacher?.teacher_code || "");
       setDesignation(json.teacher?.designation || "");
@@ -641,10 +646,7 @@ export default function FacultyCourseChoicePageClient() {
                       <div className="mt-3 text-sm text-slate-600">
                         Linked Co-offered:{" "}
                         {course.linkedSecondaryCourses
-                          .map(
-                            (x) =>
-                              `${x.programCode} ${x.courseCode} Sec-${x.section}`
-                          )
+                          .map((x) => `${x.programCode} ${x.courseCode} Sec-${x.section}`)
                           .join(", ")}
                       </div>
                     )}

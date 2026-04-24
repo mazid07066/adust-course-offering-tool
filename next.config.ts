@@ -1,5 +1,11 @@
-import type { NextConfig } from "next";
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  experimental: {},
+  allowedDevOrigins: [
+    "192.168.68.100",   // your phone / other PC
+    "localhost",
+    "0.0.0.0"
+  ],
+};
 
-const nextConfig: NextConfig = {};
-
-export default nextConfig;
+module.exports = nextConfig;
