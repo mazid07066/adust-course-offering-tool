@@ -10,32 +10,48 @@ export type OfferingStatus =
   (typeof OFFERING_STATUS)[keyof typeof OFFERING_STATUS];
 
 export function canEditStructure(status: string) {
+  const clean = String(status || "").trim().toUpperCase();
+
   return (
-    status === OFFERING_STATUS.DRAFT ||
-    status === OFFERING_STATUS.BUFFER_READY
+    clean === OFFERING_STATUS.DRAFT ||
+    clean === OFFERING_STATUS.BUFFER_READY
   );
 }
 
 export function canDeleteOffering(status: string) {
-  return status === OFFERING_STATUS.DRAFT;
+  const clean = String(status || "").trim().toUpperCase();
+  return clean === OFFERING_STATUS.DRAFT;
+}
+
+/**
+ * Backward-compatible alias.
+ * Some older routes still import canDelete.
+ */
+export function canDelete(status: string) {
+  return canDeleteOffering(status);
 }
 
 export function canModifySlots(status: string) {
+  const clean = String(status || "").trim().toUpperCase();
+
   return (
-    status === OFFERING_STATUS.DRAFT ||
-    status === OFFERING_STATUS.BUFFER_READY
+    clean === OFFERING_STATUS.DRAFT ||
+    clean === OFFERING_STATUS.BUFFER_READY
   );
 }
 
 export function isFacultyChoiceStage(status: string) {
+  const clean = String(status || "").trim().toUpperCase();
+
   return (
-    status === OFFERING_STATUS.FACULTY_CHOICE_BUFFER ||
-    status === OFFERING_STATUS.FACULTY_CHOICE_FINALIZED
+    clean === OFFERING_STATUS.FACULTY_CHOICE_BUFFER ||
+    clean === OFFERING_STATUS.FACULTY_CHOICE_FINALIZED
   );
 }
 
 export function isFullyLocked(status: string) {
-  return status === OFFERING_STATUS.CONFIRMED;
+  const clean = String(status || "").trim().toUpperCase();
+  return clean === OFFERING_STATUS.CONFIRMED;
 }
 
 export function canTransitionOfferingStatus(

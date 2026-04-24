@@ -15,6 +15,8 @@ type ProgramCandidate = {
     | "CURRICULUM_RELATED_PROGRAM";
 };
 
+type PrismaTx = any;
+
 function uniqueById<T extends { id: number }>(rows: T[]): T[] {
   const seen = new Set<number>();
   const out: T[] = [];
@@ -167,13 +169,11 @@ async function ensureAcademicTerm(termName: string) {
     },
   });
 
-  if (existing) {
-    return existing;
-  }
+  if (existing) return existing;
 
   const parsed = parseAcademicTerm(normalized);
 
-  const created = await prisma.academic_terms.create({
+  return prisma.academic_terms.create({
     data: {
       name: normalized,
       year: parsed.year,
@@ -188,8 +188,6 @@ async function ensureAcademicTerm(termName: string) {
       is_active: true,
     },
   });
-
-  return created;
 }
 
 async function resolvePreparedByUserId() {
@@ -208,9 +206,7 @@ async function resolvePreparedByUserId() {
     },
   });
 
-  if (adminOrCoordinator) {
-    return adminOrCoordinator.id;
-  }
+  if (adminOrCoordinator) return adminOrCoordinator.id;
 
   const anyActiveUser = await prisma.users.findFirst({
     where: {
@@ -224,16 +220,28 @@ async function resolvePreparedByUserId() {
     },
   });
 
-  if (anyActiveUser) {
-    return anyActiveUser.id;
-  }
+  if (anyActiveUser) return anyActiveUser.id;
 
   throw new Error(
     "No active user found in users table. Please ensure at least one active SUPER_ADMIN or COORDINATOR user exists."
   );
 }
 
-async function deleteOfferedCourseCascade(offeredCourseId: number, tx: typeof prisma) {
+async function deleteOfferedCourseCascade(tx: PrismaTx, offeredCourseId: number) {
+  await tx.faculty_course_selections.deleteMany({
+    where: {
+      offered_course_id: offeredCourseId,
+    },
+  });
+
+  if (tx.offered_course_manual_cooffers) {
+    await tx.offered_course_manual_cooffers.deleteMany({
+      where: {
+        offered_course_id: offeredCourseId,
+      },
+    });
+  }
+
   await tx.offered_course_slots.deleteMany({
     where: {
       offered_course_id: offeredCourseId,
@@ -282,7 +290,9 @@ async function deduplicateDraftByLatest(offeringId: number) {
   const toDelete: number[] = [];
 
   for (const row of rows) {
-    const batchIds = row.offered_course_batches.map((b) => b.batch_id).sort((a, b) => a - b);
+    const batchIds = row.offered_course_batches
+      .map((b) => b.batch_id)
+      .sort((a, b) => a - b);
 
     if (batchIds.length === 0) {
       const key = `${row.master_course_id}__NO_BATCH`;
@@ -315,13 +325,11 @@ async function deduplicateDraftByLatest(offeringId: number) {
     }
   }
 
-  if (toDelete.length === 0) {
-    return 0;
-  }
+  if (toDelete.length === 0) return 0;
 
   await prisma.$transaction(async (tx) => {
     for (const offeredCourseId of toDelete) {
-      await deleteOfferedCourseCascade(offeredCourseId, tx);
+      await deleteOfferedCourseCascade(tx, offeredCourseId);
     }
   });
 
@@ -329,9 +337,10 @@ async function deduplicateDraftByLatest(offeringId: number) {
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    await requireCoordinatorOrAdminApi();
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
 
+  try {
     const body = await req.json();
 
     const programCode = String(body.programCode || "").trim().toUpperCase();

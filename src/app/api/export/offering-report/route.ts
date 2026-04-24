@@ -3,7 +3,6 @@ import ExcelJS from "exceljs";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import {
-  addFacultyDetailsSection,
   autoWidth,
   styleAllBorders,
   styleHeaderRow,
@@ -13,16 +12,24 @@ import {
 
 export const runtime = "nodejs";
 
+function normalizeTermName(value: string) {
+  return String(value || "").trim().toUpperCase();
+}
+
 function normalizeSeason(season: string): string {
   const s = season.trim().toLowerCase();
   if (s === "spring") return "SPRING";
   if (s === "summer") return "SUMMER";
   if (s === "fall") return "FALL";
-  throw new Error("Season must be spring, summer, or fall.");
+  return season.trim().toUpperCase();
 }
 
-function buildSemesterTitle(season: string, year: string) {
+function buildTermName(season: string, year: string) {
   return `${normalizeSeason(season)} ${year.trim()}`;
+}
+
+function getRoomText(room: { room_code: string | null } | null) {
+  return room?.room_code || "-";
 }
 
 export async function GET(request: NextRequest) {
@@ -32,128 +39,218 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
 
+    const termNameParam = normalizeTermName(searchParams.get("termName") || "");
     const season = String(searchParams.get("season") || "").trim();
     const year = String(searchParams.get("year") || "").trim();
+    const status = String(searchParams.get("status") || "").trim().toUpperCase();
 
-    if (!season || !year) {
+    const termName =
+      termNameParam || (season && year ? normalizeTermName(buildTermName(season, year)) : "");
+
+    if (!termName) {
       return NextResponse.json(
-        { error: "season and year are required." },
+        { error: "termName is required. Example: ?termName=SUMMER%202026" },
         { status: 400 }
       );
     }
 
-    const semesterTitle = buildSemesterTitle(season, year);
-    const semesterCode = semesterTitle.replace(/\s+/g, "-");
-
-    const semester = await prisma.semester.findUnique({
-      where: { code: semesterCode },
+    const term = await prisma.academic_terms.findFirst({
+      where: {
+        name: termName,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
     });
 
-    if (!semester) {
-      return NextResponse.json({ error: "Semester not found." }, { status: 404 });
+    if (!term) {
+      return NextResponse.json(
+        { error: `Academic term ${termName} was not found.` },
+        { status: 404 }
+      );
     }
 
-    const offerings = await prisma.offering.findMany({
-      where: { semesterId: semester.id },
+    const offeredCourses = await prisma.offered_courses.findMany({
+      where: {
+        primary_offered_course_id: null,
+        offerings: {
+          academic_term_id: term.id,
+          ...(status ? { status } : {}),
+        },
+      },
       include: {
-        course: {
+        offerings: {
+          include: {
+            programs: {
+              include: {
+                departments: true,
+              },
+            },
+            academic_terms: true,
+          },
+        },
+        master_courses: {
           include: {
             program: true,
           },
         },
-        faculty: {
+        offered_course_batches: {
           include: {
-            department: true,
+            batches: true,
           },
         },
-        room: true,
-        slots: true,
-        offeringBatches: {
+        offered_course_slots: {
           include: {
-            batch: true,
+            rooms: true,
+          },
+          orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+        },
+        offered_course_teachers: {
+          include: {
+            teachers: true,
+          },
+        },
+        secondary_offered_courses: {
+          include: {
+            master_courses: {
+              include: {
+                program: true,
+              },
+            },
+            offered_course_batches: {
+              include: {
+                batches: true,
+              },
+            },
           },
         },
       },
-      orderBy: { createdAt: "asc" },
+      orderBy: [
+        { offering_id: "asc" },
+        { section: "asc" },
+        { id: "asc" },
+      ],
     });
 
-    const facultyDetails = offerings
-      .filter((o) => o.faculty)
-      .map((o) => o.faculty!)
-      .reduce<
-        {
-          id: string;
-          initial: string;
-          name: string;
-          designation: string | null;
-          departmentCode: string;
-          phone: string | null;
-          email: string | null;
-        }[]
-      >((acc, faculty) => {
-        if (!acc.find((f) => f.id === faculty.id)) {
-          acc.push({
-            id: faculty.id,
-            initial: faculty.initial,
-            name: faculty.name,
-            designation: faculty.designation,
-            departmentCode: faculty.department.code,
-            phone: faculty.phone,
-            email: faculty.email,
-          });
-        }
-        return acc;
-      }, []);
-
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = "ADUST Course Offering Tool";
+    workbook.creator = "UniFlow Academic Planner";
     workbook.created = new Date();
 
     const ws = workbook.addWorksheet("Offering Report");
 
-    let rowNo = 1;
-    ws.getCell(`A${rowNo}`).value = `Offering Report - ${semester.title}`;
-    styleTitleRow(ws.getRow(rowNo));
-    rowNo += 2;
+    ws.getCell("A1").value = `Offering Report - ${term.name}`;
+    styleTitleRow(ws.getRow(1));
+
+    ws.getCell("A2").value = status ? `Status Filter: ${status}` : "Status Filter: ALL";
+
+    ws.addRow([]);
+
+    const headerRowNumber = 4;
 
     ws.addRow([
-      "Department",
-      "Main Course Code",
-      "Co-offered Course Code",
+      "SL",
+      "Offering Status",
+      "Primary Program",
+      "Course Code",
       "Course Title",
       "Section",
-      "Batches",
-      "Faculty Initial",
-      "Faculty Name",
-      "Room",
-      "Schedule",
       "Credit",
+      "Batches",
+      "Faculty",
+      "Schedule",
+      "Co-offered Courses",
+      "Co-offered Batches",
     ]);
-    styleHeaderRow(ws.getRow(rowNo));
-    const headerRow = rowNo;
-    rowNo += 1;
 
-    for (const offering of offerings) {
+    styleHeaderRow(ws.getRow(headerRowNumber));
+
+    offeredCourses.forEach((offeredCourse, index) => {
+      const primaryCourse = offeredCourse.master_courses;
+
+      const batchCodes = offeredCourse.offered_course_batches
+        .map((row) => row.batches.batch_code)
+        .join(", ");
+
+      const facultyText =
+        offeredCourse.offered_course_teachers.length > 0
+          ? offeredCourse.offered_course_teachers
+              .map((row) =>
+                row.teachers
+                  ? `${row.teachers.teacher_code} - ${row.teachers.full_name}`
+                  : "-"
+              )
+              .join(", ")
+          : "-";
+
+      const scheduleText =
+        offeredCourse.offered_course_slots.length > 0
+          ? offeredCourse.offered_course_slots
+              .map(
+                (slot) =>
+                  `${slot.day_of_week} ${slot.start_time}-${slot.end_time} | ${getRoomText(slot.rooms)}`
+              )
+              .join(" || ")
+          : "-";
+
+      const coofferedCourses =
+        offeredCourse.secondary_offered_courses.length > 0
+          ? offeredCourse.secondary_offered_courses
+              .map(
+                (secondary) =>
+                  `${secondary.master_courses.program.short_name} ${secondary.master_courses.course_code} Sec-${secondary.section}`
+              )
+              .join(", ")
+          : "-";
+
+      const coofferedBatches =
+        offeredCourse.secondary_offered_courses.length > 0
+          ? [
+              ...new Set(
+                offeredCourse.secondary_offered_courses.flatMap((secondary) =>
+                  secondary.offered_course_batches.map(
+                    (row) => row.batches.batch_code
+                  )
+                )
+              ),
+            ].join(", ")
+          : "-";
+
       ws.addRow([
-        offering.course.program.code,
-        offering.course.code,
-        offering.coOfferedCourseCode ?? "-",
-        offering.course.title,
-        offering.section,
-        offering.offeringBatches.map((ob) => ob.batch.code).join(", "),
-        offering.faculty?.initial ?? "-",
-        offering.faculty?.name ?? "-",
-        offering.room?.roomCode ?? "-",
-        offering.slots.map((s) => `${s.dayOfWeek} ${s.startTime}-${s.endTime}`).join("; "),
-        offering.course.creditHours,
+        index + 1,
+        offeredCourse.offerings.status,
+        primaryCourse.program.short_name,
+        primaryCourse.course_code,
+        primaryCourse.course_title,
+        offeredCourse.section,
+        Number(primaryCourse.credit || 0),
+        batchCodes || "-",
+        facultyText,
+        scheduleText,
+        coofferedCourses,
+        coofferedBatches,
       ]);
-      rowNo += 1;
+    });
+
+    if (offeredCourses.length === 0) {
+      ws.addRow([
+        "-",
+        "-",
+        "-",
+        "-",
+        "No offered courses found for this term.",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+      ]);
     }
 
-    styleAllBorders(ws, headerRow, rowNo - 1, 11);
-    autoWidth(ws, [14, 18, 20, 34, 10, 18, 14, 26, 12, 28, 10]);
-
-    addFacultyDetailsSection(ws, rowNo + 2, facultyDetails);
+    styleAllBorders(ws, headerRowNumber, headerRowNumber + Math.max(offeredCourses.length, 1), 12);
+    autoWidth(ws, [8, 22, 20, 18, 40, 12, 10, 22, 36, 42, 38, 26]);
 
     const buffer = await workbookToBuffer(workbook);
 
@@ -162,13 +259,22 @@ export async function GET(request: NextRequest) {
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="offering_report_${semester.code}.xlsx"`,
+        "Content-Disposition": `attachment; filename="offering_report_${term.name.replace(
+          /\s+/g,
+          "_"
+        )}.xlsx"`,
       },
     });
   } catch (error) {
     console.error(error);
+
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to export offering report." },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to export offering report.",
+      },
       { status: 500 }
     );
   }

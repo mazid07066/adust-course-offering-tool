@@ -1,117 +1,53 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSuperAdminApi } from "@/lib/auth-guard";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 
 export async function GET() {
-  const guard = await requireSuperAdminApi();
+  const guard = await requireCoordinatorOrAdminApi();
   if (guard instanceof Response) return guard;
 
   try {
-    const faculties = await prisma.faculty.findMany({
+    const faculties = await prisma.teachers.findMany({
+      where: {
+        is_active: true,
+      },
       include: {
-        department: true,
+        departments: true,
       },
       orderBy: [
-        { department: { code: "asc" } },
-        { initial: "asc" },
+        { teacher_code: "asc" }
       ],
     });
 
-    const departments = await prisma.department.findMany({
-      orderBy: { code: "asc" },
-    });
-
     return NextResponse.json({
       success: true,
-      faculties,
-      departments,
+      faculties: faculties.map((f) => ({
+        id: f.id,
+        teacherCode: f.teacher_code,
+        teacher_code: f.teacher_code,
+        fullName: f.full_name,
+        full_name: f.full_name,
+        designation: f.designation || null,
+        departmentCode: f.departments?.short_name || null,
+        department_code: f.departments?.short_name || null,
+        seniorityLevel: f.seniority_level ?? null,
+        seniority_level: f.seniority_level ?? null,
+        email: f.email || null,
+        phone: f.phone || null,
+        isActive: f.is_active,
+        is_active: f.is_active,
+      })),
     });
   } catch (error) {
     console.error(error);
+
     return NextResponse.json(
-      { error: "Failed to load faculties." },
-      { status: 500 }
-    );
-  }
-}
-
-export async function POST(request: NextRequest) {
-  const guard = await requireSuperAdminApi();
-  if (guard instanceof Response) return guard;
-
-  try {
-    const body = await request.json();
-
-    const {
-      initial,
-      name,
-      designation,
-      departmentCode,
-      phone,
-      email,
-    } = body as {
-      initial: string;
-      name: string;
-      designation?: string;
-      departmentCode: string;
-      phone?: string;
-      email?: string;
-    };
-
-    if (!initial || !name || !departmentCode) {
-      return NextResponse.json(
-        { error: "initial, name, and departmentCode are required." },
-        { status: 400 }
-      );
-    }
-
-    const department = await prisma.department.findUnique({
-      where: {
-        code: departmentCode.trim().toUpperCase(),
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load faculties.",
       },
-    });
-
-    if (!department) {
-      return NextResponse.json(
-        { error: "Department not found." },
-        { status: 404 }
-      );
-    }
-
-    const faculty = await prisma.faculty.upsert({
-      where: {
-        initial: initial.trim().toUpperCase(),
-      },
-      update: {
-        name: name.trim(),
-        designation: designation?.trim() || null,
-        phone: phone?.trim() || null,
-        email: email?.trim() || null,
-        departmentId: department.id,
-        isActive: true,
-      },
-      create: {
-        initial: initial.trim().toUpperCase(),
-        name: name.trim(),
-        designation: designation?.trim() || null,
-        phone: phone?.trim() || null,
-        email: email?.trim() || null,
-        departmentId: department.id,
-        isActive: true,
-      },
-      include: {
-        department: true,
-      },
-    });
-
-    return NextResponse.json({
-      success: true,
-      faculty,
-    });
-  } catch (error) {
-    console.error(error);
-    return NextResponse.json(
-      { error: "Failed to save faculty." },
       { status: 500 }
     );
   }

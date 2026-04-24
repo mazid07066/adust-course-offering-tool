@@ -41,6 +41,7 @@ table {
   width: 100%;
 }
 
+/* GLOBAL FORM FIX */
 input,
 select,
 textarea,
@@ -54,44 +55,121 @@ textarea {
   background: #ffffff;
   color: #0f172a;
   border: 1px solid #cbd5e1;
-  outline: none;
+  border-radius: 0.75rem;
 }
 
 input:focus,
 select:focus,
 textarea:focus {
+  outline: none;
   border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
 }
 
+/* FIX DARK/UNREADABLE DROPDOWNS */
+select,
+option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+/* GLOBAL BUTTON POLISH */
 button {
   cursor: pointer;
 }
 
-::placeholder {
-  color: #94a3b8;
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
-select,
-option,
-optgroup {
-  color: #0f172a !important;
-  background-color: #ffffff !important;
+/* GLOBAL CARD UTILITY */
+.app-card {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  border-radius: 1rem;
+  padding: 1.25rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 
-select {
-  -webkit-text-fill-color: #0f172a !important;
-  appearance: auto;
+/* GLOBAL BUTTON UTILITIES */
+.btn-primary {
+  border-radius: 0.75rem;
+  background: #2563eb;
+  color: #ffffff;
+  padding: 0.65rem 1rem;
+  font-weight: 600;
 }
 
-select:disabled {
-  color: #64748b !important;
-  background-color: #f8fafc !important;
-  -webkit-text-fill-color: #64748b !important;
+.btn-primary:hover {
+  background: #1d4ed8;
 }
 
-input::placeholder,
-textarea::placeholder {
-  color: #94a3b8 !important;
-  opacity: 1;
+.btn-success {
+  border-radius: 0.75rem;
+  background: #16a34a;
+  color: #ffffff;
+  padding: 0.65rem 1rem;
+  font-weight: 600;
+}
+
+.btn-success:hover {
+  background: #15803d;
+}
+
+.btn-danger {
+  border-radius: 0.75rem;
+  background: #dc2626;
+  color: #ffffff;
+  padding: 0.65rem 1rem;
+  font-weight: 600;
+}
+
+.btn-danger:hover {
+  background: #b91c1c;
+}
+
+.btn-secondary {
+  border-radius: 0.75rem;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 0.65rem 1rem;
+  font-weight: 600;
+}
+
+.btn-secondary:hover {
+  background: #f8fafc;
+}
+
+/* TABLE POLISH */
+th {
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+td,
+th {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 0.75rem;
+}
+
+/* SCROLLBAR POLISH */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }

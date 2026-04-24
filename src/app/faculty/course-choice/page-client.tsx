@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useAcademicTerms } from "@/hooks/use-academic-terms";
 
 type CourseSchedule = {
   id: number;
@@ -130,15 +129,23 @@ function schedulesOverlap(a: CourseSchedule[], b: CourseSchedule[]) {
   );
 }
 
-export default function FacultyCourseChoicePageClient() {
-  const { terms, termName, setTermName, loadingTerms } = useAcademicTerms();
+function InfoBox({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <div className="text-sm text-slate-500">{label}</div>
+      <div className="mt-1 font-semibold text-slate-900">{value}</div>
+    </div>
+  );
+}
 
+export default function FacultyCourseChoicePageClient() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
+  const [activeTermName, setActiveTermName] = useState("");
   const [teacherName, setTeacherName] = useState("");
   const [teacherCode, setTeacherCode] = useState("");
   const [designation, setDesignation] = useState("");
@@ -150,6 +157,7 @@ export default function FacultyCourseChoicePageClient() {
   const [editMessage, setEditMessage] = useState("");
   const [hasFinalized, setHasFinalized] = useState(false);
   const [sessionRemainingMinutes, setSessionRemainingMinutes] = useState(0);
+  const [activeTurnText, setActiveTurnText] = useState("-");
 
   const [creditPolicy, setCreditPolicy] = useState<{
     level: number;
@@ -158,25 +166,18 @@ export default function FacultyCourseChoicePageClient() {
   } | null>(null);
 
   const [preassignedCredits, setPreassignedCredits] = useState(0);
-  const [chosenCredits, setChosenCredits] = useState(0);
-  const [combinedCurrentCredits, setCombinedCurrentCredits] = useState(0);
-  const [remainingSelectableCredits, setRemainingSelectableCredits] = useState<number | null>(null);
-
   const [availableCourses, setAvailableCourses] = useState<AvailableCourse[]>([]);
   const [selectedCourseIds, setSelectedCourseIds] = useState<number[]>([]);
 
   async function loadPage() {
-    if (!termName) return;
-
     setLoading(true);
     setError("");
     setMessage("");
 
     try {
-      const res = await fetch(
-        `/api/faculty/course-choices/options?termName=${encodeURIComponent(termName)}`,
-        { cache: "no-store" }
-      );
+      const res = await fetch("/api/faculty/course-choices/options", {
+        cache: "no-store",
+      });
 
       const json: ApiResponse = await res.json();
 
@@ -184,6 +185,7 @@ export default function FacultyCourseChoicePageClient() {
         throw new Error(json.error || "Failed to load faculty choice page.");
       }
 
+      setActiveTermName(json.term?.name || "");
       setTeacherName(json.teacher?.full_name || "");
       setTeacherCode(json.teacher?.teacher_code || "");
       setDesignation(json.teacher?.designation || "");
@@ -197,17 +199,13 @@ export default function FacultyCourseChoicePageClient() {
       setCreditPolicy(json.creditPolicy || null);
       setSessionRemainingMinutes(Number(json.sessionRemainingMinutes || 0));
 
+      setActiveTurnText(
+        json.activeTurn
+          ? `${json.activeTurn.teacherCode} - ${json.activeTurn.fullName}`
+          : "-"
+      );
+
       setPreassignedCredits(Number(json.preassignedCredits || 0));
-      setChosenCredits(Number(json.chosenCredits || 0));
-      setCombinedCurrentCredits(
-        Number(json.combinedCurrentCredits || json.currentSelectedCredits || 0)
-      );
-      setRemainingSelectableCredits(
-        json.remainingSelectableCredits === null ||
-          json.remainingSelectableCredits === undefined
-          ? null
-          : Number(json.remainingSelectableCredits)
-      );
 
       const rows = json.availableCourses || [];
       setAvailableCourses(rows);
@@ -227,10 +225,8 @@ export default function FacultyCourseChoicePageClient() {
   }
 
   useEffect(() => {
-    if (termName) {
-      loadPage();
-    }
-  }, [termName]);
+    loadPage();
+  }, []);
 
   const courseMap = useMemo(() => {
     return new Map(availableCourses.map((course) => [course.id, course]));
@@ -249,6 +245,12 @@ export default function FacultyCourseChoicePageClient() {
   const liveTotalCredits = useMemo(() => {
     return Number((preassignedCredits + liveBufferCredits).toFixed(2));
   }, [preassignedCredits, liveBufferCredits]);
+
+  const liveRemainingCapacity = useMemo(() => {
+    const maxCredits = creditPolicy?.maxCredits;
+    if (maxCredits === null || maxCredits === undefined) return null;
+    return Number(Math.max(0, maxCredits - liveTotalCredits).toFixed(2));
+  }, [creditPolicy, liveTotalCredits]);
 
   function hasConflictWithCurrentBuffer(course: AvailableCourse) {
     return selectedCourses.some((selected) =>
@@ -299,6 +301,7 @@ export default function FacultyCourseChoicePageClient() {
 
   function moveUp(index: number) {
     if (!canEdit || hasFinalized || index <= 0) return;
+
     setSelectedCourseIds((prev) => {
       const next = [...prev];
       [next[index - 1], next[index]] = [next[index], next[index - 1]];
@@ -308,6 +311,7 @@ export default function FacultyCourseChoicePageClient() {
 
   function moveDown(index: number) {
     if (!canEdit || hasFinalized || index >= selectedCourseIds.length - 1) return;
+
     setSelectedCourseIds((prev) => {
       const next = [...prev];
       [next[index], next[index + 1]] = [next[index + 1], next[index]];
@@ -316,8 +320,8 @@ export default function FacultyCourseChoicePageClient() {
   }
 
   async function saveBuffer() {
-    if (!termName) {
-      setError("Please select a term.");
+    if (!activeTermName) {
+      setError("No active semester is currently opened by coordinator/admin.");
       return;
     }
 
@@ -332,7 +336,7 @@ export default function FacultyCourseChoicePageClient() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          termName,
+          termName: activeTermName,
           offeredCourseIds: selectedCourseIds,
         }),
       });
@@ -353,14 +357,15 @@ export default function FacultyCourseChoicePageClient() {
   }
 
   async function finalizeChoices() {
-    if (!termName) {
-      setError("Please select a term.");
+    if (!activeTermName) {
+      setError("No active semester is currently opened by coordinator/admin.");
       return;
     }
 
     const ok = window.confirm(
-      "Final submit will lock your choices for this term. Do you want to continue?"
+      "Final submit will lock your choices for this semester. Do you want to continue?"
     );
+
     if (!ok) return;
 
     setFinalizing(true);
@@ -374,7 +379,7 @@ export default function FacultyCourseChoicePageClient() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          termName,
+          termName: activeTermName,
           offeredCourseIds: selectedCourseIds,
         }),
       });
@@ -390,7 +395,7 @@ export default function FacultyCourseChoicePageClient() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ termName }),
+        body: JSON.stringify({ termName: activeTermName }),
       });
 
       const json = await res.json();
@@ -413,142 +418,105 @@ export default function FacultyCourseChoicePageClient() {
   }, [availableCourses, selectedCourseIds]);
 
   return (
-    <main className="min-h-screen bg-slate-100 p-6">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900">Faculty Course Choice</h1>
-              <p className="mt-1 text-sm text-slate-600">
-                All faculty may view the open offered pool. Only the active turn may edit and finalize choices.
-              </p>
-            </div>
+    <main className="min-h-screen bg-slate-100">
+      <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-6 py-4 shadow-sm backdrop-blur">
+        <div className="mx-auto flex max-w-7xl flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Faculty Course Choice</h1>
+            <p className="text-sm text-slate-600">
+              Current Semester:{" "}
+              <span className="font-semibold text-slate-900">
+                {activeTermName || "Not opened by coordinator/admin yet"}
+              </span>
+            </p>
+          </div>
 
-            <div className="flex flex-wrap gap-3">
-              <a
-                href="/faculty/dashboard"
-                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Back to Dashboard
-              </a>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={loadPage}
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Refresh
+            </button>
 
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await fetch("/api/auth/logout", { method: "POST" });
-                  } finally {
-                    window.location.href = "/auth/login";
-                  }
-                }}
-                className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
-              >
-                Logout
-              </button>
-            </div>
+            <a
+              href="/faculty/dashboard"
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Dashboard
+            </a>
+
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await fetch("/api/auth/logout", { method: "POST" });
+                } finally {
+                  window.location.href = "/auth/login";
+                }
+              }}
+              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+            >
+              Logout
+            </button>
           </div>
         </div>
+      </div>
 
+      <div className="mx-auto max-w-7xl space-y-6 p-6">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div>
-              <div className="text-sm text-slate-500">Faculty</div>
-              <div className="mt-1 font-semibold text-slate-900">
-                {teacherCode || "-"} — {teacherName || "-"}
-              </div>
-              <div className="text-sm text-slate-600">{designation || "-"}</div>
-            </div>
+            <InfoBox label="Faculty" value={`${teacherCode || "-"} - ${teacherName || "-"}`} />
+            <InfoBox label="Designation" value={designation || "-"} />
+            <InfoBox label="Department" value={departmentCode || "-"} />
+            <InfoBox
+              label="Seniority Position"
+              value={
+                seniorityLevel
+                  ? `Seniority ${seniorityLevel} (lower number = higher priority)`
+                  : "-"
+              }
+            />
 
-            <div>
-              <div className="text-sm text-slate-500">Department / Level</div>
-              <div className="mt-1 font-semibold text-slate-900">
-                {departmentCode || "-"} | Level {seniorityLevel ?? "-"}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-sm text-slate-500">Window Status</div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Choice Window</div>
               <div className="mt-2">
-                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses(windowStatus)}`}>
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses(
+                    windowStatus
+                  )}`}
+                >
                   {windowStatus}
                 </span>
               </div>
             </div>
 
-            <div>
-              <div className="text-sm text-slate-500">Session Remaining</div>
-              <div className="mt-1 font-semibold text-slate-900">
-                {sessionRemainingMinutes} minute(s)
-              </div>
-            </div>
+            <InfoBox label="Current Active Faculty" value={activeTurnText} />
+            <InfoBox label="Your Permission" value={canEdit ? "Active editor" : "View only"} />
+            <InfoBox label="Session Remaining" value={`${sessionRemainingMinutes} minute(s)`} />
           </div>
 
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-xl bg-slate-50 p-4">
-              <div className="text-sm text-slate-500">Active Seniority Phase</div>
-              <div className="mt-1 font-semibold text-slate-900">
-                Level {seniorityLevel ?? "-"}
-              </div>
-            </div>
-
-            <div className="rounded-xl bg-slate-50 p-4">
-              <div className="text-sm text-slate-500">Active Faculty Turn</div>
-              <div className="mt-1 font-semibold text-slate-900">
-                {teacherCode || "Not fixed"} — {teacherName || ""}
-              </div>
-            </div>
-
-            <div className="rounded-xl bg-slate-50 p-4">
-              <div className="text-sm text-slate-500">Credit Rule</div>
-              <div className="mt-1 font-semibold text-slate-900">
-                Min {creditPolicy?.minCredits ?? "-"} | Max {creditPolicy?.maxCredits ?? "-"}
-              </div>
-            </div>
-
-            <div className="rounded-xl bg-slate-50 p-4">
-              <div className="text-sm text-slate-500">Selected Credits</div>
-              <div className="mt-1 font-semibold text-slate-900">{liveTotalCredits}</div>
-            </div>
+            <InfoBox
+              label="Credit Rule"
+              value={`Min ${creditPolicy?.minCredits ?? "-"} | Max ${
+                creditPolicy?.maxCredits ?? "-"
+              }`}
+            />
+            <InfoBox label="Coordinator Pre-assigned Credits" value={String(preassignedCredits)} />
+            <InfoBox label="Current Buffer Credits" value={String(liveBufferCredits)} />
+            <InfoBox label="Total Current Load" value={String(liveTotalCredits)} />
           </div>
 
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
-            <div className="rounded-xl bg-slate-50 p-4">
-              <div className="text-sm text-slate-500">Preassigned Credits</div>
-              <div className="mt-1 font-semibold text-slate-900">{preassignedCredits}</div>
-            </div>
-
-            <div className="rounded-xl bg-slate-50 p-4">
-              <div className="text-sm text-slate-500">Current Buffer Credits</div>
-              <div className="mt-1 font-semibold text-slate-900">{liveBufferCredits}</div>
-            </div>
-
-            <div className="rounded-xl bg-slate-50 p-4">
-              <div className="text-sm text-slate-500">Remaining Selectable Credits</div>
-              <div className="mt-1 font-semibold text-slate-900">
-                {remainingSelectableCredits ?? "-"}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <label className="mb-2 block text-sm font-medium text-slate-700">
-              Academic Term
-            </label>
-            <select
-              value={termName}
-              onChange={(e) => setTermName(e.target.value)}
-              className="w-full max-w-sm rounded-xl border px-4 py-3"
-              disabled={loadingTerms}
-            >
-              <option value="">
-                {loadingTerms ? "Loading terms..." : "Select Academic Term"}
-              </option>
-              {terms.map((term) => (
-                <option key={term.name} value={term.name}>
-                  {term.name}
-                </option>
-              ))}
-            </select>
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <InfoBox
+              label="Remaining Choice Capacity"
+              value={liveRemainingCapacity === null ? "-" : String(liveRemainingCapacity)}
+            />
+            <InfoBox label="Available Offered Sections" value={`${poolCourses.length} section(s)`} />
+            <InfoBox label="Selected Buffer Items" value={`${selectedCourseIds.length} section(s)`} />
+            <InfoBox label="Final Submission Status" value={hasFinalized ? "Final submitted" : "Not finalized"} />
           </div>
         </div>
 
@@ -595,14 +563,17 @@ export default function FacultyCourseChoicePageClient() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="font-semibold text-slate-900">
-                          {course.courseCode} — {course.courseTitle}
+                          {course.courseCode} - {course.courseTitle}
                         </div>
+
                         <div className="text-sm text-slate-600">
                           {course.programCode} | Sec-{course.section} | {course.credit} credits
                         </div>
+
                         <div className="text-sm text-slate-500">
                           Batches: {course.batchCodes.join(", ") || "-"}
                         </div>
+
                         <div className="text-sm text-slate-500">
                           Offering Status: {course.offeringStatus}
                         </div>
@@ -683,7 +654,7 @@ export default function FacultyCourseChoicePageClient() {
 
               {poolCourses.length === 0 && !loading && (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-slate-500">
-                  No faculty-visible sections found for the selected term.
+                  No faculty-visible sections found for the current semester.
                 </div>
               )}
             </div>
@@ -705,7 +676,7 @@ export default function FacultyCourseChoicePageClient() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="font-semibold text-slate-900">
-                        #{index + 1} — {course.courseCode} — {course.courseTitle}
+                        #{index + 1} - {course.courseCode} - {course.courseTitle}
                       </div>
                       <div className="text-sm text-slate-600">
                         {course.programCode} | Sec-{course.section} | {course.credit} credits
@@ -718,17 +689,17 @@ export default function FacultyCourseChoicePageClient() {
                         disabled={!canEdit || hasFinalized || index === 0}
                         className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                       >
-                        ↑
+                        Up
                       </button>
+
                       <button
                         onClick={() => moveDown(index)}
-                        disabled={
-                          !canEdit || hasFinalized || index === selectedCourseIds.length - 1
-                        }
+                        disabled={!canEdit || hasFinalized || index === selectedCourseIds.length - 1}
                         className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                       >
-                        ↓
+                        Down
                       </button>
+
                       <button
                         onClick={() => removeCourse(course.id)}
                         disabled={!canEdit || hasFinalized}

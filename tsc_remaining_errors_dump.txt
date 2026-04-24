@@ -1,0 +1,1454 @@
+
+
+===== FILE: src\app\api\offerings\drafts\create\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { getCatalogProgramByCode } from "@/lib/academic-catalog";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
+import { parseAcademicTerm } from "@/lib/semester-utils";
+
+type ProgramCandidate = {
+  id: number;
+  short_name: string;
+  name: string;
+  source:
+    | "EXACT_PROGRAM_CODE"
+    | "CANONICAL_PROGRAM"
+    | "CURRICULUM_RELATED_PROGRAM";
+};
+
+function uniqueById<T extends { id: number }>(rows: T[]): T[] {
+  const seen = new Set<number>();
+  const out: T[] = [];
+
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+
+  return out;
+}
+
+function sourcePriority(source: ProgramCandidate["source"]): number {
+  if (source === "EXACT_PROGRAM_CODE") return 1;
+  if (source === "CANONICAL_PROGRAM") return 2;
+  return 3;
+}
+
+async function getProgramCandidates(programCode: string): Promise<{
+  requestedProgramCode: string;
+  candidates: ProgramCandidate[];
+}> {
+  const normalizedProgramCode = String(programCode || "").trim().toUpperCase();
+
+  if (!normalizedProgramCode) {
+    throw new Error("programCode is required.");
+  }
+
+  const staticCatalog = getCatalogProgramByCode(normalizedProgramCode);
+  if (!staticCatalog) {
+    throw new Error("Invalid academic identity programCode.");
+  }
+
+  const catalogEntry = await prisma.academic_catalog_entries.findUnique({
+    where: {
+      program_code: normalizedProgramCode,
+    },
+    select: {
+      curriculum_key: true,
+      department_code: true,
+      department_name: true,
+      program_title: true,
+      study_shift: true,
+    },
+  });
+
+  const candidates: ProgramCandidate[] = [];
+
+  const exactProgram = await prisma.programs.findFirst({
+    where: {
+      short_name: normalizedProgramCode,
+    },
+    select: {
+      id: true,
+      short_name: true,
+      name: true,
+    },
+  });
+
+  if (exactProgram) {
+    candidates.push({
+      ...exactProgram,
+      source: "EXACT_PROGRAM_CODE",
+    });
+  }
+
+  const canonicalProgram = await resolveCanonicalProgram({
+    department_code: catalogEntry?.department_code || staticCatalog.departmentCode,
+    department_name: catalogEntry?.department_name || staticCatalog.departmentName,
+    program_code: normalizedProgramCode,
+    program_title: catalogEntry?.program_title || staticCatalog.programTitle,
+    study_shift: catalogEntry?.study_shift || staticCatalog.studyShift,
+  });
+
+  if (!candidates.some((item) => item.id === canonicalProgram.id)) {
+    candidates.push({
+      id: canonicalProgram.id,
+      short_name: canonicalProgram.short_name,
+      name: canonicalProgram.name,
+      source: "CANONICAL_PROGRAM",
+    });
+  }
+
+  const curriculumKey = catalogEntry?.curriculum_key || null;
+
+  if (curriculumKey) {
+    const relatedCatalogEntries = await prisma.academic_catalog_entries.findMany({
+      where: {
+        curriculum_key: curriculumKey,
+        is_active: true,
+      },
+      select: {
+        program_code: true,
+      },
+    });
+
+    const relatedProgramCodes = relatedCatalogEntries
+      .map((item) => item.program_code)
+      .filter(Boolean);
+
+    if (relatedProgramCodes.length > 0) {
+      const relatedPrograms = await prisma.programs.findMany({
+        where: {
+          short_name: {
+            in: relatedProgramCodes,
+          },
+        },
+        select: {
+          id: true,
+          short_name: true,
+          name: true,
+        },
+      });
+
+      for (const item of relatedPrograms) {
+        if (!candidates.some((row) => row.id === item.id)) {
+          candidates.push({
+            ...item,
+            source: "CURRICULUM_RELATED_PROGRAM",
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    requestedProgramCode: normalizedProgramCode,
+    candidates: uniqueById(candidates),
+  };
+}
+
+async function ensureAcademicTerm(termName: string) {
+  const normalized = String(termName || "").trim().toUpperCase();
+
+  if (!normalized) {
+    throw new Error("termName is required.");
+  }
+
+  const existing = await prisma.academic_terms.findFirst({
+    where: {
+      name: normalized,
+    },
+    select: {
+      id: true,
+      name: true,
+      year: true,
+      term_type: true,
+      is_active: true,
+    },
+  });
+
+  if (existing) {
+    return existing;
+  }
+
+  const parsed = parseAcademicTerm(normalized);
+
+  const created = await prisma.academic_terms.create({
+    data: {
+      name: normalized,
+      year: parsed.year,
+      term_type: parsed.season,
+      is_active: true,
+    },
+    select: {
+      id: true,
+      name: true,
+      year: true,
+      term_type: true,
+      is_active: true,
+    },
+  });
+
+  return created;
+}
+
+async function resolvePreparedByUserId() {
+  const adminOrCoordinator = await prisma.users.findFirst({
+    where: {
+      is_active: true,
+      role: {
+        in: ["SUPER_ADMIN", "COORDINATOR"],
+      },
+    },
+    orderBy: {
+      id: "asc",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (adminOrCoordinator) {
+    return adminOrCoordinator.id;
+  }
+
+  const anyActiveUser = await prisma.users.findFirst({
+    where: {
+      is_active: true,
+    },
+    orderBy: {
+      id: "asc",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (anyActiveUser) {
+    return anyActiveUser.id;
+  }
+
+  throw new Error(
+    "No active user found in users table. Please ensure at least one active SUPER_ADMIN or COORDINATOR user exists."
+  );
+}
+
+async function deleteOfferedCourseCascade(offeredCourseId: number, tx: typeof prisma) {
+  await tx.offered_course_slots.deleteMany({
+    where: {
+      offered_course_id: offeredCourseId,
+    },
+  });
+
+  await tx.offered_course_teachers.deleteMany({
+    where: {
+      offered_course_id: offeredCourseId,
+    },
+  });
+
+  await tx.offered_course_batches.deleteMany({
+    where: {
+      offered_course_id: offeredCourseId,
+    },
+  });
+
+  await tx.offered_courses.delete({
+    where: {
+      id: offeredCourseId,
+    },
+  });
+}
+
+async function deduplicateDraftByLatest(offeringId: number) {
+  const rows = await prisma.offered_courses.findMany({
+    where: {
+      offering_id: offeringId,
+    },
+    orderBy: {
+      id: "desc",
+    },
+    select: {
+      id: true,
+      master_course_id: true,
+      offered_course_batches: {
+        select: {
+          batch_id: true,
+        },
+      },
+    },
+  });
+
+  const seen = new Set<string>();
+  const toDelete: number[] = [];
+
+  for (const row of rows) {
+    const batchIds = row.offered_course_batches.map((b) => b.batch_id).sort((a, b) => a - b);
+
+    if (batchIds.length === 0) {
+      const key = `${row.master_course_id}__NO_BATCH`;
+      if (seen.has(key)) {
+        toDelete.push(row.id);
+      } else {
+        seen.add(key);
+      }
+      continue;
+    }
+
+    let shouldDelete = false;
+
+    for (const batchId of batchIds) {
+      const key = `${row.master_course_id}__${batchId}`;
+      if (seen.has(key)) {
+        shouldDelete = true;
+        break;
+      }
+    }
+
+    if (shouldDelete) {
+      toDelete.push(row.id);
+      continue;
+    }
+
+    for (const batchId of batchIds) {
+      const key = `${row.master_course_id}__${batchId}`;
+      seen.add(key);
+    }
+  }
+
+  if (toDelete.length === 0) {
+    return 0;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const offeredCourseId of toDelete) {
+      await deleteOfferedCourseCascade(offeredCourseId, tx);
+    }
+  });
+
+  return toDelete.length;
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    await requireCoordinatorOrAdminApi();
+
+    const body = await req.json();
+
+    const programCode = String(body.programCode || "").trim().toUpperCase();
+    const termName = String(body.termName || "").trim().toUpperCase();
+
+    if (!programCode || !termName) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "programCode and termName are required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const resolved = await getProgramCandidates(programCode);
+
+    if (resolved.candidates.length === 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "No program candidate could be resolved.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const sortedCandidates = [...resolved.candidates].sort(
+      (a, b) => sourcePriority(a.source) - sourcePriority(b.source)
+    );
+
+    const selectedProgram = sortedCandidates[0];
+    const term = await ensureAcademicTerm(termName);
+    const preparedByUserId = await resolvePreparedByUserId();
+
+    const existingDraft = await prisma.offerings.findFirst({
+      where: {
+        program_id: selectedProgram.id,
+        academic_term_id: term.id,
+        status: "DRAFT",
+      },
+      orderBy: {
+        id: "desc",
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (existingDraft) {
+      const removedCount = await deduplicateDraftByLatest(existingDraft.id);
+
+      return NextResponse.json({
+        ok: true,
+        draftId: existingDraft.id,
+        reused: true,
+        deduplicated: removedCount > 0,
+        removedDuplicateCount: removedCount,
+      });
+    }
+
+    const draft = await prisma.offerings.create({
+      data: {
+        status: "DRAFT",
+        academic_terms: {
+          connect: {
+            id: term.id,
+          },
+        },
+        programs: {
+          connect: {
+            id: selectedProgram.id,
+          },
+        },
+        users: {
+          connect: {
+            id: preparedByUserId,
+          },
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      draftId: draft.id,
+      reused: false,
+      deduplicated: false,
+      removedDuplicateCount: 0,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to create draft offering.";
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: message,
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\lib\offering-section-group.ts =====
+
+export type DraftSlotView = {
+  id: number;
+  day_of_week: string;
+  start_time: string;
+  end_time: string;
+  room_id: number;
+  slot_type: string | null;
+  rooms: {
+    room_code: string;
+    room_type: string | null;
+  } | null;
+};
+
+export type DraftManualCoofferView = {
+  id: number;
+  target_program_code: string | null;
+  manual_course_code: string;
+  note: string | null;
+};
+
+export type DraftCourseForGrouping = {
+  id: number;
+  section: string;
+  is_cooffered: boolean | null;
+  primary_offered_course_id: number | null;
+  master_courses: {
+    course_code: string;
+    course_title: string;
+    program: {
+      short_name: string;
+      name: string;
+    };
+  };
+  offered_course_batches: Array<{
+    batch_id: number;
+    batches: {
+      batch_code: string;
+    };
+  }>;
+  offered_course_teachers: Array<{
+    teacher_id: number;
+    teachers: {
+      teacher_code: string;
+      full_name: string;
+    } | null;
+  }>;
+  offered_course_slots: DraftSlotView[];
+  offered_course_manual_cooffers?: DraftManualCoofferView[];
+};
+
+function formatRoomLabel(room: { room_code: string; room_type: string | null } | null) {
+  if (!room) return "-";
+  return room.room_type ? `${room.room_type} | ${room.room_code}` : room.room_code;
+}
+
+export function buildDraftSectionGroups(courses: DraftCourseForGrouping[]) {
+  const primaryCourses = courses.filter((course) => !course.primary_offered_course_id);
+
+  return primaryCourses.map((primary) => {
+    const linkedCourses = courses.filter(
+      (course) => course.primary_offered_course_id === primary.id
+    );
+
+    const allCoursesInGroup = [primary, ...linkedCourses];
+
+    const sectionBatchCodes = [
+      ...new Set(
+        allCoursesInGroup.flatMap((course) =>
+          course.offered_course_batches.map((x) => x.batches.batch_code)
+        )
+      ),
+    ];
+
+    return {
+      primary_course: {
+        id: primary.id,
+        section: primary.section,
+        is_cooffered: Boolean(primary.is_cooffered),
+        master_course: {
+          course_code: primary.master_courses.course_code,
+          course_title: primary.master_courses.course_title,
+          program_code: primary.master_courses.program.short_name,
+          program_name: primary.master_courses.program.name,
+        },
+        offered_course_batches: primary.offered_course_batches.map((x) => ({
+          batch_id: x.batch_id,
+          batches: {
+            batch_code: x.batches.batch_code,
+          },
+        })),
+        offered_course_teachers: primary.offered_course_teachers.map((x) => ({
+          teacher_id: x.teacher_id,
+          teachers: x.teachers
+            ? {
+                teacher_code: x.teachers.teacher_code,
+                full_name: x.teachers.full_name,
+              }
+            : null,
+        })),
+        offered_course_slots: primary.offered_course_slots.map((slot) => ({
+          ...slot,
+          schedule_label: `${slot.day_of_week} ${slot.start_time}-${slot.end_time} | ${formatRoomLabel(slot.rooms)}`,
+        })),
+        offered_course_manual_cooffers: (primary.offered_course_manual_cooffers || []).map(
+          (item) => ({
+            id: item.id,
+            target_program_code: item.target_program_code,
+            manual_course_code: item.manual_course_code,
+            note: item.note,
+          })
+        ),
+        schedule_text:
+          primary.offered_course_slots.length > 0
+            ? primary.offered_course_slots
+                .map(
+                  (slot) =>
+                    `${slot.day_of_week} ${slot.start_time}-${slot.end_time} | ${formatRoomLabel(
+                      slot.rooms
+                    )}`
+                )
+                .join(" || ")
+            : "-",
+      },
+      linked_courses: linkedCourses.map((course) => ({
+        id: course.id,
+        section: course.section,
+        master_course: {
+          course_code: course.master_courses.course_code,
+          course_title: course.master_courses.course_title,
+          program_code: course.master_courses.program.short_name,
+          program_name: course.master_courses.program.name,
+        },
+        offered_course_batches: course.offered_course_batches.map((x) => ({
+          batch_id: x.batch_id,
+          batches: {
+            batch_code: x.batches.batch_code,
+          },
+        })),
+      })),
+      section_batch_codes: sectionBatchCodes,
+    };
+  });
+}
+
+type MinimalTx = any;
+
+export async function deleteOfferedCourseCascade(
+  tx: MinimalTx,
+  offeredCourseId: number
+) {
+  const root = await tx.offered_courses.findUnique({
+    where: { id: offeredCourseId },
+    select: {
+      id: true,
+      primary_offered_course_id: true,
+
+      secondary_offered_courses: {
+        select: { id: true },
+      },
+    },
+  });
+
+  if (!root) return;
+
+  const targetIds =
+    root.primary_offered_course_id == null
+      ? [
+          root.id,
+          ...root.secondary_offered_courses.map((x: { id: number }) => x.id),
+        ]
+      : [root.id];
+
+  if (targetIds.length === 0) return;
+
+  if (tx.offered_course_manual_cooffers) {
+    await tx.offered_course_manual_cooffers.deleteMany({
+      where: {
+        offered_course_id: { in: targetIds },
+      },
+    });
+  }
+
+  await tx.faculty_course_selections.deleteMany({
+    where: {
+      offered_course_id: { in: targetIds },
+    },
+  });
+
+  await tx.offered_course_teachers.deleteMany({
+    where: {
+      offered_course_id: { in: targetIds },
+    },
+  });
+
+  await tx.offered_course_slots.deleteMany({
+    where: {
+      offered_course_id: { in: targetIds },
+    },
+  });
+
+  await tx.offered_course_batches.deleteMany({
+    where: {
+      offered_course_id: { in: targetIds },
+    },
+  });
+
+  await tx.offered_courses.deleteMany({
+    where: {
+      id: { in: targetIds },
+    },
+  });
+}
+export async function getSectionGroupCourseIds(
+  tx: any,
+  offeredCourseId: number
+): Promise<number[]> {
+  const course = await tx.offered_courses.findUnique({
+    where: { id: offeredCourseId },
+    select: {
+      id: true,
+      primary_offered_course_id: true,
+      secondary_offered_courses: {
+        select: { id: true },
+      },
+    },
+  });
+
+  if (!course) return [];
+
+  const primaryId = course.primary_offered_course_id ?? course.id;
+
+  const primary = await tx.offered_courses.findUnique({
+    where: { id: primaryId },
+    select: {
+      id: true,
+      secondary_offered_courses: {
+        select: { id: true },
+      },
+    },
+  });
+
+  if (!primary) return [offeredCourseId];
+
+  return [
+    primary.id,
+    ...primary.secondary_offered_courses.map((item: { id: number }) => item.id),
+  ];
+}
+
+export async function getSectionGroupBatchIds(
+  tx: any,
+  offeredCourseId: number
+): Promise<number[]> {
+  const courseIds = await getSectionGroupCourseIds(tx, offeredCourseId);
+
+  if (courseIds.length === 0) return [];
+
+  const rows = await tx.offered_course_batches.findMany({
+    where: {
+      offered_course_id: {
+        in: courseIds,
+      },
+    },
+    select: {
+      batch_id: true,
+    },
+  });
+
+  return Array.from(
+    new Set(
+      rows
+        .map((row: { batch_id: number }) => row.batch_id)
+        .filter((id: number) => Number.isFinite(id))
+    )
+  );
+}
+
+
+===== FILE: src\lib\course-list-import.ts =====
+
+import mammoth from "mammoth";
+import * as XLSX from "xlsx";
+import { CourseType } from "@prisma/client";
+
+export type ParsedMasterCourse = {
+  code: string;
+  title: string;
+  creditHours: number;
+  theoryCredits: number;
+  labCredits: number;
+  semesterNo: number | null;
+  levelTerm: string | null;
+  courseType: CourseType;
+  isElective: boolean;
+  electiveGroup: string | null;
+};
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function normalizeCourseCode(raw: string): string {
+  const cleaned = raw.toUpperCase().replace(/[^A-Z0-9 ]/g, " ");
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+
+  if (parts.length >= 2) {
+    const first = parts[0];
+    const last = parts[parts.length - 1];
+    if (/^[A-Z]{2,8}$/.test(first) && /^\d{4}$/.test(last)) {
+      return `${first}${last}`;
+    }
+  }
+
+  const joined = cleaned.replace(/\s+/g, "");
+  const match = joined.match(/^([A-Z]{2,8})(\d{4})$/);
+  if (match) {
+    return `${match[1]}${match[2]}`;
+  }
+
+  return joined;
+}
+
+function isCourseCode(raw: string): boolean {
+  const code = normalizeCourseCode(raw);
+  return /^[A-Z]{2,8}\d{4}$/.test(code);
+}
+
+function parseCredit(raw: string): number | null {
+  const cleaned = normalizeWhitespace(raw);
+  const match = cleaned.match(/(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isNaN(value) ? null : value;
+}
+
+function detectCourseType(title: string): CourseType {
+  const upper = title.toUpperCase();
+  if (upper.includes("LAB")) return CourseType.LAB;
+  if (upper.includes("PROJECT") || upper.includes("DISSERTATION")) return CourseType.PROJECT;
+  if (upper.includes("INTERNSHIP")) return CourseType.INTERNSHIP;
+  return CourseType.THEORY;
+}
+
+function splitTheoryLabCredits(courseType: CourseType, creditHours: number) {
+  if (courseType === CourseType.LAB || courseType === CourseType.INTERNSHIP) {
+    return { theoryCredits: 0, labCredits: creditHours };
+  }
+  return { theoryCredits: creditHours, labCredits: 0 };
+}
+
+function parseSemesterNumberFromCode(code: string): number | null {
+  const match = code.match(/^[A-Z]{2,8}(\d{4})$/);
+  if (!match) return null;
+  const semesterDigit = Number(match[1][0]);
+  return Number.isNaN(semesterDigit) ? null : semesterDigit;
+}
+
+function parseLevelTermFromCode(code: string): string | null {
+  const match = code.match(/^[A-Z]{2,8}(\d{4})$/);
+  if (!match) return null;
+
+  const digits = match[1];
+  const level = Number(digits[0]);
+  const term = Number(digits[1]);
+
+  if (!Number.isFinite(level) || !Number.isFinite(term)) {
+    return null;
+  }
+
+  if (level <= 0 || term <= 0) {
+    return null;
+  }
+
+  return `${level}.${term}`;
+}
+
+function parseExplicitLevelTerm(raw: string): string | null {
+  const cleaned = normalizeWhitespace(raw).toUpperCase();
+
+  if (!cleaned) return null;
+
+  let match = cleaned.match(/^(\d+)[.\-_/ ](\d+)$/);
+  if (match) {
+    return `${Number(match[1])}.${Number(match[2])}`;
+  }
+
+  match = cleaned.match(/^L?\s*(\d+)\s*T?\s*(\d+)$/i);
+  if (match) {
+    return `${Number(match[1])}.${Number(match[2])}`;
+  }
+
+  match = cleaned.match(/LEVEL\s*(\d+)\s*TERM\s*(\d+)/i);
+  if (match) {
+    return `${Number(match[1])}.${Number(match[2])}`;
+  }
+
+  match = cleaned.match(/YEAR\s*(\d+)\s*SEM(?:ESTER)?\s*(\d+)/i);
+  if (match) {
+    return `${Number(match[1])}.${Number(match[2])}`;
+  }
+
+  return null;
+}
+
+function deduplicateCourses(courses: ParsedMasterCourse[]): ParsedMasterCourse[] {
+  const map = new Map<string, ParsedMasterCourse>();
+
+  for (const course of courses) {
+    const existing = map.get(course.code);
+
+    if (!existing) {
+      map.set(course.code, course);
+      continue;
+    }
+
+    const existingLevel = existing.levelTerm ? 1 : 0;
+    const currentLevel = course.levelTerm ? 1 : 0;
+
+    if (currentLevel > existingLevel) {
+      map.set(course.code, course);
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+function buildCourse(
+  codeRaw: string,
+  titleRaw: string,
+  creditRaw: string | number,
+  electiveGroup: string | null,
+  explicitLevelTerm?: string | null
+): ParsedMasterCourse | null {
+  const code = normalizeCourseCode(codeRaw);
+  const title = normalizeWhitespace(String(titleRaw));
+  const creditHours = parseCredit(String(creditRaw));
+
+  if (!isCourseCode(codeRaw) || !title || creditHours === null) {
+    return null;
+  }
+
+  const courseType = detectCourseType(title);
+  const credits = splitTheoryLabCredits(courseType, creditHours);
+
+  const inferredLevelTerm = parseLevelTermFromCode(code);
+  const resolvedLevelTerm = parseExplicitLevelTerm(explicitLevelTerm || "") || inferredLevelTerm;
+
+  return {
+    code,
+    title,
+    creditHours,
+    theoryCredits: credits.theoryCredits,
+    labCredits: credits.labCredits,
+    semesterNo: parseSemesterNumberFromCode(code),
+    levelTerm: resolvedLevelTerm,
+    courseType,
+    isElective: electiveGroup !== null,
+    electiveGroup,
+  };
+}
+
+function parseDocxLinesToCourses(lines: string[]): ParsedMasterCourse[] {
+  const courses: ParsedMasterCourse[] = [];
+  let electiveGroup: string | null = null;
+  let currentLevelTerm: string | null = null;
+
+  const cleanedLines = lines
+    .map((line) => normalizeWhitespace(line))
+    .filter(Boolean);
+
+  for (let i = 0; i < cleanedLines.length; i++) {
+    const line = cleanedLines[i];
+
+    const groupMatch = line.match(/^Group\s*-\s*([A-Z0-9]+)/i);
+    if (groupMatch) {
+      electiveGroup = groupMatch[1].toUpperCase();
+      continue;
+    }
+
+    const explicitLevelTerm = parseExplicitLevelTerm(line);
+    if (explicitLevelTerm) {
+      currentLevelTerm = explicitLevelTerm;
+      continue;
+    }
+
+    if (
+      /^Course Code$/i.test(line) ||
+      /^Course Title$/i.test(line) ||
+      /^Credits?$/i.test(line) ||
+      /^Credit Hours?$/i.test(line) ||
+      /^Credit Hour$/i.test(line)
+    ) {
+      continue;
+    }
+
+    if (!isCourseCode(line)) continue;
+
+    let title = "";
+    let credit: string | number = "";
+
+    if (cleanedLines[i + 1] && !isCourseCode(cleanedLines[i + 1])) {
+      title = cleanedLines[i + 1];
+    }
+    if (cleanedLines[i + 2]) {
+      credit = cleanedLines[i + 2];
+    }
+
+    const built = buildCourse(line, title, credit, electiveGroup, currentLevelTerm);
+    if (built) {
+      courses.push(built);
+      i += 2;
+      continue;
+    }
+
+    const fallbackTitle = cleanedLines[i + 1] ?? "";
+    const fallbackCredit = cleanedLines[i + 3] ?? cleanedLines[i + 2] ?? "";
+    const builtFallback = buildCourse(
+      line,
+      fallbackTitle,
+      fallbackCredit,
+      electiveGroup,
+      currentLevelTerm
+    );
+
+    if (builtFallback) {
+      courses.push(builtFallback);
+    }
+  }
+
+  return deduplicateCourses(courses);
+}
+
+export async function parseDocxCourseList(buffer: Buffer): Promise<ParsedMasterCourse[]> {
+  const result = await mammoth.extractRawText({ buffer });
+  const text = result.value || "";
+  const lines = text.split(/\r?\n/);
+  return parseDocxLinesToCourses(lines);
+}
+
+function parseXlsxRowsToCourses(rows: string[][]): ParsedMasterCourse[] {
+  const courses: ParsedMasterCourse[] = [];
+  let electiveGroup: string | null = null;
+  let currentLevelTerm: string | null = null;
+
+  for (const row of rows) {
+    const rawCells = row.map((cell) => String(cell ?? ""));
+    const cells = rawCells.map((cell) => normalizeWhitespace(cell)).filter(Boolean);
+
+    if (cells.length === 0) continue;
+
+    const joined = cells.join(" ").trim();
+
+    const groupMatch = joined.match(/^Group\s*-\s*([A-Z0-9]+)/i);
+    if (groupMatch) {
+      electiveGroup = groupMatch[1].toUpperCase();
+      continue;
+    }
+
+    const explicitLevelTerm = parseExplicitLevelTerm(joined);
+    if (explicitLevelTerm) {
+      currentLevelTerm = explicitLevelTerm;
+      continue;
+    }
+
+    if (
+      joined.match(/^Sl$/i) ||
+      joined.match(/^Course Code$/i) ||
+      joined.match(/^Course Title$/i) ||
+      joined.match(/^Credits?$/i) ||
+      joined.match(/^Credit Hours?$/i) ||
+      joined.match(/^Credit Hour$/i) ||
+      joined.match(/^Course Designation$/i)
+    ) {
+      continue;
+    }
+
+    let codeIndex = -1;
+    let creditIndex = -1;
+
+    for (let i = 0; i < cells.length; i++) {
+      if (codeIndex === -1 && isCourseCode(cells[i])) {
+        codeIndex = i;
+      }
+    }
+
+    for (let i = cells.length - 1; i >= 0; i--) {
+      if (parseCredit(cells[i]) !== null) {
+        creditIndex = i;
+        break;
+      }
+    }
+
+    if (codeIndex === -1 || creditIndex === -1 || creditIndex <= codeIndex) {
+      continue;
+    }
+
+    const codeRaw = cells[codeIndex];
+    const creditRaw = cells[creditIndex];
+    const titleRaw = cells.slice(codeIndex + 1, creditIndex).join(" ").trim();
+
+    const built = buildCourse(
+      codeRaw,
+      titleRaw,
+      creditRaw,
+      electiveGroup,
+      currentLevelTerm
+    );
+
+    if (built) {
+      courses.push(built);
+    }
+  }
+
+  return deduplicateCourses(courses);
+}
+
+export async function parseXlsxCourseList(buffer: Buffer): Promise<ParsedMasterCourse[]> {
+  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const allCourses: ParsedMasterCourse[] = [];
+
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
+      header: 1,
+      raw: false,
+      defval: "",
+    });
+
+    const normalizedRows = rows.map((row) => row.map((cell) => String(cell ?? "")));
+    const courses = parseXlsxRowsToCourses(normalizedRows).map((course) => ({
+      ...course,
+      levelTerm: course.levelTerm || parseExplicitLevelTerm(sheetName) || null,
+    }));
+
+    allCourses.push(...courses);
+  }
+
+  return deduplicateCourses(allCourses);
+}
+
+export async function parseMasterCourseListFile(
+  buffer: Buffer,
+  fileName: string
+): Promise<ParsedMasterCourse[]> {
+  const lower = fileName.toLowerCase();
+
+  if (lower.endsWith(".docx")) {
+    return parseDocxCourseList(buffer);
+  }
+
+  if (lower.endsWith(".xlsx")) {
+    return parseXlsxCourseList(buffer);
+  }
+
+  throw new Error("Only .docx and .xlsx master course list files are supported.");
+}
+
+
+===== FILE: prisma\schema.prisma =====
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model academic_terms {
+  id                          Int                           @id @default(autoincrement())
+  name                        String                        @unique @db.VarChar(100)
+  year                        Int
+  term_type                   String                        @db.VarChar(30)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  faculty_course_selections   faculty_course_selections[]
+  offerings                   offerings[]
+}
+
+model batch_completed_courses {
+  id                Int             @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int?
+  course_code       String          @db.VarChar(100)
+  course_title      String          @db.VarChar(300)
+  normalized_title  String          @db.VarChar(300)
+  credit            Float
+  grade             String?         @db.VarChar(20)
+  source_student_id String?         @db.VarChar(100)
+  source_file_name  String?         @db.VarChar(300)
+  academic_terms    academic_terms? @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batch_current_registrations {
+  id                Int            @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int
+  course_code       String         @db.VarChar(100)
+  course_title      String         @db.VarChar(300)
+  normalized_title  String         @db.VarChar(300)
+  credit            Float
+  source_student_id String?        @db.VarChar(100)
+  source_file_name  String?        @db.VarChar(300)
+  academic_terms    academic_terms @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches        @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batches {
+  id                          Int                           @id @default(autoincrement())
+  program_id                  Int
+  batch_code                  String                        @db.VarChar(100)
+  admission_term              String?                       @db.VarChar(100)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  programs                    programs                      @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_course_batches      offered_course_batches[]
+
+  @@unique([program_id, batch_code], map: "uq_program_batch")
+}
+
+model departments {
+  id         Int        @id @default(autoincrement())
+  name       String     @unique @db.VarChar(200)
+  short_name String     @unique @db.VarChar(50)
+  programs   programs[]
+  teachers   teachers[]
+}
+
+model master_courses {
+  id               Int               @id @default(autoincrement())
+  program_id       Int
+  course_code      String
+  course_title     String
+  normalized_title String
+  credit           Float
+  course_type      String
+  level_term       String?
+  group_name       String?
+  is_active        Boolean           @default(true)
+  created_at       DateTime          @default(now())
+  curriculum_key   String?
+  updated_at       DateTime          @default(now()) @updatedAt
+  program          programs          @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  offered_courses  offered_courses[]
+
+  @@unique([program_id, course_code])
+  @@unique([curriculum_key, course_code])
+  @@index([curriculum_key])
+}
+
+model offered_course_batches {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  batch_id          Int
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_slots {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  day_of_week       String          @db.VarChar(20)
+  start_time        String          @db.VarChar(10)
+  end_time          String          @db.VarChar(10)
+  room_id           Int
+  slot_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rooms             rooms           @relation(fields: [room_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_teachers {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  assigned_credit   Float
+  load_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_courses {
+  id                        Int                         @id @default(autoincrement())
+  offering_id               Int
+  master_course_id          Int
+  section                   String                      @db.VarChar(20)
+  is_cooffered              Boolean?                    @default(false)
+  primary_offered_course_id Int?
+  notes                     String?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_batches    offered_course_batches[]
+  offered_course_slots      offered_course_slots[]
+  offered_course_teachers   offered_course_teachers[]
+  master_courses            master_courses              @relation(fields: [master_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offerings                 offerings                   @relation(fields: [offering_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+    offered_course_manual_cooffers offered_course_manual_cooffers[]
+  primary_offered_course    offered_courses?            @relation("offered_course_cooffer_links", fields: [primary_offered_course_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  secondary_offered_courses offered_courses[]           @relation("offered_course_cooffer_links")
+
+  @@index([offering_id, section], map: "ix_offered_courses_offering_section")
+  @@index([primary_offered_course_id], map: "ix_offered_courses_primary_offered_course_id")
+}
+
+model offerings {
+  id                  Int               @id @default(autoincrement())
+  academic_term_id    Int
+  program_id          Int
+  prepared_by_user_id Int
+  status              String            @db.VarChar(30)
+  created_at          DateTime?         @default(now()) @db.Timestamptz(6)
+  offered_courses     offered_courses[]
+  academic_terms      academic_terms    @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users               users             @relation(fields: [prepared_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  programs            programs          @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_course_selections {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  academic_term_id  Int
+  priority_order    Int?
+  status            String          @db.VarChar(30)
+  selected_at       DateTime?       @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?       @default(now()) @updatedAt @db.Timestamptz(6)
+  confirmed_at      DateTime?       @db.Timestamptz(6)
+  academic_terms    academic_terms  @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([offered_course_id, teacher_id], map: "uq_faculty_course_selection")
+  @@index([teacher_id], map: "ix_faculty_course_selections_teacher_id")
+  @@index([academic_term_id], map: "ix_faculty_course_selections_term_id")
+  @@index([status], map: "ix_faculty_course_selections_status")
+  @@index([teacher_id, academic_term_id], map: "ix_faculty_course_selections_teacher_term")
+}
+
+model programs {
+  id             Int              @id @default(autoincrement())
+  department_id  Int
+  name           String           @db.VarChar(200)
+  short_name     String           @db.VarChar(50)
+  batches        batches[]
+  master_courses master_courses[]
+  offerings      offerings[]
+  departments    departments      @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([department_id, name], map: "uq_program_department_name")
+}
+
+model rooms {
+  id                   Int                    @id @default(autoincrement())
+  room_code            String                 @unique @db.VarChar(100)
+  room_type            String                 @db.VarChar(50)
+  capacity             Int?
+  is_active            Boolean?
+  offered_course_slots offered_course_slots[]
+}
+
+model student_report_logs {
+  id                        Int       @id @default(autoincrement())
+  student_id                String    @db.VarChar(100)
+  student_name              String?   @db.VarChar(200)
+  uploaded_by_user_id       Int
+  transcript_filename       String?   @db.VarChar(300)
+  registration_filename     String?   @db.VarChar(300)
+  latest_completed_semester String?   @db.VarChar(100)
+  registration_semester     String?   @db.VarChar(100)
+  total_earned_credits      Float?
+  gpa                       Float?
+  generated_excel_path      String?   @db.VarChar(500)
+  created_at                DateTime? @default(now()) @db.Timestamptz(6)
+  users                     users     @relation(fields: [uploaded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([id], map: "ix_student_report_logs_id")
+  @@index([student_id], map: "ix_student_report_logs_student_id")
+}
+
+model teachers {
+  id                        Int                         @id @default(autoincrement())
+  department_id             Int
+  teacher_code              String                      @unique @db.VarChar(100)
+  full_name                 String                      @db.VarChar(200)
+  designation               String?                     @db.VarChar(150)
+  email                     String?                     @db.VarChar(200)
+  phone                     String?                     @db.VarChar(50)
+  seniority_level           Int?
+  is_active                 Boolean?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_teachers   offered_course_teachers[]
+  departments               departments                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                     users[]
+
+  @@index([department_id], map: "ix_teachers_department_id")
+  @@index([seniority_level], map: "ix_teachers_seniority_level")
+}
+
+model users {
+  id                  Int                   @id @default(autoincrement())
+  username            String                @unique(map: "ix_users_username") @db.VarChar(100)
+  full_name           String                @db.VarChar(200)
+  password_hash       String
+  role                String                @db.VarChar(50)
+  is_active           Boolean?
+  teacher_id          Int?
+  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  offerings           offerings[]
+  student_report_logs student_report_logs[]
+  teachers            teachers?             @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  // ? ADD THIS LINE ONLY
+  faculty_login_sessions FacultyLoginSession[]
+
+  @@index([id], map: "ix_users_id")
+}
+
+model academic_catalog_entries {
+  id                 Int      @id @default(autoincrement())
+  department_code    String
+  department_name    String
+  program_code       String   @unique
+  program_title      String
+  program_type       String
+  study_shift        String
+  curriculum_version String
+  student_id_suffix  String?  @unique
+  display_label      String
+  is_active          Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @default(now()) @updatedAt
+  curriculum_key     String?
+
+  @@index([department_code])
+  @@index([program_type])
+  @@index([study_shift])
+  @@index([curriculum_version])
+  @@index([curriculum_key])
+}
+model SystemSetting {
+  id               Int      @id @default(autoincrement())
+  settingKey       String   @unique
+  settingValue     String
+  updatedByUserId  Int?
+  updatedAt        DateTime @updatedAt
+}
+
+model FacultyLoginSession {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  sessionToken  String   @unique
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+
+  user          users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model offered_course_manual_cooffers {
+  id                  Int             @id @default(autoincrement())
+  offered_course_id   Int
+  target_program_code String?         @db.VarChar(100)
+  manual_course_code  String          @db.VarChar(100)
+  note                String?         @db.VarChar(300)
+  created_at          DateTime        @default(now())
+  offered_courses     offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([offered_course_id], map: "ix_offered_course_manual_cooffers_offered_course_id")
+  @@index([target_program_code], map: "ix_offered_course_manual_cooffers_target_program_code")
+}
+model faculty_login_sessions {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  teacher_id    Int?
+  session_token String   @unique @db.VarChar(191)
+  created_at    DateTime @default(now())
+  expires_at    DateTime
+  warned_at     DateTime?
+  revoked_at    DateTime?
+
+  @@index([user_id], map: "ix_faculty_login_sessions_user_id")
+  @@index([teacher_id], map: "ix_faculty_login_sessions_teacher_id")
+  @@index([expires_at], map: "ix_faculty_login_sessions_expires_at")
+}
+
+model notifications {
+  id                Int      @id @default(autoincrement())
+  recipient_user_id Int?
+  recipient_teacher_id Int?
+  event_type        String   @db.VarChar(100)
+  title             String   @db.VarChar(200)
+  message           String   @db.Text
+  is_read           Boolean  @default(false)
+  created_by_user_id Int?
+  created_at        DateTime @default(now())
+  read_at           DateTime?
+
+  @@index([recipient_user_id], map: "ix_notifications_recipient_user_id")
+  @@index([recipient_teacher_id], map: "ix_notifications_recipient_teacher_id")
+  @@index([event_type], map: "ix_notifications_event_type")
+  @@index([is_read], map: "ix_notifications_is_read")
+}

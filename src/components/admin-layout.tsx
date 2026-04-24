@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import Footer from "@/components/Footer";
 
 type AdminLayoutProps = {
   title?: string;
@@ -50,7 +51,7 @@ function isActive(pathname: string, href: string) {
 }
 
 export default function AdminLayout({
-  title = "Admin Panel",
+  title = "UniFlow Academic Planner",
   children,
 }: AdminLayoutProps) {
   const pathname = usePathname();
@@ -82,6 +83,7 @@ export default function AdminLayout({
             <nav className="mt-8 space-y-1">
               {navItems.map((item) => {
                 const active = isActive(pathname, item.href);
+
                 return (
                   <Link
                     key={item.href}
@@ -129,6 +131,7 @@ export default function AdminLayout({
                   </Link>
 
                   <button
+                    type="button"
                     onClick={handleLogout}
                     className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
                   >
@@ -140,6 +143,8 @@ export default function AdminLayout({
           </header>
 
           <section className="px-4 py-6 sm:px-6 lg:px-8">{children}</section>
+
+          <Footer />
         </main>
       </div>
     </div>

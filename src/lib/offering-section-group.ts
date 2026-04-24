@@ -210,3 +210,67 @@ export async function deleteOfferedCourseCascade(
     },
   });
 }
+export async function getSectionGroupCourseIds(
+  tx: any,
+  offeredCourseId: number
+): Promise<number[]> {
+  const course = await tx.offered_courses.findUnique({
+    where: { id: offeredCourseId },
+    select: {
+      id: true,
+      primary_offered_course_id: true,
+      secondary_offered_courses: {
+        select: { id: true },
+      },
+    },
+  });
+
+  if (!course) return [];
+
+  const primaryId = course.primary_offered_course_id ?? course.id;
+
+  const primary = await tx.offered_courses.findUnique({
+    where: { id: primaryId },
+    select: {
+      id: true,
+      secondary_offered_courses: {
+        select: { id: true },
+      },
+    },
+  });
+
+  if (!primary) return [offeredCourseId];
+
+  return [
+    primary.id,
+    ...primary.secondary_offered_courses.map((item: { id: number }) => item.id),
+  ];
+}
+
+export async function getSectionGroupBatchIds(
+  tx: any,
+  offeredCourseId: number
+): Promise<number[]> {
+  const courseIds = await getSectionGroupCourseIds(tx, offeredCourseId);
+
+  if (courseIds.length === 0) return [];
+
+  const rows = await tx.offered_course_batches.findMany({
+    where: {
+      offered_course_id: {
+        in: courseIds,
+      },
+    },
+    select: {
+      batch_id: true,
+    },
+  });
+
+  return Array.from(
+    new Set(
+      rows
+        .map((row: { batch_id: number }) => row.batch_id)
+        .filter((id: number) => Number.isFinite(id))
+    )
+  );
+}

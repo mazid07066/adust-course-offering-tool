@@ -1,25 +1,15 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { requireFacultyApi } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 
-export async function POST(
-  _req: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
+export async function POST() {
   const guard = await requireFacultyApi();
   if (guard instanceof Response) return guard;
 
   try {
-    const { id } = await context.params;
-    const notificationId = Number(id);
-
-    if (!notificationId) {
-      return NextResponse.json({ error: "Invalid notification id." }, { status: 400 });
-    }
-
     await prisma.notifications.updateMany({
       where: {
-        id: notificationId,
+        is_read: false,
         OR: [
           { recipient_user_id: guard.id },
           guard.teacher_id ? { recipient_teacher_id: guard.teacher_id } : undefined,
@@ -35,7 +25,7 @@ export async function POST(
   } catch (error) {
     console.error(error);
     return NextResponse.json(
-      { error: "Failed to mark notification as read." },
+      { error: "Failed to clear notifications." },
       { status: 500 }
     );
   }

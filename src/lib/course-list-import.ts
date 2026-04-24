@@ -1,6 +1,7 @@
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
-import { CourseType } from "@prisma/client";
+
+export type CourseType = "THEORY" | "LAB" | "PROJECT" | "INTERNSHIP";
 
 export type ParsedMasterCourse = {
   code: string;
@@ -55,16 +56,19 @@ function parseCredit(raw: string): number | null {
 
 function detectCourseType(title: string): CourseType {
   const upper = title.toUpperCase();
-  if (upper.includes("LAB")) return CourseType.LAB;
-  if (upper.includes("PROJECT") || upper.includes("DISSERTATION")) return CourseType.PROJECT;
-  if (upper.includes("INTERNSHIP")) return CourseType.INTERNSHIP;
-  return CourseType.THEORY;
+
+  if (upper.includes("LAB")) return "LAB";
+  if (upper.includes("PROJECT") || upper.includes("DISSERTATION")) return "PROJECT";
+  if (upper.includes("INTERNSHIP")) return "INTERNSHIP";
+
+  return "THEORY";
 }
 
 function splitTheoryLabCredits(courseType: CourseType, creditHours: number) {
-  if (courseType === CourseType.LAB || courseType === CourseType.INTERNSHIP) {
+  if (courseType === "LAB" || courseType === "INTERNSHIP") {
     return { theoryCredits: 0, labCredits: creditHours };
   }
+
   return { theoryCredits: creditHours, labCredits: 0 };
 }
 
@@ -83,13 +87,8 @@ function parseLevelTermFromCode(code: string): string | null {
   const level = Number(digits[0]);
   const term = Number(digits[1]);
 
-  if (!Number.isFinite(level) || !Number.isFinite(term)) {
-    return null;
-  }
-
-  if (level <= 0 || term <= 0) {
-    return null;
-  }
+  if (!Number.isFinite(level) || !Number.isFinite(term)) return null;
+  if (level <= 0 || term <= 0) return null;
 
   return `${level}.${term}`;
 }
@@ -100,24 +99,16 @@ function parseExplicitLevelTerm(raw: string): string | null {
   if (!cleaned) return null;
 
   let match = cleaned.match(/^(\d+)[.\-_/ ](\d+)$/);
-  if (match) {
-    return `${Number(match[1])}.${Number(match[2])}`;
-  }
+  if (match) return `${Number(match[1])}.${Number(match[2])}`;
 
   match = cleaned.match(/^L?\s*(\d+)\s*T?\s*(\d+)$/i);
-  if (match) {
-    return `${Number(match[1])}.${Number(match[2])}`;
-  }
+  if (match) return `${Number(match[1])}.${Number(match[2])}`;
 
   match = cleaned.match(/LEVEL\s*(\d+)\s*TERM\s*(\d+)/i);
-  if (match) {
-    return `${Number(match[1])}.${Number(match[2])}`;
-  }
+  if (match) return `${Number(match[1])}.${Number(match[2])}`;
 
   match = cleaned.match(/YEAR\s*(\d+)\s*SEM(?:ESTER)?\s*(\d+)/i);
-  if (match) {
-    return `${Number(match[1])}.${Number(match[2])}`;
-  }
+  if (match) return `${Number(match[1])}.${Number(match[2])}`;
 
   return null;
 }
@@ -161,9 +152,9 @@ function buildCourse(
 
   const courseType = detectCourseType(title);
   const credits = splitTheoryLabCredits(courseType, creditHours);
-
   const inferredLevelTerm = parseLevelTermFromCode(code);
-  const resolvedLevelTerm = parseExplicitLevelTerm(explicitLevelTerm || "") || inferredLevelTerm;
+  const resolvedLevelTerm =
+    parseExplicitLevelTerm(explicitLevelTerm || "") || inferredLevelTerm;
 
   return {
     code,
@@ -221,6 +212,7 @@ function parseDocxLinesToCourses(lines: string[]): ParsedMasterCourse[] {
     if (cleanedLines[i + 1] && !isCourseCode(cleanedLines[i + 1])) {
       title = cleanedLines[i + 1];
     }
+
     if (cleanedLines[i + 2]) {
       credit = cleanedLines[i + 2];
     }
@@ -234,6 +226,7 @@ function parseDocxLinesToCourses(lines: string[]): ParsedMasterCourse[] {
 
     const fallbackTitle = cleanedLines[i + 1] ?? "";
     const fallbackCredit = cleanedLines[i + 3] ?? cleanedLines[i + 2] ?? "";
+
     const builtFallback = buildCourse(
       line,
       fallbackTitle,
@@ -250,10 +243,13 @@ function parseDocxLinesToCourses(lines: string[]): ParsedMasterCourse[] {
   return deduplicateCourses(courses);
 }
 
-export async function parseDocxCourseList(buffer: Buffer): Promise<ParsedMasterCourse[]> {
+export async function parseDocxCourseList(
+  buffer: Buffer
+): Promise<ParsedMasterCourse[]> {
   const result = await mammoth.extractRawText({ buffer });
   const text = result.value || "";
   const lines = text.split(/\r?\n/);
+
   return parseDocxLinesToCourses(lines);
 }
 
@@ -334,19 +330,25 @@ function parseXlsxRowsToCourses(rows: string[][]): ParsedMasterCourse[] {
   return deduplicateCourses(courses);
 }
 
-export async function parseXlsxCourseList(buffer: Buffer): Promise<ParsedMasterCourse[]> {
+export async function parseXlsxCourseList(
+  buffer: Buffer
+): Promise<ParsedMasterCourse[]> {
   const workbook = XLSX.read(buffer, { type: "buffer" });
   const allCourses: ParsedMasterCourse[] = [];
 
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
+
     const rows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
       header: 1,
       raw: false,
       defval: "",
     });
 
-    const normalizedRows = rows.map((row) => row.map((cell) => String(cell ?? "")));
+    const normalizedRows = rows.map((row) =>
+      row.map((cell) => String(cell ?? ""))
+    );
+
     const courses = parseXlsxRowsToCourses(normalizedRows).map((course) => ({
       ...course,
       levelTerm: course.levelTerm || parseExplicitLevelTerm(sheetName) || null,
@@ -368,9 +370,9 @@ export async function parseMasterCourseListFile(
     return parseDocxCourseList(buffer);
   }
 
-  if (lower.endsWith(".xlsx")) {
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
     return parseXlsxCourseList(buffer);
   }
 
-  throw new Error("Only .docx and .xlsx master course list files are supported.");
+  throw new Error("Only .docx, .xlsx, and .xls master course list files are supported.");
 }
