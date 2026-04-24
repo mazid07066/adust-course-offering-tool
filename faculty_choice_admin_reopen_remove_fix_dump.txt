@@ -1,0 +1,3568 @@
+
+
+===== FILE: src\app\admin\faculty-course-choices\page-client.tsx =====
+
+"use client";
+
+import { useEffect, useState } from "react";
+import AdminLayout from "@/components/admin-layout";
+import { useAcademicTerms } from "@/hooks/use-academic-terms";
+
+type ChoiceCourse = {
+  selectionId: number;
+  offeredCourseId: number;
+  priorityOrder: number | null;
+  status: string;
+  selectedAt: string | null;
+  confirmedAt: string | null;
+  programCode: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  batchCodes: string[];
+};
+
+type AssignedCourse = {
+  assignmentId: number;
+  offeredCourseId: number;
+  programCode: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  batchCodes: string[];
+  assignedCredit: number;
+  loadType: string;
+};
+
+type FacultyChoiceGroup = {
+  teacherId: number;
+  teacherCode: string;
+  teacherName: string;
+  designation: string | null;
+  totalChoices: number;
+  finalizedCount: number;
+  bufferCount: number;
+  approvedAssignedCount: number;
+  approvedAssignedCredits: number;
+  choices: ChoiceCourse[];
+  assignments: AssignedCourse[];
+};
+
+type ApiResponse = {
+  success?: boolean;
+  error?: string;
+  message?: string;
+  termName?: string;
+  facultyChoices?: FacultyChoiceGroup[];
+};
+
+export default function FacultyCourseChoicesAdminPageClient() {
+  const { terms, termName, setTermName, loadingTerms, termError } = useAcademicTerms();
+
+  const [loading, setLoading] = useState(false);
+  const [actionLoadingKey, setActionLoadingKey] = useState<string>("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [facultyChoices, setFacultyChoices] = useState<FacultyChoiceGroup[]>([]);
+
+  async function loadChoices() {
+    if (!termName) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch(
+        `/api/admin/faculty-course-choices?termName=${encodeURIComponent(termName)}`,
+        {
+          cache: "no-store",
+        }
+      );
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load faculty course choices.");
+      }
+
+      setFacultyChoices(json.facultyChoices || []);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load faculty course choices."
+      );
+      setFacultyChoices([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (termName) {
+      loadChoices();
+    }
+  }, [termName]);
+
+  async function handleApprove(teacherId: number, teacherLabel: string) {
+    if (!termName) {
+      setError("Please select a term first.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Approve FINAL choices for ${teacherLabel} in ${termName} and apply them to the assignment board?`
+    );
+    if (!ok) return;
+
+    setActionLoadingKey(`approve-${teacherId}`);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/faculty-course-choices/approve", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          teacherId,
+          termName,
+        }),
+      });
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to approve faculty choices.");
+      }
+
+      setMessage(json.message || "Faculty choices approved successfully.");
+      await loadChoices();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to approve faculty choices.");
+    } finally {
+      setActionLoadingKey("");
+    }
+  }
+
+  async function handleRemoveApprovedAssignment(teacherId: number, teacherLabel: string) {
+    if (!termName) {
+      setError("Please select a term first.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Remove approved assignment rows for ${teacherLabel} in ${termName}?`
+    );
+    if (!ok) return;
+
+    setActionLoadingKey(`remove-approved-${teacherId}`);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(
+        "/api/admin/faculty-course-choices/remove-approved-assignment",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            teacherId,
+            termName,
+          }),
+        }
+      );
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to remove approved assignment.");
+      }
+
+      setMessage(json.message || "Approved assignment removed successfully.");
+      await loadChoices();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to remove approved assignment."
+      );
+    } finally {
+      setActionLoadingKey("");
+    }
+  }
+
+  async function handleReopen(teacherId: number, teacherLabel: string) {
+    if (!termName) {
+      setError("Please select a term first.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Reopen finalized choices for ${teacherLabel} in ${termName}?`
+    );
+    if (!ok) return;
+
+    setActionLoadingKey(`reopen-${teacherId}`);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/faculty-course-choices/reopen", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          teacherId,
+          termName,
+        }),
+      });
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to reopen faculty choices.");
+      }
+
+      setMessage(json.message || "Faculty choices reopened successfully.");
+      await loadChoices();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reopen faculty choices.");
+    } finally {
+      setActionLoadingKey("");
+    }
+  }
+
+  async function handleReset(teacherId: number, teacherLabel: string) {
+    if (!termName) {
+      setError("Please select a term first.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Reset all faculty choices for ${teacherLabel} in ${termName}? This will delete BUFFER and FINAL records for that faculty in the selected term.`
+    );
+    if (!ok) return;
+
+    setActionLoadingKey(`reset-${teacherId}`);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/faculty-course-choices/reset", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          teacherId,
+          termName,
+        }),
+      });
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to reset faculty choices.");
+      }
+
+      setMessage(json.message || "Faculty choices reset successfully.");
+      await loadChoices();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset faculty choices.");
+    } finally {
+      setActionLoadingKey("");
+    }
+  }
+
+  return (
+    <AdminLayout title="Faculty Course Choices">
+      <div className="space-y-6">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="w-full max-w-md">
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Academic Term
+              </label>
+              <select
+                value={termName}
+                onChange={(e) => setTermName(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+                disabled={loadingTerms}
+              >
+                <option value="">
+                  {loadingTerms ? "Loading terms..." : "Select Academic Term"}
+                </option>
+                {terms.map((term) => (
+                  <option key={term.name} value={term.name}>
+                    {term.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <a
+                href="/admin/faculty-assignment"
+                className="rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Open Assignment Board
+              </a>
+
+              <button
+                type="button"
+                onClick={loadChoices}
+                disabled={!termName || loading}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+              >
+                {loading ? "Loading..." : "Refresh Choices"}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+            FINAL faculty choices need approval. Existing imported/manual/preassigned assignments are already authoritative and are shown below as approved assignment rows. They do not require the faculty to log in again.
+          </div>
+        </div>
+
+        {(error || termError) && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error || termError}
+          </div>
+        )}
+
+        {message && (
+          <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {message}
+          </div>
+        )}
+
+        <div className="space-y-4">
+          {facultyChoices.map((group) => {
+            const teacherLabel = `${group.teacherCode} - ${group.teacherName}`;
+            const hasFinal = group.finalizedCount > 0;
+            const hasApprovedAssignment = group.approvedAssignedCount > 0;
+
+            return (
+              <div
+                key={group.teacherId}
+                className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+              >
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">
+                      {teacherLabel}
+                    </h2>
+                    <div className="mt-1 text-sm text-slate-600">
+                      {group.designation || "-"}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                        Total Choices: {group.totalChoices}
+                      </span>
+                      <span className="rounded-full bg-green-100 px-3 py-1 text-green-700">
+                        FINAL: {group.finalizedCount}
+                      </span>
+                      <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-700">
+                        BUFFER: {group.bufferCount}
+                      </span>
+                      <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-700">
+                        Assigned Sections: {group.approvedAssignedCount}
+                      </span>
+                      <span className="rounded-full bg-purple-100 px-3 py-1 text-purple-700">
+                        Assigned Credits: {group.approvedAssignedCredits}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => handleApprove(group.teacherId, teacherLabel)}
+                      disabled={!hasFinal || actionLoadingKey !== ""}
+                      className="rounded-xl bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-60"
+                    >
+                      {actionLoadingKey === `approve-${group.teacherId}`
+                        ? "Approving..."
+                        : "Approve Final Choices"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRemoveApprovedAssignment(group.teacherId, teacherLabel)
+                      }
+                      disabled={!hasApprovedAssignment || actionLoadingKey !== ""}
+                      className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      {actionLoadingKey === `remove-approved-${group.teacherId}`
+                        ? "Removing..."
+                        : "Remove Approved Assignment"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleReopen(group.teacherId, teacherLabel)}
+                      disabled={actionLoadingKey !== ""}
+                      className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60"
+                    >
+                      {actionLoadingKey === `reopen-${group.teacherId}`
+                        ? "Reopening..."
+                        : "Reopen"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleReset(group.teacherId, teacherLabel)}
+                      disabled={actionLoadingKey !== ""}
+                      className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
+                    >
+                      {actionLoadingKey === `reset-${group.teacherId}`
+                        ? "Resetting..."
+                        : "Reset"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-5 space-y-5">
+                  <div>
+                    <h3 className="mb-3 text-base font-semibold text-slate-900">
+                      Faculty Choice Rows
+                    </h3>
+                    <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="border-b px-3 py-3 text-left">Priority</th>
+                            <th className="border-b px-3 py-3 text-left">Status</th>
+                            <th className="border-b px-3 py-3 text-left">Program</th>
+                            <th className="border-b px-3 py-3 text-left">Course</th>
+                            <th className="border-b px-3 py-3 text-left">Section</th>
+                            <th className="border-b px-3 py-3 text-left">Batches</th>
+                            <th className="border-b px-3 py-3 text-left">Timestamp</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.choices.map((choice) => (
+                            <tr key={choice.selectionId}>
+                              <td className="border-b px-3 py-2">
+                                {choice.priorityOrder || "-"}
+                              </td>
+                              <td className="border-b px-3 py-2">{choice.status}</td>
+                              <td className="border-b px-3 py-2">{choice.programCode}</td>
+                              <td className="border-b px-3 py-2">
+                                {choice.courseCode} — {choice.courseTitle}
+                              </td>
+                              <td className="border-b px-3 py-2">{choice.section}</td>
+                              <td className="border-b px-3 py-2">
+                                {choice.batchCodes.join(", ") || "-"}
+                              </td>
+                              <td className="border-b px-3 py-2">
+                                {choice.status === "FINAL"
+                                  ? choice.confirmedAt || "-"
+                                  : choice.selectedAt || "-"}
+                              </td>
+                            </tr>
+                          ))}
+
+                          {group.choices.length === 0 && (
+                            <tr>
+                              <td
+                                colSpan={7}
+                                className="px-4 py-6 text-center text-slate-500"
+                              >
+                                No faculty choice rows found for this teacher.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="mb-3 text-base font-semibold text-slate-900">
+                      Existing Approved Assignment Rows
+                    </h3>
+                    <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="border-b px-3 py-3 text-left">Load Type</th>
+                            <th className="border-b px-3 py-3 text-left">Program</th>
+                            <th className="border-b px-3 py-3 text-left">Course</th>
+                            <th className="border-b px-3 py-3 text-left">Section</th>
+                            <th className="border-b px-3 py-3 text-left">Batches</th>
+                            <th className="border-b px-3 py-3 text-left">Assigned Credit</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.assignments.map((assignment) => (
+                            <tr key={assignment.assignmentId}>
+                              <td className="border-b px-3 py-2">{assignment.loadType}</td>
+                              <td className="border-b px-3 py-2">{assignment.programCode}</td>
+                              <td className="border-b px-3 py-2">
+                                {assignment.courseCode} — {assignment.courseTitle}
+                              </td>
+                              <td className="border-b px-3 py-2">{assignment.section}</td>
+                              <td className="border-b px-3 py-2">
+                                {assignment.batchCodes.join(", ") || "-"}
+                              </td>
+                              <td className="border-b px-3 py-2">
+                                {assignment.assignedCredit}
+                              </td>
+                            </tr>
+                          ))}
+
+                          {group.assignments.length === 0 && (
+                            <tr>
+                              <td
+                                colSpan={6}
+                                className="px-4 py-6 text-center text-slate-500"
+                              >
+                                No existing approved assignment rows found for this teacher.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {facultyChoices.length === 0 && !loading && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm">
+              No faculty course choices or approved assignments found for the selected term.
+            </div>
+          )}
+        </div>
+      </div>
+    </AdminLayout>
+  );
+}
+
+
+===== FILE: src\app\admin\faculty-course-choices\page.tsx =====
+
+import { requireCoordinatorOrAdmin } from "@/lib/auth-guard";
+import FacultyCourseChoicesAdminPageClient from "./page-client";
+
+export default async function FacultyCourseChoicesAdminPage() {
+  await requireCoordinatorOrAdmin();
+  return <FacultyCourseChoicesAdminPageClient />;
+}
+
+
+===== FILE: src\app\api\admin\faculty-course-choices\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+
+type ChoiceRow = {
+  selectionId: number;
+  offeredCourseId: number;
+  priorityOrder: number | null;
+  status: string;
+  selectedAt: string | null;
+  confirmedAt: string | null;
+  programCode: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  batchCodes: string[];
+};
+
+type AssignmentRow = {
+  assignmentId: number;
+  offeredCourseId: number;
+  programCode: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  batchCodes: string[];
+  assignedCredit: number;
+  loadType: string;
+};
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+export async function GET(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const termName = String(searchParams.get("termName") || "").trim().toUpperCase();
+
+    if (!termName) {
+      return NextResponse.json(
+        { error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: { name: termName },
+      select: { id: true, name: true },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const [selections, assignments] = await Promise.all([
+      prisma.faculty_course_selections.findMany({
+        where: {
+          academic_term_id: term.id,
+        },
+        include: {
+          teachers: true,
+          offered_courses: {
+            include: {
+              master_courses: {
+                include: {
+                  program: true,
+                },
+              },
+              offered_course_batches: {
+                include: {
+                  batches: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: [
+          { teacher_id: "asc" },
+          { priority_order: "asc" },
+          { id: "asc" },
+        ],
+      }),
+      prisma.offered_course_teachers.findMany({
+        where: {
+          offered_courses: {
+            offerings: {
+              academic_term_id: term.id,
+            },
+          },
+        },
+        include: {
+          teachers: true,
+          offered_courses: {
+            include: {
+              master_courses: {
+                include: {
+                  program: true,
+                },
+              },
+              offered_course_batches: {
+                include: {
+                  batches: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: [{ teacher_id: "asc" }, { id: "asc" }],
+      }),
+    ]);
+
+    const map = new Map<
+      number,
+      {
+        teacherId: number;
+        teacherCode: string;
+        teacherName: string;
+        designation: string | null;
+        totalChoices: number;
+        finalizedCount: number;
+        bufferCount: number;
+        approvedAssignedCount: number;
+        approvedAssignedCredits: number;
+        choices: ChoiceRow[];
+        assignments: AssignmentRow[];
+      }
+    >();
+
+    for (const row of selections) {
+      if (!map.has(row.teacher_id)) {
+        map.set(row.teacher_id, {
+          teacherId: row.teacher_id,
+          teacherCode: row.teachers?.teacher_code || "-",
+          teacherName: row.teachers?.full_name || "-",
+          designation: row.teachers?.designation || null,
+          totalChoices: 0,
+          finalizedCount: 0,
+          bufferCount: 0,
+          approvedAssignedCount: 0,
+          approvedAssignedCredits: 0,
+          choices: [],
+          assignments: [],
+        });
+      }
+
+      const group = map.get(row.teacher_id)!;
+      group.totalChoices += 1;
+
+      if (row.status === "FINAL") group.finalizedCount += 1;
+      if (row.status === "BUFFER") group.bufferCount += 1;
+
+      group.choices.push({
+        selectionId: row.id,
+        offeredCourseId: row.offered_course_id,
+        priorityOrder: row.priority_order,
+        status: row.status,
+        selectedAt: row.selected_at ? row.selected_at.toISOString() : null,
+        confirmedAt: row.confirmed_at ? row.confirmed_at.toISOString() : null,
+        programCode: row.offered_courses.master_courses.program.short_name,
+        courseCode: row.offered_courses.master_courses.course_code,
+        courseTitle: row.offered_courses.master_courses.course_title,
+        section: row.offered_courses.section,
+        batchCodes: row.offered_courses.offered_course_batches.map(
+          (x) => x.batches.batch_code
+        ),
+      });
+    }
+
+    const assignmentMergeMap = new Map<
+      string,
+      {
+        teacherId: number;
+        teacherCode: string;
+        teacherName: string;
+        designation: string | null;
+        assignmentId: number;
+        offeredCourseId: number;
+        programCode: string;
+        courseCode: string;
+        courseTitle: string;
+        section: string;
+        batchCodes: string[];
+        assignedCredit: number;
+        loadType: string;
+      }
+    >();
+
+    for (const row of assignments) {
+      const teacherId = row.teacher_id;
+      const teacherCode = row.teachers?.teacher_code || "-";
+      const teacherName = row.teachers?.full_name || "-";
+      const designation = row.teachers?.designation || null;
+      const programCode = row.offered_courses.master_courses.program.short_name;
+      const courseCode = row.offered_courses.master_courses.course_code;
+      const courseTitle = row.offered_courses.master_courses.course_title;
+      const section = row.offered_courses.section;
+      const batchCodes = row.offered_courses.offered_course_batches.map(
+        (x) => x.batches.batch_code
+      );
+
+      const signature = [
+        teacherId,
+        programCode,
+        courseCode,
+        section,
+      ].join("::");
+
+      if (!assignmentMergeMap.has(signature)) {
+        assignmentMergeMap.set(signature, {
+          teacherId,
+          teacherCode,
+          teacherName,
+          designation,
+          assignmentId: row.id,
+          offeredCourseId: row.offered_course_id,
+          programCode,
+          courseCode,
+          courseTitle,
+          section,
+          batchCodes,
+          assignedCredit: Number(row.assigned_credit || 0),
+          loadType: row.load_type,
+        });
+      } else {
+        const current = assignmentMergeMap.get(signature)!;
+        current.batchCodes = uniqueStrings([...current.batchCodes, ...batchCodes]);
+        current.assignedCredit = Math.max(
+          current.assignedCredit,
+          Number(row.assigned_credit || 0)
+        );
+      }
+    }
+
+    for (const merged of assignmentMergeMap.values()) {
+      if (!map.has(merged.teacherId)) {
+        map.set(merged.teacherId, {
+          teacherId: merged.teacherId,
+          teacherCode: merged.teacherCode,
+          teacherName: merged.teacherName,
+          designation: merged.designation,
+          totalChoices: 0,
+          finalizedCount: 0,
+          bufferCount: 0,
+          approvedAssignedCount: 0,
+          approvedAssignedCredits: 0,
+          choices: [],
+          assignments: [],
+        });
+      }
+
+      const group = map.get(merged.teacherId)!;
+      group.approvedAssignedCount += 1;
+      group.approvedAssignedCredits += merged.assignedCredit;
+
+      group.assignments.push({
+        assignmentId: merged.assignmentId,
+        offeredCourseId: merged.offeredCourseId,
+        programCode: merged.programCode,
+        courseCode: merged.courseCode,
+        courseTitle: merged.courseTitle,
+        section: merged.section,
+        batchCodes: uniqueStrings(merged.batchCodes),
+        assignedCredit: merged.assignedCredit,
+        loadType: merged.loadType,
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      termName: term.name,
+      facultyChoices: Array.from(map.values()).sort((a, b) =>
+        a.teacherCode.localeCompare(b.teacherCode)
+      ),
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      { error: "Failed to load faculty course choices." },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\admin\faculty-course-choices\approve\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { createFacultyNotification } from "@/lib/faculty-notifications";
+
+const ALLOWED_OFFERING_STATUSES = [
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await req.json();
+    const teacherId = Number(body.teacherId);
+    const termName = String(body.termName || "").trim().toUpperCase();
+
+    if (!teacherId || !termName) {
+      return NextResponse.json(
+        { error: "teacherId and termName are required." },
+        { status: 400 }
+      );
+    }
+
+    const [teacher, term] = await Promise.all([
+      prisma.teachers.findUnique({
+        where: { id: teacherId },
+        select: {
+          id: true,
+          teacher_code: true,
+          full_name: true,
+          designation: true,
+          is_active: true,
+        },
+      }),
+      prisma.academic_terms.findFirst({
+        where: { name: termName },
+        select: {
+          id: true,
+          name: true,
+        },
+      }),
+    ]);
+
+    if (!teacher || !teacher.is_active) {
+      return NextResponse.json(
+        { error: "Teacher not found or inactive." },
+        { status: 404 }
+      );
+    }
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const finalSelections = await prisma.faculty_course_selections.findMany({
+      where: {
+        teacher_id: teacher.id,
+        academic_term_id: term.id,
+        status: "FINAL",
+      },
+      include: {
+        offered_courses: {
+          include: {
+            offerings: true,
+            master_courses: true,
+            offered_course_teachers: {
+              include: {
+                teachers: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ priority_order: "asc" }, { id: "asc" }],
+    });
+
+    if (finalSelections.length === 0) {
+      return NextResponse.json(
+        { error: "No FINAL faculty choices found to approve." },
+        { status: 400 }
+      );
+    }
+
+    let assignedCount = 0;
+    let skippedAlreadyAssignedToSameTeacher = 0;
+    let skippedAssignedToAnotherTeacher = 0;
+    let skippedInvalidStatus = 0;
+
+    for (const selection of finalSelections) {
+      const course = selection.offered_courses;
+
+      if (!ALLOWED_OFFERING_STATUSES.includes(course.offerings.status)) {
+        skippedInvalidStatus += 1;
+        continue;
+      }
+
+      const existingAssignments = course.offered_course_teachers || [];
+
+      const assignedToSameTeacher = existingAssignments.some(
+        (row) => row.teacher_id === teacher.id
+      );
+
+      if (assignedToSameTeacher) {
+        skippedAlreadyAssignedToSameTeacher += 1;
+        continue;
+      }
+
+      const assignedToAnotherTeacher = existingAssignments.some(
+        (row) => row.teacher_id !== teacher.id
+      );
+
+      if (assignedToAnotherTeacher) {
+        skippedAssignedToAnotherTeacher += 1;
+        continue;
+      }
+
+      await prisma.offered_course_teachers.create({
+        data: {
+          offered_course_id: course.id,
+          teacher_id: teacher.id,
+          assigned_credit: Number(course.master_courses.credit || 0),
+          load_type: "APPROVED_CHOICE",
+        },
+      });
+
+      assignedCount += 1;
+    }
+
+    const linkedUsers = await prisma.users.findMany({
+      where: {
+        teacher_id: teacher.id,
+        is_active: true,
+        role: "FACULTY",
+      },
+      select: { id: true },
+    });
+
+    for (const user of linkedUsers) {
+      await createFacultyNotification({
+        recipientUserId: user.id,
+        recipientTeacherId: teacher.id,
+        createdByUserId: guard.id,
+        eventType: "FACULTY_CHOICE_APPROVED",
+        title: "Faculty choices approved",
+        message: `Your final course choices for ${term.name} were approved and applied to the assignment board.`,
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `Approval completed. Assigned ${assignedCount}, skipped already assigned to same teacher ${skippedAlreadyAssignedToSameTeacher}, skipped assigned to another teacher ${skippedAssignedToAnotherTeacher}, skipped invalid status ${skippedInvalidStatus}.`,
+      assignedCount,
+      skippedAlreadyAssignedToSameTeacher,
+      skippedAssignedToAnotherTeacher,
+      skippedInvalidStatus,
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      { error: "Failed to approve faculty final choices." },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\admin\faculty-course-choices\remove-approved\route.ts =====
+
+NOT PRESENT
+
+
+===== FILE: src\app\api\admin\faculty-course-choices\reopen\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { createFacultyNotification } from "@/lib/faculty-notifications";
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await req.json();
+    const teacherId = Number(body.teacherId);
+    const termName = String(body.termName || "").trim().toUpperCase();
+
+    if (!teacherId || !termName) {
+      return NextResponse.json(
+        { error: "teacherId and termName are required." },
+        { status: 400 }
+      );
+    }
+
+    const [teacher, term] = await Promise.all([
+      prisma.teachers.findUnique({
+        where: { id: teacherId },
+        select: { id: true, teacher_code: true, full_name: true },
+      }),
+      prisma.academic_terms.findFirst({
+        where: { name: termName },
+        select: { id: true, name: true },
+      }),
+    ]);
+
+    if (!teacher || !term) {
+      return NextResponse.json(
+        { error: "Teacher or term not found." },
+        { status: 404 }
+      );
+    }
+
+    await prisma.faculty_course_selections.updateMany({
+      where: {
+        teacher_id: teacher.id,
+        academic_term_id: term.id,
+        status: "FINAL",
+      },
+      data: {
+        status: "BUFFER",
+        confirmed_at: null,
+      },
+    });
+
+    const linkedUsers = await prisma.users.findMany({
+      where: {
+        teacher_id: teacher.id,
+        is_active: true,
+        role: "FACULTY",
+      },
+      select: { id: true },
+    });
+
+    for (const user of linkedUsers) {
+      await createFacultyNotification({
+        recipientUserId: user.id,
+        recipientTeacherId: teacher.id,
+        createdByUserId: guard.id,
+        eventType: "FACULTY_CHOICE_REOPENED",
+        title: "Faculty choices reopened",
+        message: `Your final choices for ${term.name} were reopened by coordinator/admin. Please review and resubmit if required.`,
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: "Faculty choices reopened successfully.",
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      { error: "Failed to reopen faculty choices." },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\admin\faculty-course-choices\reset\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await req.json();
+
+    const teacherId = Number(body.teacherId);
+    const termName = String(body.termName || "").trim().toUpperCase();
+
+    if (!teacherId || !termName) {
+      return NextResponse.json(
+        { error: "teacherId and termName are required." },
+        { status: 400 }
+      );
+    }
+
+    const teacher = await prisma.teachers.findUnique({
+      where: { id: teacherId },
+      select: {
+        id: true,
+        teacher_code: true,
+        full_name: true,
+      },
+    });
+
+    if (!teacher) {
+      return NextResponse.json(
+        { error: "Faculty member not found." },
+        { status: 404 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: { name: termName },
+      select: { id: true, name: true },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const existingCount = await prisma.faculty_course_selections.count({
+      where: {
+        teacher_id: teacherId,
+        academic_term_id: term.id,
+      },
+    });
+
+    if (existingCount === 0) {
+      return NextResponse.json(
+        {
+          error: "No faculty choices found for this faculty and term.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const deleted = await prisma.faculty_course_selections.deleteMany({
+      where: {
+        teacher_id: teacherId,
+        academic_term_id: term.id,
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: `Reset ${deleted.count} choice record(s) for ${teacher.teacher_code} - ${teacher.full_name}.`,
+      deletedCount: deleted.count,
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      { error: "Failed to reset faculty choices." },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\faculty\course-choices\options\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { prisma } from "@/lib/prisma";
+import { requireFacultyApi } from "@/lib/auth-guard";
+import {
+  validateFacultySession,
+  getRemainingMinutes,
+  processFacultySessionWarningsAndExpiry,
+} from "@/lib/faculty-session";
+import { canFacultyEdit } from "@/lib/faculty-access";
+import {
+  getFacultyChoiceWindowStatus,
+  getFacultyLevelCreditPolicy,
+} from "@/lib/system-settings";
+import { getCurrentActiveFacultyTurn } from "@/lib/faculty-turn";
+
+const FACULTY_VISIBLE_OFFERING_STATUSES = [
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+];
+
+type TeacherLite = {
+  teacher_id: number;
+  assigned_credit?: number | null;
+  teachers?: {
+    teacher_code: string;
+    full_name: string;
+  } | null;
+};
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function sumDistinctCreditsByCourse(
+  rows: Array<{
+    offered_course_id: number;
+    credit: number;
+  }>
+) {
+  const seen = new Set<number>();
+  let total = 0;
+
+  for (const row of rows) {
+    if (seen.has(row.offered_course_id)) continue;
+    seen.add(row.offered_course_id);
+    total += Number(row.credit || 0);
+  }
+
+  return Number(total.toFixed(2));
+}
+
+function overlaps(
+  a: { dayOfWeek: string; startTime: string; endTime: string },
+  b: { dayOfWeek: string; startTime: string; endTime: string }
+) {
+  if (a.dayOfWeek.toUpperCase() !== b.dayOfWeek.toUpperCase()) return false;
+  return a.startTime < b.endTime && b.startTime < a.endTime;
+}
+
+export async function GET(req: NextRequest) {
+  const guard = await requireFacultyApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    if (!guard.teacher_id) {
+      return NextResponse.json(
+        { error: "Faculty account is not linked to a faculty record." },
+        { status: 400 }
+      );
+    }
+
+    const { searchParams } = new URL(req.url);
+
+let termName = String(searchParams.get("termName") || "")
+  .trim()
+  .toUpperCase();
+
+if (!termName) {
+  const latestVisibleOffering = await prisma.offerings.findFirst({
+    where: {
+      status: {
+        in: FACULTY_VISIBLE_OFFERING_STATUSES,
+      },
+    },
+    orderBy: [{ academic_term_id: "desc" }, { id: "desc" }],
+    include: {
+      academic_terms: {
+        select: {
+          name: true,
+        },
+      },
+    },
+  });
+
+  termName = latestVisibleOffering?.academic_terms?.name || "SUMMER 2026";
+}
+
+    const cookieStore = await cookies();
+    const sessionToken = cookieStore.get("sessionToken")?.value;
+
+    if (!sessionToken) {
+      return NextResponse.json(
+        { error: "Faculty session token missing." },
+        { status: 401 }
+      );
+    }
+
+    const sessionCheck = await validateFacultySession(sessionToken);
+
+    if (!sessionCheck.valid || !sessionCheck.session) {
+      return NextResponse.json(
+        { error: sessionCheck.message || "Session expired." },
+        { status: 401 }
+      );
+    }
+
+    await processFacultySessionWarningsAndExpiry(sessionToken);
+
+    const teacherId = guard.teacher_id;
+
+    const term = await prisma.academic_terms.findFirst({
+      where: { name: termName },
+      select: { id: true, name: true },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const teacher = await prisma.teachers.findUnique({
+      where: { id: teacherId },
+      select: {
+        id: true,
+        teacher_code: true,
+        full_name: true,
+        designation: true,
+        seniority_level: true,
+        departments: {
+          select: {
+            short_name: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (!teacher) {
+      return NextResponse.json(
+        { error: "Faculty record is missing." },
+        { status: 404 }
+      );
+    }
+
+    const windowStatus = await getFacultyChoiceWindowStatus();
+    const editAccess = await canFacultyEdit(sessionToken, {
+      id: teacher.id,
+      seniority_level: teacher.seniority_level,
+    });
+    const activeTurn = await getCurrentActiveFacultyTurn();
+    const creditPolicy = await getFacultyLevelCreditPolicy(
+      teacher.seniority_level
+    );
+
+    const selections = await prisma.faculty_course_selections.findMany({
+      where: {
+        teacher_id: teacherId,
+        academic_term_id: term.id,
+      },
+      orderBy: [{ priority_order: "asc" }, { id: "asc" }],
+      include: {
+        offered_courses: {
+          include: {
+            offerings: true,
+            master_courses: {
+              include: {
+                program: true,
+              },
+            },
+            offered_course_batches: {
+              include: {
+                batches: true,
+              },
+            },
+            offered_course_slots: {
+              include: {
+                rooms: true,
+              },
+              orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+            },
+            offered_course_teachers: {
+              include: {
+                teachers: true,
+              },
+            },
+            secondary_offered_courses: {
+              include: {
+                master_courses: {
+                  include: {
+                    program: true,
+                  },
+                },
+                offered_course_batches: {
+                  include: {
+                    batches: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const preassignedRows = await prisma.offered_course_teachers.findMany({
+      where: {
+        teacher_id: teacherId,
+        offered_courses: {
+          offerings: {
+            academic_term_id: term.id,
+          },
+        },
+      },
+      include: {
+        offered_courses: {
+          include: {
+            master_courses: true,
+            offered_course_slots: {
+              include: {
+                rooms: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const preassignedCourseIds = new Set(
+      preassignedRows.map((row) => row.offered_course_id)
+    );
+
+    const finalMarker = await prisma.systemSetting.findUnique({
+  where: {
+    settingKey: `FACULTY_FINALIZED_TERM_${term.id}_TEACHER_${teacherId}`,
+  },
+  select: {
+    settingValue: true,
+  },
+});
+
+const hasFinalizedMarker = finalMarker?.settingValue === "true";
+
+
+    const bufferedOrFinalSelections = selections.filter(
+      (row) => row.status === "BUFFER" || row.status === "FINAL"
+    );
+
+    const selectedCourseIds = new Set(
+      bufferedOrFinalSelections.map((row) => row.offered_course_id)
+    );
+
+    const preassignedCredits = sumDistinctCreditsByCourse(
+      preassignedRows.map((row) => ({
+        offered_course_id: row.offered_course_id,
+        credit: Number(row.offered_courses.master_courses.credit || 0),
+      }))
+    );
+
+    const chosenCredits = sumDistinctCreditsByCourse(
+      bufferedOrFinalSelections.map((row) => ({
+        offered_course_id: row.offered_course_id,
+        credit: Number(row.offered_courses.master_courses.credit || 0),
+      }))
+    );
+
+    const combinedCurrentCredits = Number(
+      (preassignedCredits + chosenCredits).toFixed(2)
+    );
+
+    const occupiedSchedules = [
+      ...preassignedRows.flatMap((row) =>
+        row.offered_courses.offered_course_slots.map((slot) => ({
+          dayOfWeek: slot.day_of_week,
+          startTime: slot.start_time,
+          endTime: slot.end_time,
+        }))
+      ),
+      ...bufferedOrFinalSelections.flatMap((row) =>
+        row.offered_courses.offered_course_slots.map((slot) => ({
+          dayOfWeek: slot.day_of_week,
+          startTime: slot.start_time,
+          endTime: slot.end_time,
+        }))
+      ),
+    ];
+
+    const offeredCourses = await prisma.offered_courses.findMany({
+      where: {
+        primary_offered_course_id: null,
+        offerings: {
+          academic_term_id: term.id,
+          status: {
+            in: FACULTY_VISIBLE_OFFERING_STATUSES,
+          },
+        },
+      },
+      orderBy: [
+        { offerings: { program_id: "asc" } },
+        { section: "asc" },
+        { id: "asc" },
+      ],
+      include: {
+        offerings: {
+          include: {
+            programs: true,
+            academic_terms: true,
+          },
+        },
+        master_courses: {
+          include: {
+            program: true,
+          },
+        },
+        offered_course_batches: {
+          include: {
+            batches: true,
+          },
+        },
+        offered_course_slots: {
+          include: {
+            rooms: true,
+          },
+          orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+        },
+        offered_course_teachers: {
+          include: {
+            teachers: true,
+          },
+        },
+        secondary_offered_courses: {
+          include: {
+            master_courses: {
+              include: {
+                program: true,
+              },
+            },
+            offered_course_batches: {
+              include: {
+                batches: true,
+              },
+            },
+          },
+        },
+        faculty_course_selections: {
+          where: {
+            academic_term_id: term.id,
+          },
+          select: {
+            teacher_id: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    const availableCourses = offeredCourses.map((course) => {
+      const assignedTeachers = (course.offered_course_teachers || []) as TeacherLite[];
+
+      const assignedTeacherIds = assignedTeachers.map((row) => row.teacher_id);
+
+      const assignedTeacherCodes = uniqueStrings(
+        assignedTeachers.map((row) => row.teachers?.teacher_code || "")
+      );
+
+      const assignedTeacherText = uniqueStrings(
+        assignedTeachers.map((row) =>
+          row.teachers?.teacher_code && row.teachers?.full_name
+            ? `${row.teachers.teacher_code} - ${row.teachers.full_name}`
+            : ""
+        )
+      );
+
+      const isPreassigned = assignedTeacherIds.length > 0;
+      const isPreassignedToCurrentFaculty = assignedTeacherIds.includes(teacherId);
+      const isPreassignedToAnotherFaculty =
+        isPreassigned && !isPreassignedToCurrentFaculty;
+
+      const isInMyBufferOrFinal = selectedCourseIds.has(course.id);
+      const isAlreadyInMyOfficialLoad = preassignedCourseIds.has(course.id);
+
+      const othersFinal = course.faculty_course_selections.find(
+        (row) => row.teacher_id !== teacherId && row.status === "FINAL"
+      );
+
+      const othersBufferCount = course.faculty_course_selections.filter(
+        (row) => row.teacher_id !== teacherId && row.status === "BUFFER"
+      ).length;
+
+      const schedule = course.offered_course_slots.map((slot) => ({
+        id: slot.id,
+        dayOfWeek: slot.day_of_week,
+        startTime: slot.start_time,
+        endTime: slot.end_time,
+        roomCode:
+          (slot.rooms as unknown as { room_number?: string | number | null })
+            ?.room_number !== undefined &&
+          (slot.rooms as unknown as { room_number?: string | number | null })
+            ?.room_number !== null
+            ? String(
+                (slot.rooms as unknown as { room_number?: string | number | null })
+                  .room_number
+              )
+            : slot.rooms?.room_code || "-",
+      }));
+
+      let selectionState:
+        | "FREE"
+        | "YOU_BUFFER"
+        | "YOU_FINAL"
+        | "YOU_PREASSIGNED"
+        | "TAKEN_FINAL"
+        | "BUFFERED_BY_OTHERS" = "FREE";
+
+      const mySelection = selections.find(
+        (row) => row.offered_course_id === course.id
+      );
+
+      if (isAlreadyInMyOfficialLoad) {
+        selectionState = "YOU_PREASSIGNED";
+      } else if (mySelection?.status === "FINAL") {
+        selectionState = "YOU_FINAL";
+      } else if (mySelection?.status === "BUFFER") {
+        selectionState = "YOU_BUFFER";
+      } else if (othersFinal) {
+        selectionState = "TAKEN_FINAL";
+      } else if (othersBufferCount > 0) {
+        selectionState = "BUFFERED_BY_OTHERS";
+      }
+
+      let locked = false;
+      let lockReason = "";
+
+      if (isPreassignedToAnotherFaculty) {
+        locked = true;
+        lockReason = "Already preassigned to another faculty.";
+      } else if (isAlreadyInMyOfficialLoad) {
+        locked = true;
+        lockReason = "Already preassigned to you.";
+      } else if (selectionState === "TAKEN_FINAL") {
+        locked = true;
+        lockReason = "Already finalized by another faculty.";
+      } else {
+        const hasScheduleConflict = schedule.some((slot) =>
+          occupiedSchedules.some((occupied) => overlaps(slot, occupied))
+        );
+
+        if (!isInMyBufferOrFinal && hasScheduleConflict) {
+          locked = true;
+          lockReason =
+            "Conflicts with your existing preassigned/buffered/finalized load.";
+        }
+      }
+
+      return {
+        id: course.id,
+        section: course.section,
+        offeringStatus: course.offerings.status,
+        programCode: course.master_courses.program.short_name,
+        programName: course.master_courses.program.name,
+        courseCode: course.master_courses.course_code,
+        courseTitle: course.master_courses.course_title,
+        credit: Number(course.master_courses.credit || 0),
+        batchCodes: course.offered_course_batches.map((x) => x.batches.batch_code),
+        teacherCodes: assignedTeacherCodes,
+        teacherText: assignedTeacherText,
+        schedule,
+        linkedSecondaryCourses: course.secondary_offered_courses.map((secondary) => ({
+          id: secondary.id,
+          courseCode: secondary.master_courses.course_code,
+          courseTitle: secondary.master_courses.course_title,
+          section: secondary.section,
+          programCode: secondary.master_courses.program.short_name,
+          batchCodes: secondary.offered_course_batches.map((x) => x.batches.batch_code),
+        })),
+        selectionState,
+        isPreassigned,
+        isPreassignedToCurrentFaculty,
+        isPreassignedToAnotherFaculty,
+        locked,
+        lockReason,
+        bufferedByOthersCount: othersBufferCount,
+      };
+    });
+
+    return NextResponse.json({
+      success: true,
+      teacher: {
+        id: teacher.id,
+        teacher_code: teacher.teacher_code,
+        full_name: teacher.full_name,
+        designation: teacher.designation,
+        department_code: teacher.departments?.short_name || "",
+        seniority_level: teacher.seniority_level,
+      },
+      term: {
+        id: term.id,
+        name: term.name,
+      },
+      windowStatus,
+      activeTurn: activeTurn
+        ? {
+            teacherId: activeTurn.teacherId,
+            teacherCode: activeTurn.teacherCode,
+            fullName: activeTurn.fullName,
+            seniorityLevel: activeTurn.seniorityLevel,
+          }
+        : null,
+      canEdit: editAccess.allowed,
+      editMessage: editAccess.allowed ? "" : editAccess.message,
+      hasFinalized:
+  hasFinalizedMarker || selections.some((row) => row.status === "FINAL"),
+      creditPolicy,
+      preassignedCredits,
+      chosenCredits,
+      combinedCurrentCredits,
+      currentSelectedCredits: combinedCurrentCredits,
+      remainingSelectableCredits:
+        creditPolicy?.maxCredits !== null &&
+        creditPolicy?.maxCredits !== undefined
+          ? Number((creditPolicy.maxCredits - preassignedCredits).toFixed(2))
+          : null,
+      sessionRemainingMinutes: getRemainingMinutes(sessionCheck.session.expires_at),
+      availableCourses,
+      selections: selections.map((selection) => ({
+        id: selection.id,
+        offeredCourseId: selection.offered_course_id,
+        priorityOrder: selection.priority_order,
+        status: selection.status,
+        selectedAt: selection.selected_at
+          ? selection.selected_at.toISOString()
+          : null,
+        confirmedAt: selection.confirmed_at
+          ? selection.confirmed_at.toISOString()
+          : null,
+        course: {
+          id: selection.offered_courses.id,
+          section: selection.offered_courses.section,
+          offeringStatus: selection.offered_courses.offerings.status,
+          programCode: selection.offered_courses.master_courses.program.short_name,
+          programName: selection.offered_courses.master_courses.program.name,
+          courseCode: selection.offered_courses.master_courses.course_code,
+          courseTitle: selection.offered_courses.master_courses.course_title,
+          credit: Number(selection.offered_courses.master_courses.credit || 0),
+          batchCodes: selection.offered_courses.offered_course_batches.map(
+            (x) => x.batches.batch_code
+          ),
+          teacherCodes: selection.offered_courses.offered_course_teachers.map(
+            (x) => x.teachers?.teacher_code || "-"
+          ),
+          schedule: selection.offered_courses.offered_course_slots.map((slot) => ({
+            id: slot.id,
+            dayOfWeek: slot.day_of_week,
+            startTime: slot.start_time,
+            endTime: slot.end_time,
+            roomCode: slot.rooms?.room_code || "-",
+          })),
+        },
+      })),
+      preassignedCourses: preassignedRows.map((assignment) => ({
+        offeredCourseId: assignment.offered_course_id,
+        assignedCredit: Number(assignment.assigned_credit || 0),
+        loadType: assignment.load_type,
+        course: {
+          id: assignment.offered_courses.id,
+          section: assignment.offered_courses.section,
+          courseCode: assignment.offered_courses.master_courses.course_code,
+          courseTitle: assignment.offered_courses.master_courses.course_title,
+          credit: Number(assignment.offered_courses.master_courses.credit || 0),
+        },
+      })),
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load faculty course choice options.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\faculty\course-choices\save-buffer\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { prisma } from "@/lib/prisma";
+import { requireFacultyApi } from "@/lib/auth-guard";
+import { canFacultyEdit } from "@/lib/faculty-access";
+import { getFacultyLevelCreditPolicy } from "@/lib/system-settings";
+
+const FACULTY_EDITABLE_OFFERING_STATUS = "FACULTY_CHOICE_BUFFER";
+
+function uniqueNumbers(values: number[]) {
+  return Array.from(new Set(values.filter((x) => Number.isFinite(x))));
+}
+
+function overlaps(
+  a: { day_of_week: string; start_time: string; end_time: string },
+  b: { day_of_week: string; start_time: string; end_time: string }
+) {
+  if (a.day_of_week.toUpperCase() !== b.day_of_week.toUpperCase()) return false;
+  return a.start_time < b.end_time && b.start_time < a.end_time;
+}
+
+function finalizedMarkerKey(termId: number, teacherId: number) {
+  return `FACULTY_FINALIZED_TERM_${termId}_TEACHER_${teacherId}`;
+}
+
+export async function POST(req: NextRequest) {
+  const guard = await requireFacultyApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    if (!guard.teacher_id) {
+      return NextResponse.json(
+        { error: "Faculty account is not linked to a faculty record." },
+        { status: 400 }
+      );
+    }
+
+    const body = await req.json();
+    const termName = String(body.termName || "").trim().toUpperCase();
+    const offeredCourseIds = Array.isArray(body.offeredCourseIds)
+      ? uniqueNumbers(body.offeredCourseIds.map((x: unknown) => Number(x)))
+      : [];
+
+    if (!termName) {
+      return NextResponse.json(
+        { error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    const teacher = await prisma.teachers.findUnique({
+      where: { id: guard.teacher_id },
+      select: {
+        id: true,
+        seniority_level: true,
+      },
+    });
+
+    if (!teacher) {
+      return NextResponse.json(
+        { error: "Faculty record not found." },
+        { status: 404 }
+      );
+    }
+
+    const cookieStore = await cookies();
+    const sessionToken = cookieStore.get("sessionToken")?.value;
+
+    if (!sessionToken) {
+      return NextResponse.json(
+        { error: "Faculty session token is missing." },
+        { status: 401 }
+      );
+    }
+
+    const access = await canFacultyEdit(sessionToken, {
+      id: teacher.id,
+      seniority_level: teacher.seniority_level,
+    });
+
+    if (!access.allowed) {
+      return NextResponse.json(
+        { error: access.message || "Editing not allowed." },
+        { status: 403 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: { name: termName },
+      select: { id: true, name: true },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const finalMarker = await prisma.systemSetting.findUnique({
+      where: {
+        settingKey: finalizedMarkerKey(term.id, teacher.id),
+      },
+      select: {
+        settingValue: true,
+      },
+    });
+
+    if (finalMarker?.settingValue === "true") {
+      return NextResponse.json(
+        {
+          error:
+            "Final submission already completed. Reopen is required before editing.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const existingFinal = await prisma.faculty_course_selections.findFirst({
+      where: {
+        teacher_id: teacher.id,
+        academic_term_id: term.id,
+        status: "FINAL",
+      },
+      select: { id: true },
+    });
+
+    if (existingFinal) {
+      return NextResponse.json(
+        {
+          error:
+            "Final submission already completed. Reopen is required before editing.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const chosenCourses = await prisma.offered_courses.findMany({
+      where: {
+        id: {
+          in: offeredCourseIds,
+        },
+      },
+      include: {
+        offerings: true,
+        master_courses: {
+          select: {
+            credit: true,
+          },
+        },
+        offered_course_teachers: {
+          select: {
+            teacher_id: true,
+          },
+        },
+        offered_course_slots: {
+          select: {
+            day_of_week: true,
+            start_time: true,
+            end_time: true,
+          },
+        },
+        faculty_course_selections: {
+          where: {
+            academic_term_id: term.id,
+          },
+          select: {
+            teacher_id: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    if (chosenCourses.length !== offeredCourseIds.length) {
+      return NextResponse.json(
+        { error: "One or more selected offered sections could not be found." },
+        { status: 400 }
+      );
+    }
+
+    const invalidStatusRows = chosenCourses.filter(
+      (course) => course.offerings.status !== FACULTY_EDITABLE_OFFERING_STATUS
+    );
+
+    if (invalidStatusRows.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "One or more selected sections are not currently in active faculty choice stage.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const forbiddenPreassignedRows = chosenCourses.filter((course) => {
+      const assignedTeacherIds = course.offered_course_teachers.map(
+        (x) => x.teacher_id
+      );
+      if (!assignedTeacherIds.length) return false;
+      return !assignedTeacherIds.includes(teacher.id);
+    });
+
+    if (forbiddenPreassignedRows.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "One or more selected sections are already preassigned to another faculty and cannot be chosen by you.",
+        },
+        { status: 403 }
+      );
+    }
+
+    const forbiddenOwnPreassignedRows = chosenCourses.filter((course) => {
+      const assignedTeacherIds = course.offered_course_teachers.map(
+        (x) => x.teacher_id
+      );
+      return assignedTeacherIds.includes(teacher.id);
+    });
+
+    if (forbiddenOwnPreassignedRows.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "One or more selected sections are already preassigned to you and must not be selected again.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const finalByOthers = chosenCourses.filter((course) =>
+      course.faculty_course_selections.some(
+        (x) => x.teacher_id !== teacher.id && x.status === "FINAL"
+      )
+    );
+
+    if (finalByOthers.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "One or more selected sections are already finalized by another faculty.",
+        },
+        { status: 403 }
+      );
+    }
+
+    const preassignedAssignments =
+      await prisma.offered_course_teachers.findMany({
+        where: {
+          teacher_id: teacher.id,
+          offered_courses: {
+            offerings: {
+              academic_term_id: term.id,
+            },
+          },
+        },
+        include: {
+          offered_courses: {
+            include: {
+              master_courses: {
+                select: {
+                  credit: true,
+                },
+              },
+              offered_course_slots: {
+                select: {
+                  day_of_week: true,
+                  start_time: true,
+                  end_time: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+    const preassignedCourseIds = new Set(
+      preassignedAssignments.map((x) => x.offered_course_id)
+    );
+
+    const preassignedCredits = Array.from(
+      new Map(
+        preassignedAssignments.map((x) => [
+          x.offered_course_id,
+          Number(x.offered_courses.master_courses.credit || 0),
+        ])
+      ).values()
+    ).reduce((sum, credit) => sum + credit, 0);
+
+    const selectedCredits = Array.from(
+      new Map(
+        chosenCourses.map((x) => [x.id, Number(x.master_courses.credit || 0)])
+      ).values()
+    ).reduce((sum, credit) => sum + credit, 0);
+
+    const totalSelectedCredits = Number(
+      (preassignedCredits + selectedCredits).toFixed(2)
+    );
+
+    const creditPolicy = await getFacultyLevelCreditPolicy(
+      teacher.seniority_level
+    );
+
+    if (
+      creditPolicy?.maxCredits !== null &&
+      creditPolicy?.maxCredits !== undefined &&
+      totalSelectedCredits > creditPolicy.maxCredits
+    ) {
+      return NextResponse.json(
+        {
+          error: `Total load ${totalSelectedCredits} exceeds the maximum allowed ${creditPolicy.maxCredits}. Your preassigned credits are already included in this calculation.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    const occupiedSlots = preassignedAssignments.flatMap(
+      (assignment) => assignment.offered_courses.offered_course_slots
+    );
+
+    for (const course of chosenCourses) {
+      if (preassignedCourseIds.has(course.id)) continue;
+
+      for (const slot of course.offered_course_slots) {
+        const conflict = occupiedSlots.some((occupied) =>
+          overlaps(slot, occupied)
+        );
+
+        if (conflict) {
+          return NextResponse.json(
+            {
+              error:
+                "One or more selected sections conflict with your existing preassigned schedule.",
+            },
+            { status: 400 }
+          );
+        }
+      }
+
+      occupiedSlots.push(...course.offered_course_slots);
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.faculty_course_selections.deleteMany({
+        where: {
+          teacher_id: teacher.id,
+          academic_term_id: term.id,
+          status: "BUFFER",
+        },
+      });
+
+      let priorityCounter = 1;
+
+      for (const offeredCourseId of offeredCourseIds) {
+        await tx.faculty_course_selections.create({
+          data: {
+            teacher_id: teacher.id,
+            academic_term_id: term.id,
+            offered_course_id: offeredCourseId,
+            status: "BUFFER",
+            priority_order: priorityCounter,
+            confirmed_at: null,
+          },
+        });
+
+        priorityCounter += 1;
+      }
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: "Choice buffer saved successfully.",
+      preassignedCredits,
+      selectedCredits,
+      totalCredits: totalSelectedCredits,
+      creditPolicy,
+    });
+  } catch (error) {
+    console.error(error);
+
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to save faculty choice buffer.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\faculty\course-choices\finalize\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { prisma } from "@/lib/prisma";
+import { requireFacultyApi } from "@/lib/auth-guard";
+import { canFacultyEdit } from "@/lib/faculty-access";
+import { getFacultyLevelCreditPolicy } from "@/lib/system-settings";
+import {
+  revokeFacultySession,
+  sendFacultyTurnNotification,
+} from "@/lib/faculty-session";
+import { getCurrentActiveFacultyTurn } from "@/lib/faculty-turn";
+
+function finalizedMarkerKey(termId: number, teacherId: number) {
+  return `FACULTY_FINALIZED_TERM_${termId}_TEACHER_${teacherId}`;
+}
+
+export async function POST(req: NextRequest) {
+  const guard = await requireFacultyApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    if (!guard.teacher_id) {
+      return NextResponse.json(
+        { error: "Faculty account is not linked to a faculty record." },
+        { status: 400 }
+      );
+    }
+
+    const body = await req.json();
+    const termName = String(body.termName || "").trim().toUpperCase();
+
+    if (!termName) {
+      return NextResponse.json(
+        { error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    const teacher = await prisma.teachers.findUnique({
+      where: { id: guard.teacher_id },
+      select: {
+        id: true,
+        seniority_level: true,
+      },
+    });
+
+    if (!teacher) {
+      return NextResponse.json(
+        { error: "Faculty record not found." },
+        { status: 404 }
+      );
+    }
+
+    const cookieStore = await cookies();
+    const sessionToken = cookieStore.get("sessionToken")?.value;
+
+    if (!sessionToken) {
+      return NextResponse.json(
+        { error: "Faculty session token is missing." },
+        { status: 401 }
+      );
+    }
+
+    const access = await canFacultyEdit(sessionToken, {
+      id: teacher.id,
+      seniority_level: teacher.seniority_level,
+    });
+
+    if (!access.allowed) {
+      return NextResponse.json(
+        { error: access.message || "Editing not allowed." },
+        { status: 403 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: { name: termName },
+      select: { id: true, name: true },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const finalMarker = await prisma.systemSetting.findUnique({
+      where: {
+        settingKey: finalizedMarkerKey(term.id, teacher.id),
+      },
+      select: {
+        settingValue: true,
+      },
+    });
+
+    if (finalMarker?.settingValue === "true") {
+      return NextResponse.json(
+        {
+          error:
+            "Final submission already completed. Reopen is required before editing.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const currentBufferSelections =
+      await prisma.faculty_course_selections.findMany({
+        where: {
+          teacher_id: teacher.id,
+          academic_term_id: term.id,
+          status: "BUFFER",
+        },
+        include: {
+          offered_courses: {
+            include: {
+              master_courses: {
+                select: {
+                  credit: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+    const existingFinalSelections =
+      await prisma.faculty_course_selections.findMany({
+        where: {
+          teacher_id: teacher.id,
+          academic_term_id: term.id,
+          status: "FINAL",
+        },
+        select: {
+          id: true,
+        },
+      });
+
+    if (existingFinalSelections.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Final submission already completed. Reopen is required before editing.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const preassignedAssignments =
+      await prisma.offered_course_teachers.findMany({
+        where: {
+          teacher_id: teacher.id,
+          offered_courses: {
+            offerings: {
+              academic_term_id: term.id,
+            },
+          },
+        },
+        include: {
+          offered_courses: {
+            include: {
+              master_courses: {
+                select: {
+                  credit: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+    const preassignedCredits = Array.from(
+      new Map(
+        preassignedAssignments.map((x) => [
+          x.offered_course_id,
+          Number(x.offered_courses.master_courses.credit || 0),
+        ])
+      ).values()
+    ).reduce((sum, credit) => sum + credit, 0);
+
+    const selectedCredits = Array.from(
+      new Map(
+        currentBufferSelections.map((x) => [
+          x.offered_course_id,
+          Number(x.offered_courses.master_courses.credit || 0),
+        ])
+      ).values()
+    ).reduce((sum, credit) => sum + credit, 0);
+
+    const totalCredits = Number((preassignedCredits + selectedCredits).toFixed(2));
+
+    const creditPolicy = await getFacultyLevelCreditPolicy(
+      teacher.seniority_level
+    );
+
+    if (
+      creditPolicy?.minCredits !== null &&
+      creditPolicy?.minCredits !== undefined &&
+      totalCredits < creditPolicy.minCredits
+    ) {
+      return NextResponse.json(
+        {
+          error: `Total load ${totalCredits} is below the minimum required ${creditPolicy.minCredits}. Preassigned load is already included in this calculation.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (
+      creditPolicy?.maxCredits !== null &&
+      creditPolicy?.maxCredits !== undefined &&
+      totalCredits > creditPolicy.maxCredits
+    ) {
+      return NextResponse.json(
+        {
+          error: `Total load ${totalCredits} exceeds the maximum allowed ${creditPolicy.maxCredits}.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.faculty_course_selections.updateMany({
+        where: {
+          teacher_id: teacher.id,
+          academic_term_id: term.id,
+          status: "BUFFER",
+        },
+        data: {
+          status: "FINAL",
+          confirmed_at: new Date(),
+        },
+      });
+
+      await tx.systemSetting.upsert({
+        where: {
+          settingKey: finalizedMarkerKey(term.id, teacher.id),
+        },
+        update: {
+          settingValue: "true",
+        },
+        create: {
+          settingKey: finalizedMarkerKey(term.id, teacher.id),
+          settingValue: "true",
+        },
+      });
+    });
+
+    await revokeFacultySession(sessionToken);
+
+    const nextTurn = await getCurrentActiveFacultyTurn();
+
+    if (nextTurn?.teacherId && nextTurn.teacherId !== teacher.id) {
+      await sendFacultyTurnNotification(nextTurn.teacherId);
+    }
+
+    return NextResponse.json({
+      success: true,
+      message:
+        currentBufferSelections.length > 0
+          ? "Final choice submission completed successfully. Your turn has been closed and the next faculty may proceed."
+          : "Final submission completed with preassigned load only. Your turn has been closed and the next faculty may proceed.",
+      preassignedCredits,
+      selectedCredits,
+      totalCredits,
+      creditPolicy,
+      finalizedWithoutChoiceRows: currentBufferSelections.length === 0,
+      nextTurn: nextTurn
+        ? {
+            teacherId: nextTurn.teacherId,
+            teacherCode: nextTurn.teacherCode,
+            fullName: nextTurn.fullName,
+            seniorityLevel: nextTurn.seniorityLevel,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error(error);
+
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to finalize faculty choices.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\lib\faculty-turn.ts =====
+
+import { prisma } from "@/lib/prisma";
+import { getFacultyChoiceWindowStatus } from "@/lib/system-settings";
+
+export type ActiveFacultyTurn = {
+  teacherId: number;
+  userId: number;
+  teacherCode: string;
+  fullName: string;
+  seniorityLevel: number | null;
+  sessionId: number;
+  sessionCreatedAt: Date;
+  sessionExpiresAt: Date;
+};
+
+function compareFacultyTurns(a: ActiveFacultyTurn, b: ActiveFacultyTurn) {
+  const aLevel = a.seniorityLevel ?? 9999;
+  const bLevel = b.seniorityLevel ?? 9999;
+
+  if (aLevel !== bLevel) return aLevel - bLevel;
+
+  const aCreated = new Date(a.sessionCreatedAt).getTime();
+  const bCreated = new Date(b.sessionCreatedAt).getTime();
+
+  if (aCreated !== bCreated) return aCreated - bCreated;
+
+  return a.teacherId - b.teacherId;
+}
+
+export async function getEligibleFacultyTurnQueue(): Promise<ActiveFacultyTurn[]> {
+  const windowStatus = await getFacultyChoiceWindowStatus();
+
+  if (windowStatus !== "OPEN") {
+    return [];
+  }
+
+  const now = new Date();
+
+  const sessions = await prisma.faculty_login_sessions.findMany({
+    where: {
+      revoked_at: null,
+      expires_at: {
+        gt: now,
+      },
+      teacher_id: {
+        not: null,
+      },
+    },
+    orderBy: [{ created_at: "asc" }],
+  });
+
+  if (sessions.length === 0) {
+    return [];
+  }
+
+  const userIds = Array.from(new Set(sessions.map((s) => s.user_id)));
+  const teacherIds = Array.from(
+    new Set(sessions.map((s) => s.teacher_id).filter(Boolean) as number[])
+  );
+
+  const [users, teachers] = await Promise.all([
+    prisma.users.findMany({
+      where: {
+        id: { in: userIds },
+        is_active: true,
+      },
+      select: {
+        id: true,
+        teacher_id: true,
+      },
+    }),
+    prisma.teachers.findMany({
+      where: {
+        id: { in: teacherIds },
+        is_active: true,
+      },
+      select: {
+        id: true,
+        teacher_code: true,
+        full_name: true,
+        seniority_level: true,
+      },
+    }),
+  ]);
+
+  const activeUserIds = new Set(users.map((u) => u.id));
+  const teacherMap = new Map(teachers.map((t) => [t.id, t]));
+
+  const queue: ActiveFacultyTurn[] = [];
+
+  for (const session of sessions) {
+    if (!activeUserIds.has(session.user_id)) continue;
+    if (!session.teacher_id) continue;
+
+    const teacher = teacherMap.get(session.teacher_id);
+    if (!teacher) continue;
+
+    queue.push({
+      teacherId: teacher.id,
+      userId: session.user_id,
+      teacherCode: teacher.teacher_code,
+      fullName: teacher.full_name,
+      seniorityLevel: teacher.seniority_level ?? null,
+      sessionId: session.id,
+      sessionCreatedAt: session.created_at,
+      sessionExpiresAt: session.expires_at,
+    });
+  }
+
+  queue.sort(compareFacultyTurns);
+
+  return queue;
+}
+
+export async function getCurrentActiveFacultyTurn(): Promise<ActiveFacultyTurn | null> {
+  const queue = await getEligibleFacultyTurnQueue();
+  return queue.length > 0 ? queue[0] : null;
+}
+
+
+===== FILE: src\lib\faculty-access.ts =====
+
+import {
+  validateFacultySession,
+  processFacultySessionWarningsAndExpiry,
+} from "@/lib/faculty-session";
+import { getFacultyChoiceWindowStatus } from "@/lib/system-settings";
+import { getCurrentActiveFacultyTurn } from "@/lib/faculty-turn";
+
+const FACULTY_VISIBLE_STATUSES = [
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+];
+
+export function canFacultyViewOfferingStatus(status: string) {
+  return FACULTY_VISIBLE_STATUSES.includes(
+    String(status || "").trim().toUpperCase()
+  );
+}
+
+export async function canFacultyEdit(
+  sessionToken: string,
+  teacher?: {
+    id: number;
+    seniority_level: number | null;
+  }
+) {
+  const windowStatus = await getFacultyChoiceWindowStatus();
+
+  if (windowStatus !== "OPEN") {
+    return {
+      allowed: false,
+      message: "Faculty choice window is not open right now.",
+    };
+  }
+
+  const validation = await validateFacultySession(sessionToken);
+
+  if (!validation.valid || !validation.session) {
+    return {
+      allowed: false,
+      message: validation.message || "Faculty session is invalid.",
+    };
+  }
+
+  await processFacultySessionWarningsAndExpiry(sessionToken);
+
+  const revalidation = await validateFacultySession(sessionToken);
+
+  if (!revalidation.valid || !revalidation.session) {
+    return {
+      allowed: false,
+      message: revalidation.message || "Faculty session expired.",
+    };
+  }
+
+  const effectiveTeacherId =
+    teacher?.id ?? revalidation.session.teacher_id ?? null;
+
+  if (!effectiveTeacherId) {
+    return {
+      allowed: false,
+      message: "Faculty account is not linked to a faculty record.",
+    };
+  }
+
+  const activeTurn = await getCurrentActiveFacultyTurn();
+
+  if (!activeTurn) {
+    return {
+      allowed: false,
+      message: "No active faculty turn is available right now.",
+    };
+  }
+
+  if (activeTurn.teacherId !== effectiveTeacherId) {
+    return {
+      allowed: false,
+      message: `Current active turn belongs to ${activeTurn.teacherCode} - ${activeTurn.fullName}.`,
+    };
+  }
+
+  return {
+    allowed: true,
+    message: "",
+  };
+}
+
+
+===== FILE: src\lib\faculty-session.ts =====
+
+import crypto from "crypto";
+import { prisma } from "@/lib/prisma";
+import {
+  getFacultyAutoAdvanceOnExpiry,
+  getFacultySessionMinutes,
+  getFacultyWarningMinutes,
+} from "@/lib/system-settings";
+import { createFacultyNotification } from "@/lib/faculty-notifications";
+import { getCurrentActiveFacultyTurn } from "@/lib/faculty-turn";
+
+export function getRemainingMinutes(expiresAt: Date | string) {
+  const ms = new Date(expiresAt).getTime() - Date.now();
+  if (ms <= 0) return 0;
+  return Math.ceil(ms / 60000);
+}
+
+export async function revokeExistingFacultySessions(userId: number) {
+  await prisma.faculty_login_sessions.updateMany({
+    where: {
+      user_id: userId,
+      revoked_at: null,
+      expires_at: {
+        gt: new Date(),
+      },
+    },
+    data: {
+      revoked_at: new Date(),
+    },
+  });
+}
+
+export async function createFacultyLoginSession(input: {
+  userId: number;
+  teacherId?: number | null;
+}) {
+  const sessionMinutes = await getFacultySessionMinutes();
+  const expiresAt = new Date(Date.now() + sessionMinutes * 60 * 1000);
+  const token = crypto.randomUUID();
+
+  await revokeExistingFacultySessions(input.userId);
+
+  const session = await prisma.faculty_login_sessions.create({
+    data: {
+      user_id: input.userId,
+      teacher_id: input.teacherId ?? null,
+      session_token: token,
+      expires_at: expiresAt,
+    },
+  });
+
+  return session;
+}
+
+export async function createFacultySession(input: {
+  userId: number;
+  teacherId?: number | null;
+}) {
+  return createFacultyLoginSession(input);
+}
+
+export async function validateFacultySession(sessionToken: string) {
+  const session = await prisma.faculty_login_sessions.findFirst({
+    where: {
+      session_token: sessionToken,
+    },
+  });
+
+  if (!session) {
+    return {
+      valid: false,
+      message: "Faculty session was not found.",
+      session: null,
+    };
+  }
+
+  if (session.revoked_at) {
+    return {
+      valid: false,
+      message: "Faculty session is no longer active.",
+      session,
+    };
+  }
+
+  if (new Date(session.expires_at).getTime() <= Date.now()) {
+    return {
+      valid: false,
+      message: "Faculty session has expired.",
+      session,
+    };
+  }
+
+  return {
+    valid: true,
+    message: "",
+    session,
+  };
+}
+
+export async function revokeFacultySession(sessionToken: string) {
+  return prisma.faculty_login_sessions.updateMany({
+    where: {
+      session_token: sessionToken,
+      revoked_at: null,
+    },
+    data: {
+      revoked_at: new Date(),
+    },
+  });
+}
+
+export async function sendFacultyTurnNotification(teacherId: number) {
+  const teacher = await prisma.teachers.findUnique({
+    where: { id: teacherId },
+    select: {
+      id: true,
+      teacher_code: true,
+      full_name: true,
+    },
+  });
+
+  if (!teacher) return;
+
+  const linkedUsers = await prisma.users.findMany({
+    where: {
+      teacher_id: teacher.id,
+      is_active: true,
+      role: "FACULTY",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  for (const user of linkedUsers) {
+    await createFacultyNotification({
+      recipientUserId: user.id,
+      recipientTeacherId: teacher.id,
+      eventType: "FACULTY_TURN_ACTIVE",
+      title: "Your faculty choice turn is now active",
+      message: `${teacher.teacher_code} - ${teacher.full_name}, your turn is now active. You may save or finalize your course choices now.`,
+    });
+  }
+}
+
+export async function sendFacultyQueueNotification(teacherId: number) {
+  const teacher = await prisma.teachers.findUnique({
+    where: { id: teacherId },
+    select: {
+      id: true,
+      teacher_code: true,
+      full_name: true,
+    },
+  });
+
+  if (!teacher) return;
+
+  const linkedUsers = await prisma.users.findMany({
+    where: {
+      teacher_id: teacher.id,
+      is_active: true,
+      role: "FACULTY",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  for (const user of linkedUsers) {
+    await createFacultyNotification({
+      recipientUserId: user.id,
+      recipientTeacherId: teacher.id,
+      eventType: "FACULTY_TURN_QUEUED",
+      title: "Faculty choice session started",
+      message: `${teacher.teacher_code} - ${teacher.full_name}, your session is active, but another more senior faculty currently has the editing turn. Please wait for your turn.`,
+    });
+  }
+}
+
+export async function processFacultySessionWarningsAndExpiry(sessionToken: string) {
+  const sessionCheck = await validateFacultySession(sessionToken);
+
+  if (!sessionCheck.session) {
+    return {
+      ok: false,
+      expired: false,
+      warned: false,
+      message: "Faculty session not found.",
+    };
+  }
+
+  const session = sessionCheck.session;
+  const now = new Date();
+  const warningMinutes = await getFacultyWarningMinutes();
+  const warningThresholdMs = warningMinutes * 60 * 1000;
+  const remainingMs = new Date(session.expires_at).getTime() - now.getTime();
+
+  let warned = false;
+  let expired = false;
+  let message = "";
+
+  if (!session.warned_at && remainingMs > 0 && remainingMs <= warningThresholdMs) {
+    await prisma.faculty_login_sessions.update({
+      where: { id: session.id },
+      data: {
+        warned_at: now,
+      },
+    });
+
+    if (session.teacher_id) {
+      const linkedUsers = await prisma.users.findMany({
+        where: {
+          teacher_id: session.teacher_id,
+          is_active: true,
+          role: "FACULTY",
+        },
+        select: { id: true },
+      });
+
+      for (const user of linkedUsers) {
+        await createFacultyNotification({
+          recipientUserId: user.id,
+          recipientTeacherId: session.teacher_id,
+          eventType: "FACULTY_TURN_WARNING",
+          title: "Faculty choice session warning",
+          message: `Your session will expire in about ${warningMinutes} minute(s). Please finalize or save your work now.`,
+        });
+      }
+    }
+
+    warned = true;
+    message = `Warning notification sent at ${warningMinutes} minute threshold.`;
+  }
+
+  if (remainingMs <= 0 && !session.revoked_at) {
+    await prisma.faculty_login_sessions.update({
+      where: { id: session.id },
+      data: {
+        revoked_at: now,
+      },
+    });
+
+    if (session.teacher_id) {
+      const linkedUsers = await prisma.users.findMany({
+        where: {
+          teacher_id: session.teacher_id,
+          is_active: true,
+          role: "FACULTY",
+        },
+        select: { id: true },
+      });
+
+      for (const user of linkedUsers) {
+        await createFacultyNotification({
+          recipientUserId: user.id,
+          recipientTeacherId: session.teacher_id,
+          eventType: "FACULTY_TURN_EXPIRED",
+          title: "Faculty choice session expired",
+          message: "Your faculty choice session expired. You were moved out of the active queue.",
+        });
+      }
+    }
+
+    const autoAdvance = await getFacultyAutoAdvanceOnExpiry();
+
+    if (autoAdvance) {
+      const nextTurn = await getCurrentActiveFacultyTurn();
+      if (nextTurn?.teacherId) {
+        await sendFacultyTurnNotification(nextTurn.teacherId);
+      }
+    }
+
+    expired = true;
+    message = "Faculty session expired and was revoked.";
+  }
+
+  return {
+    ok: true,
+    expired,
+    warned,
+    message,
+  };
+}
+
+
+===== FILE: src\lib\system-settings.ts =====
+
+import { prisma } from "@/lib/prisma";
+
+const DEFAULT_SETTINGS: Record<string, string> = {
+  FACULTY_SESSION_MINUTES: "30",
+  FACULTY_WARNING_MINUTES: "10",
+  FACULTY_CHOICE_WINDOW_STATUS: "CLOSED",
+  FACULTY_ACTIVE_SENIORITY_LEVEL: "",
+  FACULTY_ACTIVE_TEACHER_ID: "",
+  FACULTY_AUTO_ADVANCE_ON_EXPIRY: "true",
+};
+
+export type FacultyLevelCreditPolicy = {
+  level: number;
+  minCredits: number | null;
+  maxCredits: number | null;
+};
+
+export async function getSetting(key: string): Promise<string> {
+  const defaultValue = DEFAULT_SETTINGS[key] ?? "";
+
+  const setting = await prisma.systemSetting.upsert({
+    where: { settingKey: key },
+    update: {},
+    create: {
+      settingKey: key,
+      settingValue: defaultValue,
+    },
+    select: {
+      settingValue: true,
+    },
+  });
+
+  return setting.settingValue;
+}
+
+export async function getOptionalSetting(key: string): Promise<string | null> {
+  const setting = await prisma.systemSetting.findUnique({
+    where: { settingKey: key },
+    select: {
+      settingValue: true,
+    },
+  });
+
+  return setting?.settingValue ?? null;
+}
+
+export async function setSetting(
+  key: string,
+  value: string,
+  userId?: number
+) {
+  return prisma.systemSetting.upsert({
+    where: { settingKey: key },
+    update: {
+      settingValue: value,
+      updatedByUserId: userId,
+    },
+    create: {
+      settingKey: key,
+      settingValue: value,
+      updatedByUserId: userId,
+    },
+  });
+}
+
+export async function getSettingNumber(key: string): Promise<number> {
+  const value = await getSetting(key);
+  const num = Number(value);
+  return Number.isNaN(num) ? 0 : num;
+}
+
+export async function getOptionalSettingNumber(
+  key: string
+): Promise<number | null> {
+  const value = await getOptionalSetting(key);
+
+  if (value === null || value === "") {
+    return null;
+  }
+
+  const num = Number(value);
+  return Number.isNaN(num) ? null : num;
+}
+
+export async function getFacultySessionMinutes(): Promise<number> {
+  return getSettingNumber("FACULTY_SESSION_MINUTES");
+}
+
+export async function getFacultyWarningMinutes(): Promise<number> {
+  return getSettingNumber("FACULTY_WARNING_MINUTES");
+}
+
+export async function getFacultyChoiceWindowStatus(): Promise<string> {
+  return getSetting("FACULTY_CHOICE_WINDOW_STATUS");
+}
+
+export async function getActiveFacultySeniorityLevel(): Promise<number | null> {
+  return getOptionalSettingNumber("FACULTY_ACTIVE_SENIORITY_LEVEL");
+}
+
+export async function getActiveFacultyTeacherId(): Promise<number | null> {
+  return getOptionalSettingNumber("FACULTY_ACTIVE_TEACHER_ID");
+}
+
+export async function getFacultyAutoAdvanceOnExpiry(): Promise<boolean> {
+  const raw = (await getSetting("FACULTY_AUTO_ADVANCE_ON_EXPIRY"))
+    .trim()
+    .toLowerCase();
+  return raw === "true";
+}
+
+export function getFacultyLevelMinKey(level: number) {
+  return `FACULTY_LEVEL_${level}_MIN_CREDITS`;
+}
+
+export function getFacultyLevelMaxKey(level: number) {
+  return `FACULTY_LEVEL_${level}_MAX_CREDITS`;
+}
+
+export async function getFacultyLevelCreditPolicy(
+  level: number | null | undefined
+): Promise<FacultyLevelCreditPolicy | null> {
+  if (!level) return null;
+
+  const minCredits = await getOptionalSettingNumber(getFacultyLevelMinKey(level));
+  const maxCredits = await getOptionalSettingNumber(getFacultyLevelMaxKey(level));
+
+  return {
+    level,
+    minCredits,
+    maxCredits,
+  };
+}
+
+export async function getAllFacultyLevelCreditPolicies(
+  levels = Array.from({ length: 20 }, (_, i) => i + 1)
+): Promise<FacultyLevelCreditPolicy[]> {
+  const items = await Promise.all(
+    levels.map(async (level) => {
+      const policy = await getFacultyLevelCreditPolicy(level);
+      return (
+        policy || {
+          level,
+          minCredits: null,
+          maxCredits: null,
+        }
+      );
+    })
+  );
+
+  return items;
+}
+
+export async function setFacultyLevelCreditPolicy(
+  level: number,
+  minCredits: number | null,
+  maxCredits: number | null,
+  userId?: number
+) {
+  const minValue =
+    minCredits === null || Number.isNaN(minCredits) ? "" : String(minCredits);
+  const maxValue =
+    maxCredits === null || Number.isNaN(maxCredits) ? "" : String(maxCredits);
+
+  await setSetting(getFacultyLevelMinKey(level), minValue, userId);
+  await setSetting(getFacultyLevelMaxKey(level), maxValue, userId);
+}
+
+
+===== FILE: src\lib\faculty-notifications.ts =====
+
+import { prisma } from "@/lib/prisma";
+
+export async function createFacultyNotification(input: {
+  recipientUserId?: number | null;
+  recipientTeacherId?: number | null;
+  eventType: string;
+  title: string;
+  message: string;
+  createdByUserId?: number | null;
+}) {
+  return prisma.notifications.create({
+    data: {
+      recipient_user_id: input.recipientUserId ?? null,
+      recipient_teacher_id: input.recipientTeacherId ?? null,
+      event_type: input.eventType,
+      title: input.title,
+      message: input.message,
+      created_by_user_id: input.createdByUserId ?? null,
+    },
+  });
+}
+
+export async function markNotificationRead(notificationId: number) {
+  return prisma.notifications.update({
+    where: { id: notificationId },
+    data: {
+      is_read: true,
+      read_at: new Date(),
+    },
+  });
+}
+
+
+===== FILE: src\lib\prisma.ts =====
+
+import { PrismaClient } from "@prisma/client";
+
+declare global {
+  // eslint-disable-next-line no-var
+  var prismaGlobal: PrismaClient | undefined;
+}
+
+export const prisma =
+  global.prismaGlobal ??
+  new PrismaClient({
+    log: ["error", "warn"],
+  });
+
+if (process.env.NODE_ENV !== "production") {
+  global.prismaGlobal = prisma;
+}
+
+
+===== FILE: prisma\schema.prisma =====
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model academic_terms {
+  id                          Int                           @id @default(autoincrement())
+  name                        String                        @unique @db.VarChar(100)
+  year                        Int
+  term_type                   String                        @db.VarChar(30)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  faculty_course_selections   faculty_course_selections[]
+  offerings                   offerings[]
+}
+
+model batch_completed_courses {
+  id                Int             @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int?
+  course_code       String          @db.VarChar(100)
+  course_title      String          @db.VarChar(300)
+  normalized_title  String          @db.VarChar(300)
+  credit            Float
+  grade             String?         @db.VarChar(20)
+  source_student_id String?         @db.VarChar(100)
+  source_file_name  String?         @db.VarChar(300)
+  academic_terms    academic_terms? @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batch_current_registrations {
+  id                Int            @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int
+  course_code       String         @db.VarChar(100)
+  course_title      String         @db.VarChar(300)
+  normalized_title  String         @db.VarChar(300)
+  credit            Float
+  source_student_id String?        @db.VarChar(100)
+  source_file_name  String?        @db.VarChar(300)
+  academic_terms    academic_terms @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches        @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batches {
+  id                          Int                           @id @default(autoincrement())
+  program_id                  Int
+  batch_code                  String                        @db.VarChar(100)
+  admission_term              String?                       @db.VarChar(100)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  programs                    programs                      @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_course_batches      offered_course_batches[]
+
+  @@unique([program_id, batch_code], map: "uq_program_batch")
+}
+
+model departments {
+  id         Int        @id @default(autoincrement())
+  name       String     @unique @db.VarChar(200)
+  short_name String     @unique @db.VarChar(50)
+  programs   programs[]
+  teachers   teachers[]
+}
+
+model master_courses {
+  id               Int               @id @default(autoincrement())
+  program_id       Int
+  course_code      String
+  course_title     String
+  normalized_title String
+  credit           Float
+  course_type      String
+  level_term       String?
+  group_name       String?
+  is_active        Boolean           @default(true)
+  created_at       DateTime          @default(now())
+  curriculum_key   String?
+  updated_at       DateTime          @default(now()) @updatedAt
+  program          programs          @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  offered_courses  offered_courses[]
+
+  @@unique([program_id, course_code])
+  @@unique([curriculum_key, course_code])
+  @@index([curriculum_key])
+}
+
+model offered_course_batches {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  batch_id          Int
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_slots {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  day_of_week       String          @db.VarChar(20)
+  start_time        String          @db.VarChar(10)
+  end_time          String          @db.VarChar(10)
+  room_id           Int
+  slot_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rooms             rooms           @relation(fields: [room_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_teachers {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  assigned_credit   Float
+  load_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_courses {
+  id                        Int                         @id @default(autoincrement())
+  offering_id               Int
+  master_course_id          Int
+  section                   String                      @db.VarChar(20)
+  is_cooffered              Boolean?                    @default(false)
+  primary_offered_course_id Int?
+  notes                     String?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_batches    offered_course_batches[]
+  offered_course_slots      offered_course_slots[]
+  offered_course_teachers   offered_course_teachers[]
+  master_courses            master_courses              @relation(fields: [master_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offerings                 offerings                   @relation(fields: [offering_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+    offered_course_manual_cooffers offered_course_manual_cooffers[]
+  primary_offered_course    offered_courses?            @relation("offered_course_cooffer_links", fields: [primary_offered_course_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  secondary_offered_courses offered_courses[]           @relation("offered_course_cooffer_links")
+
+  @@index([offering_id, section], map: "ix_offered_courses_offering_section")
+  @@index([primary_offered_course_id], map: "ix_offered_courses_primary_offered_course_id")
+}
+
+model offerings {
+  id                  Int               @id @default(autoincrement())
+  academic_term_id    Int
+  program_id          Int
+  prepared_by_user_id Int
+  status              String            @db.VarChar(30)
+  created_at          DateTime?         @default(now()) @db.Timestamptz(6)
+  offered_courses     offered_courses[]
+  academic_terms      academic_terms    @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users               users             @relation(fields: [prepared_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  programs            programs          @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_course_selections {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  academic_term_id  Int
+  priority_order    Int?
+  status            String          @db.VarChar(30)
+  selected_at       DateTime?       @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?       @default(now()) @updatedAt @db.Timestamptz(6)
+  confirmed_at      DateTime?       @db.Timestamptz(6)
+  academic_terms    academic_terms  @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([offered_course_id, teacher_id], map: "uq_faculty_course_selection")
+  @@index([teacher_id], map: "ix_faculty_course_selections_teacher_id")
+  @@index([academic_term_id], map: "ix_faculty_course_selections_term_id")
+  @@index([status], map: "ix_faculty_course_selections_status")
+  @@index([teacher_id, academic_term_id], map: "ix_faculty_course_selections_teacher_term")
+}
+
+model programs {
+  id             Int              @id @default(autoincrement())
+  department_id  Int
+  name           String           @db.VarChar(200)
+  short_name     String           @db.VarChar(50)
+  batches        batches[]
+  master_courses master_courses[]
+  offerings      offerings[]
+  departments    departments      @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([department_id, name], map: "uq_program_department_name")
+}
+
+model rooms {
+  id                   Int                    @id @default(autoincrement())
+  room_code            String                 @unique @db.VarChar(100)
+  room_type            String                 @db.VarChar(50)
+  capacity             Int?
+  is_active            Boolean?
+  offered_course_slots offered_course_slots[]
+}
+
+model student_report_logs {
+  id                        Int       @id @default(autoincrement())
+  student_id                String    @db.VarChar(100)
+  student_name              String?   @db.VarChar(200)
+  uploaded_by_user_id       Int
+  transcript_filename       String?   @db.VarChar(300)
+  registration_filename     String?   @db.VarChar(300)
+  latest_completed_semester String?   @db.VarChar(100)
+  registration_semester     String?   @db.VarChar(100)
+  total_earned_credits      Float?
+  gpa                       Float?
+  generated_excel_path      String?   @db.VarChar(500)
+  created_at                DateTime? @default(now()) @db.Timestamptz(6)
+  users                     users     @relation(fields: [uploaded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([id], map: "ix_student_report_logs_id")
+  @@index([student_id], map: "ix_student_report_logs_student_id")
+}
+
+model teachers {
+  id                        Int                         @id @default(autoincrement())
+  department_id             Int
+  teacher_code              String                      @unique @db.VarChar(100)
+  full_name                 String                      @db.VarChar(200)
+  designation               String?                     @db.VarChar(150)
+  email                     String?                     @db.VarChar(200)
+  phone                     String?                     @db.VarChar(50)
+  seniority_level           Int?
+  is_active                 Boolean?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_teachers   offered_course_teachers[]
+  departments               departments                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                     users[]
+
+  @@index([department_id], map: "ix_teachers_department_id")
+  @@index([seniority_level], map: "ix_teachers_seniority_level")
+}
+
+model users {
+  id                  Int                   @id @default(autoincrement())
+  username            String                @unique(map: "ix_users_username") @db.VarChar(100)
+  full_name           String                @db.VarChar(200)
+  password_hash       String
+  role                String                @db.VarChar(50)
+  is_active           Boolean?
+  teacher_id          Int?
+  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  offerings           offerings[]
+  student_report_logs student_report_logs[]
+  teachers            teachers?             @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  // ? ADD THIS LINE ONLY
+  faculty_login_sessions FacultyLoginSession[]
+
+  @@index([id], map: "ix_users_id")
+}
+
+model academic_catalog_entries {
+  id                 Int      @id @default(autoincrement())
+  department_code    String
+  department_name    String
+  program_code       String   @unique
+  program_title      String
+  program_type       String
+  study_shift        String
+  curriculum_version String
+  student_id_suffix  String?  @unique
+  display_label      String
+  is_active          Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @default(now()) @updatedAt
+  curriculum_key     String?
+
+  @@index([department_code])
+  @@index([program_type])
+  @@index([study_shift])
+  @@index([curriculum_version])
+  @@index([curriculum_key])
+}
+model SystemSetting {
+  id               Int      @id @default(autoincrement())
+  settingKey       String   @unique
+  settingValue     String
+  updatedByUserId  Int?
+  updatedAt        DateTime @updatedAt
+}
+
+model FacultyLoginSession {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  sessionToken  String   @unique
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+
+  user          users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model offered_course_manual_cooffers {
+  id                  Int             @id @default(autoincrement())
+  offered_course_id   Int
+  target_program_code String?         @db.VarChar(100)
+  manual_course_code  String          @db.VarChar(100)
+  note                String?         @db.VarChar(300)
+  created_at          DateTime        @default(now())
+  offered_courses     offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([offered_course_id], map: "ix_offered_course_manual_cooffers_offered_course_id")
+  @@index([target_program_code], map: "ix_offered_course_manual_cooffers_target_program_code")
+}
+model faculty_login_sessions {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  teacher_id    Int?
+  session_token String   @unique @db.VarChar(191)
+  created_at    DateTime @default(now())
+  expires_at    DateTime
+  warned_at     DateTime?
+  revoked_at    DateTime?
+
+  @@index([user_id], map: "ix_faculty_login_sessions_user_id")
+  @@index([teacher_id], map: "ix_faculty_login_sessions_teacher_id")
+  @@index([expires_at], map: "ix_faculty_login_sessions_expires_at")
+}
+
+model notifications {
+  id                Int      @id @default(autoincrement())
+  recipient_user_id Int?
+  recipient_teacher_id Int?
+  event_type        String   @db.VarChar(100)
+  title             String   @db.VarChar(200)
+  message           String   @db.Text
+  is_read           Boolean  @default(false)
+  created_by_user_id Int?
+  created_at        DateTime @default(now())
+  read_at           DateTime?
+
+  @@index([recipient_user_id], map: "ix_notifications_recipient_user_id")
+  @@index([recipient_teacher_id], map: "ix_notifications_recipient_teacher_id")
+  @@index([event_type], map: "ix_notifications_event_type")
+  @@index([is_read], map: "ix_notifications_is_read")
+}

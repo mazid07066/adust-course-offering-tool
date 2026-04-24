@@ -9,6 +9,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+
     const teacherId = Number(body.teacherId);
     const termName = String(body.termName || "").trim().toUpperCase();
 
@@ -26,7 +27,6 @@ export async function POST(req: NextRequest) {
           id: true,
           teacher_code: true,
           full_name: true,
-          is_active: true,
         },
       }),
       prisma.academic_terms.findFirst({
@@ -38,9 +38,9 @@ export async function POST(req: NextRequest) {
       }),
     ]);
 
-    if (!teacher || !teacher.is_active) {
+    if (!teacher) {
       return NextResponse.json(
-        { error: "Teacher not found or inactive." },
+        { error: "Faculty member not found." },
         { status: 404 }
       );
     }
@@ -52,9 +52,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const deleteResult = await prisma.offered_course_teachers.deleteMany({
+    /*
+      IMPORTANT:
+      This removes ONLY assignments created from faculty choices.
+      It does NOT remove imported/template/admin-preassigned rows.
+    */
+    const deleted = await prisma.offered_course_teachers.deleteMany({
       where: {
         teacher_id: teacher.id,
+        load_type: "APPROVED_CHOICE",
         offered_courses: {
           offerings: {
             academic_term_id: term.id,
@@ -69,7 +75,9 @@ export async function POST(req: NextRequest) {
         is_active: true,
         role: "FACULTY",
       },
-      select: { id: true },
+      select: {
+        id: true,
+      },
     });
 
     for (const user of linkedUsers) {
@@ -77,21 +85,27 @@ export async function POST(req: NextRequest) {
         recipientUserId: user.id,
         recipientTeacherId: teacher.id,
         createdByUserId: guard.id,
-        eventType: "FACULTY_ASSIGNMENT_REMOVED",
-        title: "Approved assignment removed",
-        message: `Your approved assignment for ${term.name} was removed by coordinator/admin. Please review the updated assignment status.`,
+        eventType: "FACULTY_APPROVED_CHOICE_ASSIGNMENT_REMOVED",
+        title: "Approved choice assignment removed",
+        message: `Coordinator/admin removed ${deleted.count} approved faculty-choice assignment row(s) for ${term.name}. Imported/preassigned courses were not changed.`,
       });
     }
 
     return NextResponse.json({
       success: true,
-      message: `Removed ${deleteResult.count} approved assignment row(s) for ${teacher.teacher_code} - ${teacher.full_name}.`,
-      removedCount: deleteResult.count,
+      message: `Removed ${deleted.count} approved faculty-choice assignment row(s) for ${teacher.teacher_code} - ${teacher.full_name}. Imported/preassigned assignments were kept unchanged.`,
+      deletedCount: deleted.count,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Remove approved faculty choice assignment error:", error);
+
     return NextResponse.json(
-      { error: "Failed to remove approved assignment." },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to remove approved faculty choice assignments.",
+      },
       { status: 500 }
     );
   }
