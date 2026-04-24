@@ -1,0 +1,3232 @@
+
+
+===== FILE: src\app\admin\faculty-course-choices\page-client.tsx =====
+
+"use client";
+
+import { useEffect, useState } from "react";
+import AdminLayout from "@/components/admin-layout";
+import { useAcademicTerms } from "@/hooks/use-academic-terms";
+
+type ChoiceCourse = {
+  selectionId: number;
+  offeredCourseId: number;
+  priorityOrder: number | null;
+  status: string;
+  selectedAt: string | null;
+  confirmedAt: string | null;
+  programCode: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  batchCodes: string[];
+};
+
+type AssignedCourse = {
+  assignmentId: number;
+  offeredCourseId: number;
+  programCode: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  batchCodes: string[];
+  assignedCredit: number;
+  loadType: string;
+};
+
+type FacultyChoiceGroup = {
+  teacherId: number;
+  teacherCode: string;
+  teacherName: string;
+  designation: string | null;
+  totalChoices: number;
+  finalizedCount: number;
+  bufferCount: number;
+  approvedAssignedCount: number;
+  approvedAssignedCredits: number;
+  choices: ChoiceCourse[];
+  assignments: AssignedCourse[];
+};
+
+type ApiResponse = {
+  success?: boolean;
+  error?: string;
+  message?: string;
+  termName?: string;
+  facultyChoices?: FacultyChoiceGroup[];
+};
+
+export default function FacultyCourseChoicesAdminPageClient() {
+  const { terms, termName, setTermName, loadingTerms, termError } = useAcademicTerms();
+
+  const [loading, setLoading] = useState(false);
+  const [actionLoadingKey, setActionLoadingKey] = useState<string>("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [facultyChoices, setFacultyChoices] = useState<FacultyChoiceGroup[]>([]);
+
+  async function loadChoices() {
+    if (!termName) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch(
+        `/api/admin/faculty-course-choices?termName=${encodeURIComponent(termName)}`,
+        {
+          cache: "no-store",
+        }
+      );
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load faculty course choices.");
+      }
+
+      setFacultyChoices(json.facultyChoices || []);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load faculty course choices."
+      );
+      setFacultyChoices([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (termName) {
+      loadChoices();
+    }
+  }, [termName]);
+
+  async function handleApprove(teacherId: number, teacherLabel: string) {
+    if (!termName) {
+      setError("Please select a term first.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Approve FINAL choices for ${teacherLabel} in ${termName} and apply them to the assignment board?`
+    );
+    if (!ok) return;
+
+    setActionLoadingKey(`approve-${teacherId}`);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/faculty-course-choices/approve", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          teacherId,
+          termName,
+        }),
+      });
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to approve faculty choices.");
+      }
+
+      setMessage(json.message || "Faculty choices approved successfully.");
+      await loadChoices();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to approve faculty choices.");
+    } finally {
+      setActionLoadingKey("");
+    }
+  }
+
+  async function handleRemoveApprovedAssignment(teacherId: number, teacherLabel: string) {
+    if (!termName) {
+      setError("Please select a term first.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Remove approved assignment rows for ${teacherLabel} in ${termName}?`
+    );
+    if (!ok) return;
+
+    setActionLoadingKey(`remove-approved-${teacherId}`);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(
+        "/api/admin/faculty-course-choices/remove-approved-assignment",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            teacherId,
+            termName,
+          }),
+        }
+      );
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to remove approved assignment.");
+      }
+
+      setMessage(json.message || "Approved assignment removed successfully.");
+      await loadChoices();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to remove approved assignment."
+      );
+    } finally {
+      setActionLoadingKey("");
+    }
+  }
+
+  async function handleReopen(teacherId: number, teacherLabel: string) {
+    if (!termName) {
+      setError("Please select a term first.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Reopen finalized choices for ${teacherLabel} in ${termName}?`
+    );
+    if (!ok) return;
+
+    setActionLoadingKey(`reopen-${teacherId}`);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/faculty-course-choices/reopen", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          teacherId,
+          termName,
+        }),
+      });
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to reopen faculty choices.");
+      }
+
+      setMessage(json.message || "Faculty choices reopened successfully.");
+      await loadChoices();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reopen faculty choices.");
+    } finally {
+      setActionLoadingKey("");
+    }
+  }
+
+  async function handleReset(teacherId: number, teacherLabel: string) {
+    if (!termName) {
+      setError("Please select a term first.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Reset all faculty choices for ${teacherLabel} in ${termName}? This will delete BUFFER and FINAL records for that faculty in the selected term.`
+    );
+    if (!ok) return;
+
+    setActionLoadingKey(`reset-${teacherId}`);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/faculty-course-choices/reset", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          teacherId,
+          termName,
+        }),
+      });
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to reset faculty choices.");
+      }
+
+      setMessage(json.message || "Faculty choices reset successfully.");
+      await loadChoices();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset faculty choices.");
+    } finally {
+      setActionLoadingKey("");
+    }
+  }
+
+  return (
+    <AdminLayout title="Faculty Course Choices">
+      <div className="space-y-6">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="w-full max-w-md">
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Academic Term
+              </label>
+              <select
+                value={termName}
+                onChange={(e) => setTermName(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+                disabled={loadingTerms}
+              >
+                <option value="">
+                  {loadingTerms ? "Loading terms..." : "Select Academic Term"}
+                </option>
+                {terms.map((term) => (
+                  <option key={term.name} value={term.name}>
+                    {term.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <a
+                href="/admin/faculty-assignment"
+                className="rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Open Assignment Board
+              </a>
+
+              <button
+                type="button"
+                onClick={loadChoices}
+                disabled={!termName || loading}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+              >
+                {loading ? "Loading..." : "Refresh Choices"}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+            FINAL faculty choices need approval. Existing imported/manual/preassigned assignments are already authoritative and are shown below as approved assignment rows. They do not require the faculty to log in again.
+          </div>
+        </div>
+
+        {(error || termError) && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error || termError}
+          </div>
+        )}
+
+        {message && (
+          <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {message}
+          </div>
+        )}
+
+        <div className="space-y-4">
+          {facultyChoices.map((group) => {
+            const teacherLabel = `${group.teacherCode} - ${group.teacherName}`;
+            const hasFinal = group.finalizedCount > 0;
+            const hasApprovedAssignment = group.approvedAssignedCount > 0;
+
+            return (
+              <div
+                key={group.teacherId}
+                className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+              >
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">
+                      {teacherLabel}
+                    </h2>
+                    <div className="mt-1 text-sm text-slate-600">
+                      {group.designation || "-"}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                        Total Choices: {group.totalChoices}
+                      </span>
+                      <span className="rounded-full bg-green-100 px-3 py-1 text-green-700">
+                        FINAL: {group.finalizedCount}
+                      </span>
+                      <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-700">
+                        BUFFER: {group.bufferCount}
+                      </span>
+                      <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-700">
+                        Assigned Sections: {group.approvedAssignedCount}
+                      </span>
+                      <span className="rounded-full bg-purple-100 px-3 py-1 text-purple-700">
+                        Assigned Credits: {group.approvedAssignedCredits}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => handleApprove(group.teacherId, teacherLabel)}
+                      disabled={!hasFinal || actionLoadingKey !== ""}
+                      className="rounded-xl bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-60"
+                    >
+                      {actionLoadingKey === `approve-${group.teacherId}`
+                        ? "Approving..."
+                        : "Approve Final Choices"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRemoveApprovedAssignment(group.teacherId, teacherLabel)
+                      }
+                      disabled={!hasApprovedAssignment || actionLoadingKey !== ""}
+                      className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      {actionLoadingKey === `remove-approved-${group.teacherId}`
+                        ? "Removing..."
+                        : "Remove Approved Assignment"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleReopen(group.teacherId, teacherLabel)}
+                      disabled={actionLoadingKey !== ""}
+                      className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60"
+                    >
+                      {actionLoadingKey === `reopen-${group.teacherId}`
+                        ? "Reopening..."
+                        : "Reopen"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleReset(group.teacherId, teacherLabel)}
+                      disabled={actionLoadingKey !== ""}
+                      className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
+                    >
+                      {actionLoadingKey === `reset-${group.teacherId}`
+                        ? "Resetting..."
+                        : "Reset"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-5 space-y-5">
+                  <div>
+                    <h3 className="mb-3 text-base font-semibold text-slate-900">
+                      Faculty Choice Rows
+                    </h3>
+                    <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="border-b px-3 py-3 text-left">Priority</th>
+                            <th className="border-b px-3 py-3 text-left">Status</th>
+                            <th className="border-b px-3 py-3 text-left">Program</th>
+                            <th className="border-b px-3 py-3 text-left">Course</th>
+                            <th className="border-b px-3 py-3 text-left">Section</th>
+                            <th className="border-b px-3 py-3 text-left">Batches</th>
+                            <th className="border-b px-3 py-3 text-left">Timestamp</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.choices.map((choice) => (
+                            <tr key={choice.selectionId}>
+                              <td className="border-b px-3 py-2">
+                                {choice.priorityOrder || "-"}
+                              </td>
+                              <td className="border-b px-3 py-2">{choice.status}</td>
+                              <td className="border-b px-3 py-2">{choice.programCode}</td>
+                              <td className="border-b px-3 py-2">
+                                {choice.courseCode} — {choice.courseTitle}
+                              </td>
+                              <td className="border-b px-3 py-2">{choice.section}</td>
+                              <td className="border-b px-3 py-2">
+                                {choice.batchCodes.join(", ") || "-"}
+                              </td>
+                              <td className="border-b px-3 py-2">
+                                {choice.status === "FINAL"
+                                  ? choice.confirmedAt || "-"
+                                  : choice.selectedAt || "-"}
+                              </td>
+                            </tr>
+                          ))}
+
+                          {group.choices.length === 0 && (
+                            <tr>
+                              <td
+                                colSpan={7}
+                                className="px-4 py-6 text-center text-slate-500"
+                              >
+                                No faculty choice rows found for this teacher.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="mb-3 text-base font-semibold text-slate-900">
+                      Existing Approved Assignment Rows
+                    </h3>
+                    <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="border-b px-3 py-3 text-left">Load Type</th>
+                            <th className="border-b px-3 py-3 text-left">Program</th>
+                            <th className="border-b px-3 py-3 text-left">Course</th>
+                            <th className="border-b px-3 py-3 text-left">Section</th>
+                            <th className="border-b px-3 py-3 text-left">Batches</th>
+                            <th className="border-b px-3 py-3 text-left">Assigned Credit</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.assignments.map((assignment) => (
+                            <tr key={assignment.assignmentId}>
+                              <td className="border-b px-3 py-2">{assignment.loadType}</td>
+                              <td className="border-b px-3 py-2">{assignment.programCode}</td>
+                              <td className="border-b px-3 py-2">
+                                {assignment.courseCode} — {assignment.courseTitle}
+                              </td>
+                              <td className="border-b px-3 py-2">{assignment.section}</td>
+                              <td className="border-b px-3 py-2">
+                                {assignment.batchCodes.join(", ") || "-"}
+                              </td>
+                              <td className="border-b px-3 py-2">
+                                {assignment.assignedCredit}
+                              </td>
+                            </tr>
+                          ))}
+
+                          {group.assignments.length === 0 && (
+                            <tr>
+                              <td
+                                colSpan={6}
+                                className="px-4 py-6 text-center text-slate-500"
+                              >
+                                No existing approved assignment rows found for this teacher.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {facultyChoices.length === 0 && !loading && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm">
+              No faculty course choices or approved assignments found for the selected term.
+            </div>
+          )}
+        </div>
+      </div>
+    </AdminLayout>
+  );
+}
+
+
+===== FILE: src\app\admin\faculty-course-choices\page.tsx =====
+
+import { requireCoordinatorOrAdmin } from "@/lib/auth-guard";
+import FacultyCourseChoicesAdminPageClient from "./page-client";
+
+export default async function FacultyCourseChoicesAdminPage() {
+  await requireCoordinatorOrAdmin();
+  return <FacultyCourseChoicesAdminPageClient />;
+}
+
+
+===== FILE: src\app\api\admin\faculty-course-choices\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+
+type ChoiceRow = {
+  selectionId: number;
+  offeredCourseId: number;
+  priorityOrder: number | null;
+  status: string;
+  selectedAt: string | null;
+  confirmedAt: string | null;
+  programCode: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  batchCodes: string[];
+};
+
+type AssignmentRow = {
+  assignmentId: number;
+  offeredCourseId: number;
+  programCode: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  batchCodes: string[];
+  assignedCredit: number;
+  loadType: string;
+};
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+export async function GET(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const termName = String(searchParams.get("termName") || "").trim().toUpperCase();
+
+    if (!termName) {
+      return NextResponse.json(
+        { error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: { name: termName },
+      select: { id: true, name: true },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const [selections, assignments] = await Promise.all([
+      prisma.faculty_course_selections.findMany({
+        where: {
+          academic_term_id: term.id,
+        },
+        include: {
+          teachers: true,
+          offered_courses: {
+            include: {
+              master_courses: {
+                include: {
+                  program: true,
+                },
+              },
+              offered_course_batches: {
+                include: {
+                  batches: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: [
+          { teacher_id: "asc" },
+          { priority_order: "asc" },
+          { id: "asc" },
+        ],
+      }),
+      prisma.offered_course_teachers.findMany({
+        where: {
+          offered_courses: {
+            offerings: {
+              academic_term_id: term.id,
+            },
+          },
+        },
+        include: {
+          teachers: true,
+          offered_courses: {
+            include: {
+              master_courses: {
+                include: {
+                  program: true,
+                },
+              },
+              offered_course_batches: {
+                include: {
+                  batches: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: [{ teacher_id: "asc" }, { id: "asc" }],
+      }),
+    ]);
+
+    const map = new Map<
+      number,
+      {
+        teacherId: number;
+        teacherCode: string;
+        teacherName: string;
+        designation: string | null;
+        totalChoices: number;
+        finalizedCount: number;
+        bufferCount: number;
+        approvedAssignedCount: number;
+        approvedAssignedCredits: number;
+        choices: ChoiceRow[];
+        assignments: AssignmentRow[];
+      }
+    >();
+
+    for (const row of selections) {
+      if (!map.has(row.teacher_id)) {
+        map.set(row.teacher_id, {
+          teacherId: row.teacher_id,
+          teacherCode: row.teachers?.teacher_code || "-",
+          teacherName: row.teachers?.full_name || "-",
+          designation: row.teachers?.designation || null,
+          totalChoices: 0,
+          finalizedCount: 0,
+          bufferCount: 0,
+          approvedAssignedCount: 0,
+          approvedAssignedCredits: 0,
+          choices: [],
+          assignments: [],
+        });
+      }
+
+      const group = map.get(row.teacher_id)!;
+      group.totalChoices += 1;
+
+      if (row.status === "FINAL") group.finalizedCount += 1;
+      if (row.status === "BUFFER") group.bufferCount += 1;
+
+      group.choices.push({
+        selectionId: row.id,
+        offeredCourseId: row.offered_course_id,
+        priorityOrder: row.priority_order,
+        status: row.status,
+        selectedAt: row.selected_at ? row.selected_at.toISOString() : null,
+        confirmedAt: row.confirmed_at ? row.confirmed_at.toISOString() : null,
+        programCode: row.offered_courses.master_courses.program.short_name,
+        courseCode: row.offered_courses.master_courses.course_code,
+        courseTitle: row.offered_courses.master_courses.course_title,
+        section: row.offered_courses.section,
+        batchCodes: row.offered_courses.offered_course_batches.map(
+          (x) => x.batches.batch_code
+        ),
+      });
+    }
+
+    const assignmentMergeMap = new Map<
+      string,
+      {
+        teacherId: number;
+        teacherCode: string;
+        teacherName: string;
+        designation: string | null;
+        assignmentId: number;
+        offeredCourseId: number;
+        programCode: string;
+        courseCode: string;
+        courseTitle: string;
+        section: string;
+        batchCodes: string[];
+        assignedCredit: number;
+        loadType: string;
+      }
+    >();
+
+    for (const row of assignments) {
+      const teacherId = row.teacher_id;
+      const teacherCode = row.teachers?.teacher_code || "-";
+      const teacherName = row.teachers?.full_name || "-";
+      const designation = row.teachers?.designation || null;
+      const programCode = row.offered_courses.master_courses.program.short_name;
+      const courseCode = row.offered_courses.master_courses.course_code;
+      const courseTitle = row.offered_courses.master_courses.course_title;
+      const section = row.offered_courses.section;
+      const batchCodes = row.offered_courses.offered_course_batches.map(
+        (x) => x.batches.batch_code
+      );
+
+      const signature = [
+        teacherId,
+        programCode,
+        courseCode,
+        section,
+      ].join("::");
+
+      if (!assignmentMergeMap.has(signature)) {
+        assignmentMergeMap.set(signature, {
+          teacherId,
+          teacherCode,
+          teacherName,
+          designation,
+          assignmentId: row.id,
+          offeredCourseId: row.offered_course_id,
+          programCode,
+          courseCode,
+          courseTitle,
+          section,
+          batchCodes,
+          assignedCredit: Number(row.assigned_credit || 0),
+          loadType: row.load_type,
+        });
+      } else {
+        const current = assignmentMergeMap.get(signature)!;
+        current.batchCodes = uniqueStrings([...current.batchCodes, ...batchCodes]);
+        current.assignedCredit = Math.max(
+          current.assignedCredit,
+          Number(row.assigned_credit || 0)
+        );
+      }
+    }
+
+    for (const merged of assignmentMergeMap.values()) {
+      if (!map.has(merged.teacherId)) {
+        map.set(merged.teacherId, {
+          teacherId: merged.teacherId,
+          teacherCode: merged.teacherCode,
+          teacherName: merged.teacherName,
+          designation: merged.designation,
+          totalChoices: 0,
+          finalizedCount: 0,
+          bufferCount: 0,
+          approvedAssignedCount: 0,
+          approvedAssignedCredits: 0,
+          choices: [],
+          assignments: [],
+        });
+      }
+
+      const group = map.get(merged.teacherId)!;
+      group.approvedAssignedCount += 1;
+      group.approvedAssignedCredits += merged.assignedCredit;
+
+      group.assignments.push({
+        assignmentId: merged.assignmentId,
+        offeredCourseId: merged.offeredCourseId,
+        programCode: merged.programCode,
+        courseCode: merged.courseCode,
+        courseTitle: merged.courseTitle,
+        section: merged.section,
+        batchCodes: uniqueStrings(merged.batchCodes),
+        assignedCredit: merged.assignedCredit,
+        loadType: merged.loadType,
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      termName: term.name,
+      facultyChoices: Array.from(map.values()).sort((a, b) =>
+        a.teacherCode.localeCompare(b.teacherCode)
+      ),
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      { error: "Failed to load faculty course choices." },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\admin\faculty-course-choices\confirm\route.ts =====
+
+NOT PRESENT
+
+
+===== FILE: src\app\api\admin\faculty-course-choices\approve\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { createFacultyNotification } from "@/lib/faculty-notifications";
+
+const ALLOWED_OFFERING_STATUSES = [
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await req.json();
+    const teacherId = Number(body.teacherId);
+    const termName = String(body.termName || "").trim().toUpperCase();
+
+    if (!teacherId || !termName) {
+      return NextResponse.json(
+        { error: "teacherId and termName are required." },
+        { status: 400 }
+      );
+    }
+
+    const [teacher, term] = await Promise.all([
+      prisma.teachers.findUnique({
+        where: { id: teacherId },
+        select: {
+          id: true,
+          teacher_code: true,
+          full_name: true,
+          designation: true,
+          is_active: true,
+        },
+      }),
+      prisma.academic_terms.findFirst({
+        where: { name: termName },
+        select: {
+          id: true,
+          name: true,
+        },
+      }),
+    ]);
+
+    if (!teacher || !teacher.is_active) {
+      return NextResponse.json(
+        { error: "Teacher not found or inactive." },
+        { status: 404 }
+      );
+    }
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const finalSelections = await prisma.faculty_course_selections.findMany({
+      where: {
+        teacher_id: teacher.id,
+        academic_term_id: term.id,
+        status: "FINAL",
+      },
+      include: {
+        offered_courses: {
+          include: {
+            offerings: true,
+            master_courses: true,
+            offered_course_teachers: {
+              include: {
+                teachers: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ priority_order: "asc" }, { id: "asc" }],
+    });
+
+    if (finalSelections.length === 0) {
+      return NextResponse.json(
+        { error: "No FINAL faculty choices found to approve." },
+        { status: 400 }
+      );
+    }
+
+    let assignedCount = 0;
+    let skippedAlreadyAssignedToSameTeacher = 0;
+    let skippedAssignedToAnotherTeacher = 0;
+    let skippedInvalidStatus = 0;
+
+    for (const selection of finalSelections) {
+      const course = selection.offered_courses;
+
+      if (!ALLOWED_OFFERING_STATUSES.includes(course.offerings.status)) {
+        skippedInvalidStatus += 1;
+        continue;
+      }
+
+      const existingAssignments = course.offered_course_teachers || [];
+
+      const assignedToSameTeacher = existingAssignments.some(
+        (row) => row.teacher_id === teacher.id
+      );
+
+      if (assignedToSameTeacher) {
+        skippedAlreadyAssignedToSameTeacher += 1;
+        continue;
+      }
+
+      const assignedToAnotherTeacher = existingAssignments.some(
+        (row) => row.teacher_id !== teacher.id
+      );
+
+      if (assignedToAnotherTeacher) {
+        skippedAssignedToAnotherTeacher += 1;
+        continue;
+      }
+
+      await prisma.offered_course_teachers.create({
+        data: {
+          offered_course_id: course.id,
+          teacher_id: teacher.id,
+          assigned_credit: Number(course.master_courses.credit || 0),
+          load_type: "APPROVED_CHOICE",
+        },
+      });
+
+      assignedCount += 1;
+    }
+
+    const linkedUsers = await prisma.users.findMany({
+      where: {
+        teacher_id: teacher.id,
+        is_active: true,
+        role: "FACULTY",
+      },
+      select: { id: true },
+    });
+
+    for (const user of linkedUsers) {
+      await createFacultyNotification({
+        recipientUserId: user.id,
+        recipientTeacherId: teacher.id,
+        createdByUserId: guard.id,
+        eventType: "FACULTY_CHOICE_APPROVED",
+        title: "Faculty choices approved",
+        message: `Your final course choices for ${term.name} were approved and applied to the assignment board.`,
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `Approval completed. Assigned ${assignedCount}, skipped already assigned to same teacher ${skippedAlreadyAssignedToSameTeacher}, skipped assigned to another teacher ${skippedAssignedToAnotherTeacher}, skipped invalid status ${skippedInvalidStatus}.`,
+      assignedCount,
+      skippedAlreadyAssignedToSameTeacher,
+      skippedAssignedToAnotherTeacher,
+      skippedInvalidStatus,
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      { error: "Failed to approve faculty final choices." },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\admin\faculty-assignment\assign\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import {
+  getFacultyLoadLevel,
+  getFacultyLoadMessage,
+} from "@/lib/faculty-assignment-policy";
+
+const ALLOWED_OFFERING_STATUSES = [
+  "DRAFT",
+  "BUFFER_READY",
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await req.json();
+
+    const termName = String(body.termName || "").trim().toUpperCase();
+    const offeredCourseId = Number(body.offeredCourseId);
+    const teacherId = Number(body.teacherId);
+
+    if (!termName || !offeredCourseId || !teacherId) {
+      return NextResponse.json(
+        { error: "termName, offeredCourseId, and teacherId are required." },
+        { status: 400 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: { name: termName },
+      select: { id: true, name: true },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const teacher = await prisma.teachers.findUnique({
+      where: { id: teacherId },
+      select: {
+        id: true,
+        teacher_code: true,
+        full_name: true,
+        designation: true,
+        is_active: true,
+      },
+    });
+
+    if (!teacher || !teacher.is_active) {
+      return NextResponse.json(
+        { error: "Selected faculty is not active or does not exist." },
+        { status: 404 }
+      );
+    }
+
+    const course = await prisma.offered_courses.findFirst({
+      where: {
+        id: offeredCourseId,
+        primary_offered_course_id: null,
+        offerings: {
+          academic_term_id: term.id,
+          status: {
+            in: ALLOWED_OFFERING_STATUSES,
+          },
+        },
+      },
+      include: {
+        master_courses: true,
+      },
+    });
+
+    if (!course) {
+      return NextResponse.json(
+        { error: "Offered section not found for the selected term." },
+        { status: 404 }
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.offered_course_teachers.deleteMany({
+        where: {
+          offered_course_id: offeredCourseId,
+        },
+      });
+
+      await tx.offered_course_teachers.create({
+        data: {
+          offered_course_id: offeredCourseId,
+          teacher_id: teacherId,
+          assigned_credit: Number(course.master_courses.credit || 0),
+          load_type: "CHOICE_ASSIGNMENT",
+        },
+      });
+    });
+
+    const teacherLoadRows = await prisma.offered_course_teachers.findMany({
+      where: {
+        teacher_id: teacherId,
+        offered_courses: {
+          offerings: {
+            academic_term_id: term.id,
+          },
+        },
+      },
+      select: {
+        assigned_credit: true,
+      },
+    });
+
+    const totalAssignedCredits = teacherLoadRows.reduce(
+      (sum, row) => sum + Number(row.assigned_credit || 0),
+      0
+    );
+
+    const loadLevel = getFacultyLoadLevel(totalAssignedCredits);
+    const loadMessage = getFacultyLoadMessage(totalAssignedCredits);
+
+    return NextResponse.json({
+      success: true,
+      message: `Assigned ${teacher.teacher_code} - ${teacher.full_name} to ${course.master_courses.course_code} section ${course.section}.`,
+      loadLevel,
+      totalAssignedCredits,
+      loadMessage,
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      { error: "Failed to assign faculty." },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\admin\offering-reports\page-client.tsx =====
+
+"use client";
+
+import { useEffect, useState } from "react";
+import AdminLayout from "@/components/admin-layout";
+import { useAcademicTerms } from "@/hooks/use-academic-terms";
+
+type ReportRow = {
+  offeredCourseId: number;
+  offeringId: number;
+  programCode: string;
+  programName: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  credit: number;
+  role: string;
+  primaryReference: string;
+  batchCodes: string[];
+  facultyText: string;
+  assignedFacultyCount: number;
+  scheduleText: string;
+};
+
+type ApiResponse = {
+  success?: boolean;
+  error?: string;
+  termName?: string;
+  summary?: {
+    totalRows: number;
+    primaryRows: number;
+    secondaryRows: number;
+    rowsWithFaculty: number;
+    rowsWithoutFaculty: number;
+  };
+  rows?: ReportRow[];
+};
+
+export default function OfferingReportsPageClient() {
+  const { terms, termName, setTermName, loadingTerms, termError } = useAcademicTerms();
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [rows, setRows] = useState<ReportRow[]>([]);
+  const [summary, setSummary] = useState<ApiResponse["summary"] | null>(null);
+
+  async function loadReport() {
+    if (!termName) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch(
+        `/api/admin/reports/confirmed-offerings?termName=${encodeURIComponent(termName)}`,
+        {
+          cache: "no-store",
+        }
+      );
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load confirmed offering report.");
+      }
+
+      setRows(json.rows || []);
+      setSummary(json.summary || null);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load confirmed offering report."
+      );
+      setRows([]);
+      setSummary(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (termName) {
+      loadReport();
+    }
+  }, [termName]);
+
+  return (
+    <AdminLayout title="Confirmed Offering Reports">
+      <div className="space-y-6">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="w-full max-w-md">
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Academic Term
+              </label>
+              <select
+                value={termName}
+                onChange={(e) => setTermName(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+                disabled={loadingTerms}
+              >
+                <option value="">
+                  {loadingTerms ? "Loading terms..." : "Select Academic Term"}
+                </option>
+                {terms.map((term) => (
+                  <option key={term.name} value={term.name}>
+                    {term.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={loadReport}
+                disabled={!termName || loading}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+              >
+                {loading ? "Loading..." : "Refresh Report"}
+              </button>
+
+              <a
+                href={`/api/export/confirmed-offering?termName=${encodeURIComponent(termName || "")}`}
+                className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Download Confirmed Offering CSV
+              </a>
+            </div>
+          </div>
+        </div>
+
+        {(error || termError) && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error || termError}
+          </div>
+        )}
+
+        {summary && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Summary</h2>
+            <div className="mt-4 flex flex-wrap gap-3 text-sm">
+              <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700">
+                Total Rows: {summary.totalRows}
+              </span>
+              <span className="rounded-full bg-green-100 px-3 py-1 font-medium text-green-700">
+                Primary: {summary.primaryRows}
+              </span>
+              <span className="rounded-full bg-indigo-100 px-3 py-1 font-medium text-indigo-700">
+                Secondary: {summary.secondaryRows}
+              </span>
+              <span className="rounded-full bg-blue-100 px-3 py-1 font-medium text-blue-700">
+                With Faculty: {summary.rowsWithFaculty}
+              </span>
+              <span className="rounded-full bg-amber-100 px-3 py-1 font-medium text-amber-700">
+                Without Faculty: {summary.rowsWithoutFaculty}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="border-b px-3 py-3 text-left">Program</th>
+                <th className="border-b px-3 py-3 text-left">Course</th>
+                <th className="border-b px-3 py-3 text-left">Section</th>
+                <th className="border-b px-3 py-3 text-left">Credit</th>
+                <th className="border-b px-3 py-3 text-left">Role</th>
+                <th className="border-b px-3 py-3 text-left">Primary Reference</th>
+                <th className="border-b px-3 py-3 text-left">Batches</th>
+                <th className="border-b px-3 py-3 text-left">Assigned Faculty</th>
+                <th className="border-b px-3 py-3 text-left">Schedule</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.offeredCourseId}>
+                  <td className="border-b px-3 py-2">{row.programCode}</td>
+                  <td className="border-b px-3 py-2">
+                    {row.courseCode} — {row.courseTitle}
+                  </td>
+                  <td className="border-b px-3 py-2">{row.section}</td>
+                  <td className="border-b px-3 py-2">{row.credit}</td>
+                  <td className="border-b px-3 py-2">{row.role}</td>
+                  <td className="border-b px-3 py-2">{row.primaryReference}</td>
+                  <td className="border-b px-3 py-2">
+                    {row.batchCodes.join(", ") || "-"}
+                  </td>
+                  <td className="border-b px-3 py-2">{row.facultyText}</td>
+                  <td className="border-b px-3 py-2">{row.scheduleText}</td>
+                </tr>
+              ))}
+
+              {rows.length === 0 && !loading && (
+                <tr>
+                  <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                    No confirmed offering rows found for the selected term.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </AdminLayout>
+  );
+}
+
+
+===== FILE: src\app\admin\offering-summary\page-client.tsx =====
+
+"use client";
+
+import { useEffect, useState } from "react";
+import AdminLayout from "@/components/admin-layout";
+import { useAcademicTerms } from "@/hooks/use-academic-terms";
+
+type ProgramRow = {
+  programCode: string;
+  programName: string;
+  totalSections: number;
+  totalCourses: number;
+  totalCredits: number;
+  totalBatchesCovered: number;
+  totalFacultyAssigned: number;
+  theorySections: number;
+  labSections: number;
+  projectSections: number;
+};
+
+type ApiResponse = {
+  success?: boolean;
+  error?: string;
+  overall?: {
+    totalPrograms: number;
+    totalSections: number;
+    totalCourses: number;
+    totalCredits: number;
+    totalBatchesCovered: number;
+    totalFacultyAssigned: number;
+    theorySections: number;
+    labSections: number;
+    projectSections: number;
+  };
+  programRows?: ProgramRow[];
+};
+
+export default function OfferingSummaryPageClient() {
+  const { terms, termName, setTermName, loadingTerms, termError } = useAcademicTerms();
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [overall, setOverall] = useState<ApiResponse["overall"] | null>(null);
+  const [programRows, setProgramRows] = useState<ProgramRow[]>([]);
+
+  async function loadSummary() {
+    if (!termName) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch(
+        `/api/admin/reports/offering-summary?termName=${encodeURIComponent(termName)}`,
+        { cache: "no-store" }
+      );
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load offering summary.");
+      }
+
+      setOverall(json.overall || null);
+      setProgramRows(json.programRows || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load offering summary.");
+      setOverall(null);
+      setProgramRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (termName) {
+      loadSummary();
+    }
+  }, [termName]);
+
+  return (
+    <AdminLayout title="Offering Summary Report">
+      <div className="space-y-6">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="w-full max-w-md">
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Academic Term
+              </label>
+              <select
+                value={termName}
+                onChange={(e) => setTermName(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+                disabled={loadingTerms}
+              >
+                <option value="">
+                  {loadingTerms ? "Loading terms..." : "Select Academic Term"}
+                </option>
+                {terms.map((term) => (
+                  <option key={term.name} value={term.name}>
+                    {term.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={loadSummary}
+              disabled={!termName || loading}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+            >
+              {loading ? "Loading..." : "Refresh Summary"}
+            </button>
+          </div>
+        </div>
+
+        {(error || termError) && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error || termError}
+          </div>
+        )}
+
+        {overall && (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="text-sm text-slate-500">Programs</div>
+              <div className="mt-2 text-2xl font-bold text-slate-900">
+                {overall.totalPrograms}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="text-sm text-slate-500">Sections</div>
+              <div className="mt-2 text-2xl font-bold text-slate-900">
+                {overall.totalSections}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="text-sm text-slate-500">Credits</div>
+              <div className="mt-2 text-2xl font-bold text-slate-900">
+                {overall.totalCredits}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="text-sm text-slate-500">Faculty Assigned</div>
+              <div className="mt-2 text-2xl font-bold text-slate-900">
+                {overall.totalFacultyAssigned}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="border-b px-3 py-3 text-left">Program</th>
+                <th className="border-b px-3 py-3 text-left">Sections</th>
+                <th className="border-b px-3 py-3 text-left">Courses</th>
+                <th className="border-b px-3 py-3 text-left">Credits</th>
+                <th className="border-b px-3 py-3 text-left">Batches Covered</th>
+                <th className="border-b px-3 py-3 text-left">Faculty Assigned</th>
+                <th className="border-b px-3 py-3 text-left">Theory</th>
+                <th className="border-b px-3 py-3 text-left">Lab</th>
+                <th className="border-b px-3 py-3 text-left">Project</th>
+              </tr>
+            </thead>
+            <tbody>
+              {programRows.map((row) => (
+                <tr key={row.programCode}>
+                  <td className="border-b px-3 py-2">
+                    <div className="font-medium">{row.programCode}</div>
+                    <div className="text-xs text-slate-500">{row.programName}</div>
+                  </td>
+                  <td className="border-b px-3 py-2">{row.totalSections}</td>
+                  <td className="border-b px-3 py-2">{row.totalCourses}</td>
+                  <td className="border-b px-3 py-2">{row.totalCredits}</td>
+                  <td className="border-b px-3 py-2">{row.totalBatchesCovered}</td>
+                  <td className="border-b px-3 py-2">{row.totalFacultyAssigned}</td>
+                  <td className="border-b px-3 py-2">{row.theorySections}</td>
+                  <td className="border-b px-3 py-2">{row.labSections}</td>
+                  <td className="border-b px-3 py-2">{row.projectSections}</td>
+                </tr>
+              ))}
+
+              {programRows.length === 0 && !loading && (
+                <tr>
+                  <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                    No confirmed offering summary found for the selected term.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </AdminLayout>
+  );
+}
+
+
+===== FILE: src\app\admin\faculty-load\page-client.tsx =====
+
+"use client";
+
+import { useEffect, useState } from "react";
+import AdminLayout from "@/components/admin-layout";
+import { useAcademicTerms } from "@/hooks/use-academic-terms";
+
+type FacultyLoadItem = {
+  offeredCourseId: number;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  programCode: string;
+  assignedCredit: number;
+  batchCodes: string[];
+  linkedSecondaryCourseCodes: string[];
+};
+
+type FacultyLoadRow = {
+  teacherId: number;
+  teacherCode: string;
+  teacherName: string;
+  designation: string | null;
+  totalAssignedCredits: number;
+  totalAssignedSections: number;
+  loadLevel: string;
+  loadMessage: string;
+  items: FacultyLoadItem[];
+};
+
+type ApiResponse = {
+  success?: boolean;
+  error?: string;
+  termName?: string;
+  summary?: {
+    totalTeachers: number;
+    totalAssignedSections: number;
+    totalAssignedCredits: number;
+  };
+  rows?: FacultyLoadRow[];
+};
+
+function badgeClass(level: string) {
+  if (level === "OVERLOAD") return "bg-red-100 text-red-700";
+  if (level === "WARNING") return "bg-amber-100 text-amber-700";
+  return "bg-green-100 text-green-700";
+}
+
+export default function FacultyLoadPageClient() {
+  const { terms, termName, setTermName, loadingTerms, termError } = useAcademicTerms();
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [rows, setRows] = useState<FacultyLoadRow[]>([]);
+  const [summary, setSummary] = useState<ApiResponse["summary"] | null>(null);
+
+  async function loadReport() {
+    if (!termName) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch(
+        `/api/admin/reports/faculty-load?termName=${encodeURIComponent(termName)}`,
+        {
+          cache: "no-store",
+        }
+      );
+
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load faculty load report.");
+      }
+
+      setRows(json.rows || []);
+      setSummary(json.summary || null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load faculty load report.");
+      setRows([]);
+      setSummary(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (termName) {
+      loadReport();
+    }
+  }, [termName]);
+
+  return (
+    <AdminLayout title="Faculty Load Report">
+      <div className="space-y-6">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="w-full max-w-md">
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Academic Term
+              </label>
+              <select
+                value={termName}
+                onChange={(e) => setTermName(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+                disabled={loadingTerms}
+              >
+                <option value="">
+                  {loadingTerms ? "Loading terms..." : "Select Academic Term"}
+                </option>
+                {terms.map((term) => (
+                  <option key={term.name} value={term.name}>
+                    {term.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={loadReport}
+                disabled={!termName || loading}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+              >
+                {loading ? "Loading..." : "Refresh Faculty Load"}
+              </button>
+
+              <a
+                href={`/api/export/faculty-load?termName=${encodeURIComponent(termName || "")}`}
+                className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Download Faculty Load CSV
+              </a>
+            </div>
+          </div>
+        </div>
+
+        {(error || termError) && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error || termError}
+          </div>
+        )}
+
+        {summary && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Summary</h2>
+            <div className="mt-4 flex flex-wrap gap-3 text-sm">
+              <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700">
+                Total Teachers: {summary.totalTeachers}
+              </span>
+              <span className="rounded-full bg-blue-100 px-3 py-1 font-medium text-blue-700">
+                Assigned Sections: {summary.totalAssignedSections}
+              </span>
+              <span className="rounded-full bg-green-100 px-3 py-1 font-medium text-green-700">
+                Assigned Credits: {summary.totalAssignedCredits}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-4">
+          {rows.map((row) => (
+            <div
+              key={row.teacherId}
+              className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+            >
+              <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">
+                    {row.teacherCode} — {row.teacherName}
+                  </h3>
+                  <p className="text-sm text-slate-600">{row.designation || "-"}</p>
+                </div>
+
+                <div className="flex flex-wrap gap-2 text-sm">
+                  <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700">
+                    Sections: {row.totalAssignedSections}
+                  </span>
+                  <span className="rounded-full bg-blue-100 px-3 py-1 font-medium text-blue-700">
+                    Credits: {row.totalAssignedCredits}
+                  </span>
+                  <span
+                    className={`rounded-full px-3 py-1 font-medium ${badgeClass(
+                      row.loadLevel
+                    )}`}
+                    title={row.loadMessage}
+                  >
+                    {row.loadLevel}
+                  </span>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="border-b px-3 py-3 text-left">Course</th>
+                      <th className="border-b px-3 py-3 text-left">Section</th>
+                      <th className="border-b px-3 py-3 text-left">Program</th>
+                      <th className="border-b px-3 py-3 text-left">Assigned Credit</th>
+                      <th className="border-b px-3 py-3 text-left">Batches</th>
+                      <th className="border-b px-3 py-3 text-left">Linked Secondary</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {row.items.map((item) => (
+                      <tr key={item.offeredCourseId}>
+                        <td className="border-b px-3 py-2">
+                          {item.courseCode} — {item.courseTitle}
+                        </td>
+                        <td className="border-b px-3 py-2">{item.section}</td>
+                        <td className="border-b px-3 py-2">{item.programCode}</td>
+                        <td className="border-b px-3 py-2">{item.assignedCredit}</td>
+                        <td className="border-b px-3 py-2">
+                          {item.batchCodes.join(", ") || "-"}
+                        </td>
+                        <td className="border-b px-3 py-2">
+                          {item.linkedSecondaryCourseCodes.join(", ") || "-"}
+                        </td>
+                      </tr>
+                    ))}
+
+                    {row.items.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
+                          No assigned sections found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+
+          {rows.length === 0 && !loading && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm">
+              No confirmed faculty load data found for the selected term.
+            </div>
+          )}
+        </div>
+      </div>
+    </AdminLayout>
+  );
+}
+
+
+===== FILE: src\app\admin\schedule\page-client.tsx =====
+
+"use client";
+
+import { useState } from "react";
+import AdminLayout from "@/components/admin-layout";
+import ProgramTermSelector from "@/components/program-term-selector";
+import { useAcademicCatalogPrograms } from "@/hooks/use-academic-catalog-programs";
+import { useAcademicTerms } from "@/hooks/use-academic-terms";
+
+type ScheduleRow = {
+  day: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  startTime: string;
+  endTime: string;
+  room: string;
+  faculty: string;
+  slotType: string;
+};
+
+type ScheduleResponse = {
+  success?: boolean;
+  error?: string;
+  rows?: ScheduleRow[];
+};
+
+export default function SchedulePageClient() {
+  const {
+    programs,
+    programCode,
+    setProgramCode,
+    loadingPrograms,
+    programError,
+  } = useAcademicCatalogPrograms();
+
+  const {
+    terms,
+    termName,
+    setTermName,
+    loadingTerms,
+    termError,
+  } = useAcademicTerms();
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [rows, setRows] = useState<ScheduleRow[]>([]);
+
+  async function handleLoad(e: React.FormEvent) {
+    e.preventDefault();
+
+    setLoading(true);
+    setError("");
+    setRows([]);
+
+    try {
+      const res = await fetch(
+        `/api/schedule-report?programCode=${encodeURIComponent(
+          programCode
+        )}&termName=${encodeURIComponent(termName)}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        }
+      );
+
+      const json: ScheduleResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load schedule.");
+      }
+
+      setRows(json.rows || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load schedule.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const combinedError = error || programError || termError;
+
+  return (
+    <AdminLayout title="Schedule">
+      <div className="space-y-6">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-900">
+            Confirmed schedule
+          </h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Program and term are now selected from dropdowns only.
+          </p>
+        </div>
+
+        <form onSubmit={handleLoad} className="space-y-4">
+          <ProgramTermSelector
+            programs={programs}
+            programCode={programCode}
+            setProgramCode={setProgramCode}
+            loadingPrograms={loadingPrograms}
+            terms={terms}
+            termName={termName}
+            setTermName={setTermName}
+            loadingTerms={loadingTerms}
+          />
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="submit"
+              disabled={loading || !programCode || !termName}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+            >
+              {loading ? "Loading..." : "Load Schedule"}
+            </button>
+
+            <a
+              href={`/api/export/schedule?programCode=${encodeURIComponent(
+                programCode
+              )}&termName=${encodeURIComponent(termName)}`}
+              className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-medium text-white hover:bg-indigo-700"
+            >
+              Download Schedule Excel
+            </a>
+          </div>
+        </form>
+
+        {combinedError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {combinedError}
+          </div>
+        )}
+
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="border-b px-3 py-3 text-left">Day</th>
+                <th className="border-b px-3 py-3 text-left">Course Code</th>
+                <th className="border-b px-3 py-3 text-left">Course Title</th>
+                <th className="border-b px-3 py-3 text-left">Section</th>
+                <th className="border-b px-3 py-3 text-left">Start</th>
+                <th className="border-b px-3 py-3 text-left">End</th>
+                <th className="border-b px-3 py-3 text-left">Room</th>
+                <th className="border-b px-3 py-3 text-left">Faculty</th>
+                <th className="border-b px-3 py-3 text-left">Type</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, idx) => (
+                <tr key={idx}>
+                  <td className="border-b px-3 py-2">{row.day}</td>
+                  <td className="border-b px-3 py-2">{row.courseCode}</td>
+                  <td className="border-b px-3 py-2">{row.courseTitle}</td>
+                  <td className="border-b px-3 py-2">{row.section}</td>
+                  <td className="border-b px-3 py-2">{row.startTime}</td>
+                  <td className="border-b px-3 py-2">{row.endTime}</td>
+                  <td className="border-b px-3 py-2">{row.room}</td>
+                  <td className="border-b px-3 py-2">{row.faculty}</td>
+                  <td className="border-b px-3 py-2">{row.slotType}</td>
+                </tr>
+              ))}
+
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                    No schedule loaded yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </AdminLayout>
+  );
+}
+
+
+===== FILE: src\app\api\export\faculty-load\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import {
+  getFacultyLoadLevel,
+  getFacultyLoadMessage,
+} from "@/lib/faculty-assignment-policy";
+
+function csvEscape(value: string | number | null | undefined) {
+  const text = String(value ?? "");
+  if (text.includes(",") || text.includes('"') || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+export async function GET(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const termName = String(searchParams.get("termName") || "").trim().toUpperCase();
+
+    if (!termName) {
+      return NextResponse.json(
+        { error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: { name: termName },
+      select: { id: true, name: true },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const assignments = await prisma.offered_course_teachers.findMany({
+      where: {
+        offered_courses: {
+          primary_offered_course_id: null,
+          offerings: {
+            academic_term_id: term.id,
+            status: "CONFIRMED",
+          },
+        },
+      },
+      orderBy: [
+        { teacher_id: "asc" },
+        { offered_course_id: "asc" },
+      ],
+      include: {
+        teachers: true,
+        offered_courses: {
+          include: {
+            master_courses: {
+              include: {
+                program: true,
+              },
+            },
+            offered_course_batches: {
+              include: {
+                batches: true,
+              },
+            },
+            secondary_offered_courses: {
+              include: {
+                master_courses: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const headers = [
+      "Teacher Code",
+      "Teacher Name",
+      "Designation",
+      "Course Code",
+      "Course Title",
+      "Section",
+      "Program",
+      "Assigned Credit",
+      "Batches",
+      "Linked Secondary Courses",
+      "Load Level",
+      "Load Message",
+    ];
+
+    const teacherCreditMap = new Map<number, number>();
+    for (const row of assignments) {
+      teacherCreditMap.set(
+        row.teacher_id,
+        (teacherCreditMap.get(row.teacher_id) || 0) + Number(row.assigned_credit || 0)
+      );
+    }
+
+    const lines = [headers.map(csvEscape).join(",")];
+
+    for (const row of assignments) {
+      const totalAssignedCredits = teacherCreditMap.get(row.teacher_id) || 0;
+
+      lines.push(
+        [
+          row.teachers.teacher_code,
+          row.teachers.full_name,
+          row.teachers.designation || "-",
+          row.offered_courses.master_courses.course_code,
+          row.offered_courses.master_courses.course_title,
+          row.offered_courses.section,
+          row.offered_courses.master_courses.program.short_name,
+          Number(row.assigned_credit || 0),
+          row.offered_courses.offered_course_batches
+            .map((x) => x.batches.batch_code)
+            .join(", "),
+          row.offered_courses.secondary_offered_courses
+            .map((secondary) => secondary.master_courses.course_code)
+            .join(", "),
+          getFacultyLoadLevel(totalAssignedCredits),
+          getFacultyLoadMessage(totalAssignedCredits),
+        ]
+          .map(csvEscape)
+          .join(",")
+      );
+    }
+
+    return new NextResponse(lines.join("\n"), {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="faculty_load_${term.name.replace(/\s+/g, "_")}.csv"`,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      { error: "Failed to export faculty load report." },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\export\offering-report\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import ExcelJS from "exceljs";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import {
+  autoWidth,
+  styleAllBorders,
+  styleHeaderRow,
+  styleTitleRow,
+  workbookToBuffer,
+} from "@/lib/excel-export";
+
+export const runtime = "nodejs";
+
+function normalizeTermName(value: string) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function normalizeSeason(season: string): string {
+  const s = season.trim().toLowerCase();
+  if (s === "spring") return "SPRING";
+  if (s === "summer") return "SUMMER";
+  if (s === "fall") return "FALL";
+  return season.trim().toUpperCase();
+}
+
+function buildTermName(season: string, year: string) {
+  return `${normalizeSeason(season)} ${year.trim()}`;
+}
+
+function getRoomText(room: { room_code: string | null } | null) {
+  return room?.room_code || "-";
+}
+
+export async function GET(request: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const { searchParams } = new URL(request.url);
+
+    const termNameParam = normalizeTermName(searchParams.get("termName") || "");
+    const season = String(searchParams.get("season") || "").trim();
+    const year = String(searchParams.get("year") || "").trim();
+    const status = String(searchParams.get("status") || "").trim().toUpperCase();
+
+    const termName =
+      termNameParam || (season && year ? normalizeTermName(buildTermName(season, year)) : "");
+
+    if (!termName) {
+      return NextResponse.json(
+        { error: "termName is required. Example: ?termName=SUMMER%202026" },
+        { status: 400 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: {
+        name: termName,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: `Academic term ${termName} was not found.` },
+        { status: 404 }
+      );
+    }
+
+    const offeredCourses = await prisma.offered_courses.findMany({
+      where: {
+        primary_offered_course_id: null,
+        offerings: {
+          academic_term_id: term.id,
+          ...(status ? { status } : {}),
+        },
+      },
+      include: {
+        offerings: {
+          include: {
+            programs: {
+              include: {
+                departments: true,
+              },
+            },
+            academic_terms: true,
+          },
+        },
+        master_courses: {
+          include: {
+            program: true,
+          },
+        },
+        offered_course_batches: {
+          include: {
+            batches: true,
+          },
+        },
+        offered_course_slots: {
+          include: {
+            rooms: true,
+          },
+          orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+        },
+        offered_course_teachers: {
+          include: {
+            teachers: true,
+          },
+        },
+        secondary_offered_courses: {
+          include: {
+            master_courses: {
+              include: {
+                program: true,
+              },
+            },
+            offered_course_batches: {
+              include: {
+                batches: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [
+        { offering_id: "asc" },
+        { section: "asc" },
+        { id: "asc" },
+      ],
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "UniFlow Academic Planner";
+    workbook.created = new Date();
+
+    const ws = workbook.addWorksheet("Offering Report");
+
+    ws.getCell("A1").value = `Offering Report - ${term.name}`;
+    styleTitleRow(ws.getRow(1));
+
+    ws.getCell("A2").value = status ? `Status Filter: ${status}` : "Status Filter: ALL";
+
+    ws.addRow([]);
+
+    const headerRowNumber = 4;
+
+    ws.addRow([
+      "SL",
+      "Offering Status",
+      "Primary Program",
+      "Course Code",
+      "Course Title",
+      "Section",
+      "Credit",
+      "Batches",
+      "Faculty",
+      "Schedule",
+      "Co-offered Courses",
+      "Co-offered Batches",
+    ]);
+
+    styleHeaderRow(ws.getRow(headerRowNumber));
+
+    offeredCourses.forEach((offeredCourse, index) => {
+      const primaryCourse = offeredCourse.master_courses;
+
+      const batchCodes = offeredCourse.offered_course_batches
+        .map((row) => row.batches.batch_code)
+        .join(", ");
+
+      const facultyText =
+        offeredCourse.offered_course_teachers.length > 0
+          ? offeredCourse.offered_course_teachers
+              .map((row) =>
+                row.teachers
+                  ? `${row.teachers.teacher_code} - ${row.teachers.full_name}`
+                  : "-"
+              )
+              .join(", ")
+          : "-";
+
+      const scheduleText =
+        offeredCourse.offered_course_slots.length > 0
+          ? offeredCourse.offered_course_slots
+              .map(
+                (slot) =>
+                  `${slot.day_of_week} ${slot.start_time}-${slot.end_time} | ${getRoomText(slot.rooms)}`
+              )
+              .join(" || ")
+          : "-";
+
+      const coofferedCourses =
+        offeredCourse.secondary_offered_courses.length > 0
+          ? offeredCourse.secondary_offered_courses
+              .map(
+                (secondary) =>
+                  `${secondary.master_courses.program.short_name} ${secondary.master_courses.course_code} Sec-${secondary.section}`
+              )
+              .join(", ")
+          : "-";
+
+      const coofferedBatches =
+        offeredCourse.secondary_offered_courses.length > 0
+          ? [
+              ...new Set(
+                offeredCourse.secondary_offered_courses.flatMap((secondary) =>
+                  secondary.offered_course_batches.map(
+                    (row) => row.batches.batch_code
+                  )
+                )
+              ),
+            ].join(", ")
+          : "-";
+
+      ws.addRow([
+        index + 1,
+        offeredCourse.offerings.status,
+        primaryCourse.program.short_name,
+        primaryCourse.course_code,
+        primaryCourse.course_title,
+        offeredCourse.section,
+        Number(primaryCourse.credit || 0),
+        batchCodes || "-",
+        facultyText,
+        scheduleText,
+        coofferedCourses,
+        coofferedBatches,
+      ]);
+    });
+
+    if (offeredCourses.length === 0) {
+      ws.addRow([
+        "-",
+        "-",
+        "-",
+        "-",
+        "No offered courses found for this term.",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+      ]);
+    }
+
+    styleAllBorders(ws, headerRowNumber, headerRowNumber + Math.max(offeredCourses.length, 1), 12);
+    autoWidth(ws, [8, 22, 20, 18, 40, 12, 10, 22, 36, 42, 38, 26]);
+
+    const buffer = await workbookToBuffer(workbook);
+
+    return new NextResponse(buffer, {
+      status: 200,
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="offering_report_${term.name.replace(
+          /\s+/g,
+          "_"
+        )}.xlsx"`,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to export offering report.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\export\faculty-routine\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import ExcelJS from "exceljs";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import {
+  autoWidth,
+  styleAllBorders,
+  styleHeaderRow,
+  styleTitleRow,
+  workbookToBuffer,
+} from "@/lib/excel-export";
+
+export const runtime = "nodejs";
+
+const DAYS = ["THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY", "MONDAY"];
+
+function normalizeTermName(value: string) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function normalizeSeason(season: string): string {
+  const s = season.trim().toLowerCase();
+  if (s === "spring") return "SPRING";
+  if (s === "summer") return "SUMMER";
+  if (s === "fall") return "FALL";
+  return season.trim().toUpperCase();
+}
+
+function buildTermName(season: string, year: string) {
+  return `${normalizeSeason(season)} ${year.trim()}`;
+}
+
+function safeWorksheetName(name: string) {
+  const cleaned = String(name || "Faculty")
+    .replace(/[\\/?*[\]:]/g, "-")
+    .slice(0, 31);
+
+  return cleaned || "Faculty";
+}
+
+function getRoomText(room: { room_code: string | null } | null) {
+  return room?.room_code || "-";
+}
+
+export async function GET(request: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const { searchParams } = new URL(request.url);
+
+    const termNameParam = normalizeTermName(searchParams.get("termName") || "");
+    const season = String(searchParams.get("season") || "").trim();
+    const year = String(searchParams.get("year") || "").trim();
+
+    const teacherIdRaw = String(
+      searchParams.get("teacherId") || searchParams.get("facultyId") || ""
+    ).trim();
+
+    const teacherId = teacherIdRaw ? Number(teacherIdRaw) : null;
+
+    const termName =
+      termNameParam || (season && year ? normalizeTermName(buildTermName(season, year)) : "");
+
+    if (!termName) {
+      return NextResponse.json(
+        { error: "termName is required. Example: ?termName=SUMMER%202026" },
+        { status: 400 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: {
+        name: termName,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: `Academic term ${termName} was not found.` },
+        { status: 404 }
+      );
+    }
+
+    const teachers = await prisma.teachers.findMany({
+      where: {
+        is_active: true,
+        ...(teacherId ? { id: teacherId } : {}),
+      },
+      include: {
+        departments: true,
+      },
+      orderBy: [{ teacher_code: "asc" }],
+    });
+
+    if (teachers.length === 0) {
+      return NextResponse.json(
+        { error: "No active faculty found for this export." },
+        { status: 404 }
+      );
+    }
+
+    const assignments = await prisma.offered_course_teachers.findMany({
+      where: {
+        ...(teacherId ? { teacher_id: teacherId } : {}),
+        offered_courses: {
+          offerings: {
+            academic_term_id: term.id,
+          },
+        },
+      },
+      include: {
+        teachers: {
+          include: {
+            departments: true,
+          },
+        },
+        offered_courses: {
+          include: {
+            master_courses: {
+              include: {
+                program: true,
+              },
+            },
+            offered_course_batches: {
+              include: {
+                batches: true,
+              },
+            },
+            offered_course_slots: {
+              include: {
+                rooms: true,
+              },
+              orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+            },
+            secondary_offered_courses: {
+              include: {
+                master_courses: {
+                  include: {
+                    program: true,
+                  },
+                },
+                offered_course_batches: {
+                  include: {
+                    batches: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ teacher_id: "asc" }, { offered_course_id: "asc" }],
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "UniFlow Academic Planner";
+    workbook.created = new Date();
+
+    for (const teacher of teachers) {
+      const teacherAssignments = assignments.filter(
+        (assignment) => assignment.teacher_id === teacher.id
+      );
+
+      const ws = workbook.addWorksheet(
+        safeWorksheetName(`${teacher.teacher_code}-${teacher.id}`)
+      );
+
+      let rowNo = 1;
+
+      ws.getCell(`A${rowNo}`).value = `Faculty Routine - ${teacher.teacher_code} - ${teacher.full_name} - ${term.name}`;
+      styleTitleRow(ws.getRow(rowNo));
+      rowNo += 2;
+
+      ws.getCell(`A${rowNo}`).value = `Designation: ${teacher.designation || "-"}`;
+      rowNo += 1;
+
+      ws.getCell(`A${rowNo}`).value = `Department: ${
+        teacher.departments?.short_name || "-"
+      }`;
+      rowNo += 1;
+
+      ws.getCell(`A${rowNo}`).value = `Phone: ${teacher.phone || "-"}`;
+      rowNo += 1;
+
+      ws.getCell(`A${rowNo}`).value = `Email: ${teacher.email || "-"}`;
+      rowNo += 2;
+
+      for (const day of DAYS) {
+        ws.getCell(`A${rowNo}`).value = day;
+        ws.getRow(rowNo).font = { bold: true, size: 12 };
+        rowNo += 1;
+
+        ws.addRow(["Time", "Course Codes", "Title", "Section", "Batch", "Room"]);
+        styleHeaderRow(ws.getRow(rowNo));
+
+        const headerRow = rowNo;
+        rowNo += 1;
+
+        const rows = teacherAssignments.flatMap((assignment) => {
+          const offeredCourse = assignment.offered_courses;
+          const course = offeredCourse.master_courses;
+
+          const secondaryCodes = offeredCourse.secondary_offered_courses.map(
+            (secondary) => secondary.master_courses.course_code
+          );
+
+          const displayCourseCodes =
+            secondaryCodes.length > 0
+              ? [course.course_code, ...secondaryCodes].join(" / ")
+              : course.course_code;
+
+          const batchCodes = [
+            ...new Set([
+              ...offeredCourse.offered_course_batches.map(
+                (row) => row.batches.batch_code
+              ),
+              ...offeredCourse.secondary_offered_courses.flatMap((secondary) =>
+                secondary.offered_course_batches.map(
+                  (row) => row.batches.batch_code
+                )
+              ),
+            ]),
+          ].join(", ");
+
+          return offeredCourse.offered_course_slots
+            .filter((slot) => slot.day_of_week === day)
+            .map((slot) => ({
+              time: `${slot.start_time}-${slot.end_time}`,
+              courseCodes: displayCourseCodes,
+              title: course.course_title,
+              section: offeredCourse.section,
+              batch: batchCodes || "-",
+              room: getRoomText(slot.rooms),
+            }));
+        });
+
+        rows.sort((a, b) => a.time.localeCompare(b.time));
+
+        if (rows.length === 0) {
+          ws.addRow(["-", "-", "No class", "-", "-", "-"]);
+          rowNo += 1;
+        } else {
+          for (const item of rows) {
+            ws.addRow([
+              item.time,
+              item.courseCodes,
+              item.title,
+              item.section,
+              item.batch,
+              item.room,
+            ]);
+            rowNo += 1;
+          }
+        }
+
+        styleAllBorders(ws, headerRow, rowNo - 1, 6);
+        rowNo += 1;
+      }
+
+      autoWidth(ws, [18, 24, 38, 12, 22, 14]);
+    }
+
+    const buffer = await workbookToBuffer(workbook);
+
+    return new NextResponse(buffer, {
+      status: 200,
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="faculty_routine_${term.name.replace(
+          /\s+/g,
+          "_"
+        )}.xlsx"`,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to export faculty routine.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\admin\offering-summary\route.ts =====
+
+NOT PRESENT
+
+
+===== FILE: src\app\api\admin\confirmed-schedule\route.ts =====
+
+NOT PRESENT
+
+
+===== FILE: src\app\api\admin\batch-routine-report\route.ts =====
+
+NOT PRESENT
+
+
+===== FILE: src\app\api\admin\room-schedule-report\route.ts =====
+
+NOT PRESENT
+
+
+===== FILE: src\lib\offering-status.ts =====
+
+export const OFFERING_STATUS = {
+  DRAFT: "DRAFT",
+  BUFFER_READY: "BUFFER_READY",
+  FACULTY_CHOICE_BUFFER: "FACULTY_CHOICE_BUFFER",
+  FACULTY_CHOICE_FINALIZED: "FACULTY_CHOICE_FINALIZED",
+  CONFIRMED: "CONFIRMED",
+} as const;
+
+export type OfferingStatus =
+  (typeof OFFERING_STATUS)[keyof typeof OFFERING_STATUS];
+
+export function canEditStructure(status: string) {
+  const clean = String(status || "").trim().toUpperCase();
+
+  return (
+    clean === OFFERING_STATUS.DRAFT ||
+    clean === OFFERING_STATUS.BUFFER_READY
+  );
+}
+
+export function canDeleteOffering(status: string) {
+  const clean = String(status || "").trim().toUpperCase();
+  return clean === OFFERING_STATUS.DRAFT;
+}
+
+/**
+ * Backward-compatible alias.
+ * Some older routes still import canDelete.
+ */
+export function canDelete(status: string) {
+  return canDeleteOffering(status);
+}
+
+export function canModifySlots(status: string) {
+  const clean = String(status || "").trim().toUpperCase();
+
+  return (
+    clean === OFFERING_STATUS.DRAFT ||
+    clean === OFFERING_STATUS.BUFFER_READY
+  );
+}
+
+export function isFacultyChoiceStage(status: string) {
+  const clean = String(status || "").trim().toUpperCase();
+
+  return (
+    clean === OFFERING_STATUS.FACULTY_CHOICE_BUFFER ||
+    clean === OFFERING_STATUS.FACULTY_CHOICE_FINALIZED
+  );
+}
+
+export function isFullyLocked(status: string) {
+  const clean = String(status || "").trim().toUpperCase();
+  return clean === OFFERING_STATUS.CONFIRMED;
+}
+
+export function canTransitionOfferingStatus(
+  currentStatus: string,
+  targetStatus: string
+) {
+  const current = String(currentStatus || "").trim().toUpperCase();
+  const target = String(targetStatus || "").trim().toUpperCase();
+
+  const allowed: Record<string, string[]> = {
+    [OFFERING_STATUS.DRAFT]: [OFFERING_STATUS.BUFFER_READY],
+    [OFFERING_STATUS.BUFFER_READY]: [
+      OFFERING_STATUS.DRAFT,
+      OFFERING_STATUS.FACULTY_CHOICE_BUFFER,
+      OFFERING_STATUS.CONFIRMED,
+    ],
+    [OFFERING_STATUS.FACULTY_CHOICE_BUFFER]: [
+      OFFERING_STATUS.BUFFER_READY,
+      OFFERING_STATUS.FACULTY_CHOICE_FINALIZED,
+    ],
+    [OFFERING_STATUS.FACULTY_CHOICE_FINALIZED]: [
+      OFFERING_STATUS.FACULTY_CHOICE_BUFFER,
+      OFFERING_STATUS.CONFIRMED,
+    ],
+    [OFFERING_STATUS.CONFIRMED]: [],
+  };
+
+  return allowed[current]?.includes(target) ?? false;
+}
+
+
+===== FILE: src\lib\prisma.ts =====
+
+import { PrismaClient } from "@prisma/client";
+
+declare global {
+  // eslint-disable-next-line no-var
+  var prismaGlobal: PrismaClient | undefined;
+}
+
+export const prisma =
+  global.prismaGlobal ??
+  new PrismaClient({
+    log: ["error", "warn"],
+  });
+
+if (process.env.NODE_ENV !== "production") {
+  global.prismaGlobal = prisma;
+}
+
+
+===== FILE: prisma\schema.prisma =====
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model academic_terms {
+  id                          Int                           @id @default(autoincrement())
+  name                        String                        @unique @db.VarChar(100)
+  year                        Int
+  term_type                   String                        @db.VarChar(30)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  faculty_course_selections   faculty_course_selections[]
+  offerings                   offerings[]
+}
+
+model batch_completed_courses {
+  id                Int             @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int?
+  course_code       String          @db.VarChar(100)
+  course_title      String          @db.VarChar(300)
+  normalized_title  String          @db.VarChar(300)
+  credit            Float
+  grade             String?         @db.VarChar(20)
+  source_student_id String?         @db.VarChar(100)
+  source_file_name  String?         @db.VarChar(300)
+  academic_terms    academic_terms? @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batch_current_registrations {
+  id                Int            @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int
+  course_code       String         @db.VarChar(100)
+  course_title      String         @db.VarChar(300)
+  normalized_title  String         @db.VarChar(300)
+  credit            Float
+  source_student_id String?        @db.VarChar(100)
+  source_file_name  String?        @db.VarChar(300)
+  academic_terms    academic_terms @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches        @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batches {
+  id                          Int                           @id @default(autoincrement())
+  program_id                  Int
+  batch_code                  String                        @db.VarChar(100)
+  admission_term              String?                       @db.VarChar(100)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  programs                    programs                      @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_course_batches      offered_course_batches[]
+
+  @@unique([program_id, batch_code], map: "uq_program_batch")
+}
+
+model departments {
+  id         Int        @id @default(autoincrement())
+  name       String     @unique @db.VarChar(200)
+  short_name String     @unique @db.VarChar(50)
+  programs   programs[]
+  teachers   teachers[]
+}
+
+model master_courses {
+  id               Int               @id @default(autoincrement())
+  program_id       Int
+  course_code      String
+  course_title     String
+  normalized_title String
+  credit           Float
+  course_type      String
+  level_term       String?
+  group_name       String?
+  is_active        Boolean           @default(true)
+  created_at       DateTime          @default(now())
+  curriculum_key   String?
+  updated_at       DateTime          @default(now()) @updatedAt
+  program          programs          @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  offered_courses  offered_courses[]
+
+  @@unique([program_id, course_code])
+  @@unique([curriculum_key, course_code])
+  @@index([curriculum_key])
+}
+
+model offered_course_batches {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  batch_id          Int
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_slots {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  day_of_week       String          @db.VarChar(20)
+  start_time        String          @db.VarChar(10)
+  end_time          String          @db.VarChar(10)
+  room_id           Int
+  slot_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rooms             rooms           @relation(fields: [room_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_teachers {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  assigned_credit   Float
+  load_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_courses {
+  id                        Int                         @id @default(autoincrement())
+  offering_id               Int
+  master_course_id          Int
+  section                   String                      @db.VarChar(20)
+  is_cooffered              Boolean?                    @default(false)
+  primary_offered_course_id Int?
+  notes                     String?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_batches    offered_course_batches[]
+  offered_course_slots      offered_course_slots[]
+  offered_course_teachers   offered_course_teachers[]
+  master_courses            master_courses              @relation(fields: [master_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offerings                 offerings                   @relation(fields: [offering_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+    offered_course_manual_cooffers offered_course_manual_cooffers[]
+  primary_offered_course    offered_courses?            @relation("offered_course_cooffer_links", fields: [primary_offered_course_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  secondary_offered_courses offered_courses[]           @relation("offered_course_cooffer_links")
+
+  @@index([offering_id, section], map: "ix_offered_courses_offering_section")
+  @@index([primary_offered_course_id], map: "ix_offered_courses_primary_offered_course_id")
+}
+
+model offerings {
+  id                  Int               @id @default(autoincrement())
+  academic_term_id    Int
+  program_id          Int
+  prepared_by_user_id Int
+  status              String            @db.VarChar(30)
+  created_at          DateTime?         @default(now()) @db.Timestamptz(6)
+  offered_courses     offered_courses[]
+  academic_terms      academic_terms    @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users               users             @relation(fields: [prepared_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  programs            programs          @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_course_selections {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  academic_term_id  Int
+  priority_order    Int?
+  status            String          @db.VarChar(30)
+  selected_at       DateTime?       @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?       @default(now()) @updatedAt @db.Timestamptz(6)
+  confirmed_at      DateTime?       @db.Timestamptz(6)
+  academic_terms    academic_terms  @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([offered_course_id, teacher_id], map: "uq_faculty_course_selection")
+  @@index([teacher_id], map: "ix_faculty_course_selections_teacher_id")
+  @@index([academic_term_id], map: "ix_faculty_course_selections_term_id")
+  @@index([status], map: "ix_faculty_course_selections_status")
+  @@index([teacher_id, academic_term_id], map: "ix_faculty_course_selections_teacher_term")
+}
+
+model programs {
+  id             Int              @id @default(autoincrement())
+  department_id  Int
+  name           String           @db.VarChar(200)
+  short_name     String           @db.VarChar(50)
+  batches        batches[]
+  master_courses master_courses[]
+  offerings      offerings[]
+  departments    departments      @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([department_id, name], map: "uq_program_department_name")
+}
+
+model rooms {
+  id                   Int                    @id @default(autoincrement())
+  room_code            String                 @unique @db.VarChar(100)
+  room_type            String                 @db.VarChar(50)
+  capacity             Int?
+  is_active            Boolean?
+  offered_course_slots offered_course_slots[]
+}
+
+model student_report_logs {
+  id                        Int       @id @default(autoincrement())
+  student_id                String    @db.VarChar(100)
+  student_name              String?   @db.VarChar(200)
+  uploaded_by_user_id       Int
+  transcript_filename       String?   @db.VarChar(300)
+  registration_filename     String?   @db.VarChar(300)
+  latest_completed_semester String?   @db.VarChar(100)
+  registration_semester     String?   @db.VarChar(100)
+  total_earned_credits      Float?
+  gpa                       Float?
+  generated_excel_path      String?   @db.VarChar(500)
+  created_at                DateTime? @default(now()) @db.Timestamptz(6)
+  users                     users     @relation(fields: [uploaded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([id], map: "ix_student_report_logs_id")
+  @@index([student_id], map: "ix_student_report_logs_student_id")
+}
+
+model teachers {
+  id                        Int                         @id @default(autoincrement())
+  department_id             Int
+  teacher_code              String                      @unique @db.VarChar(100)
+  full_name                 String                      @db.VarChar(200)
+  designation               String?                     @db.VarChar(150)
+  email                     String?                     @db.VarChar(200)
+  phone                     String?                     @db.VarChar(50)
+  seniority_level           Int?
+  is_active                 Boolean?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_teachers   offered_course_teachers[]
+  departments               departments                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                     users[]
+
+  @@index([department_id], map: "ix_teachers_department_id")
+  @@index([seniority_level], map: "ix_teachers_seniority_level")
+}
+
+model users {
+  id                  Int                   @id @default(autoincrement())
+  username            String                @unique(map: "ix_users_username") @db.VarChar(100)
+  full_name           String                @db.VarChar(200)
+  password_hash       String
+  role                String                @db.VarChar(50)
+  is_active           Boolean?
+  teacher_id          Int?
+  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  offerings           offerings[]
+  student_report_logs student_report_logs[]
+  teachers            teachers?             @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  // ? ADD THIS LINE ONLY
+  faculty_login_sessions FacultyLoginSession[]
+
+  @@index([id], map: "ix_users_id")
+}
+
+model academic_catalog_entries {
+  id                 Int      @id @default(autoincrement())
+  department_code    String
+  department_name    String
+  program_code       String   @unique
+  program_title      String
+  program_type       String
+  study_shift        String
+  curriculum_version String
+  student_id_suffix  String?  @unique
+  display_label      String
+  is_active          Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @default(now()) @updatedAt
+  curriculum_key     String?
+
+  @@index([department_code])
+  @@index([program_type])
+  @@index([study_shift])
+  @@index([curriculum_version])
+  @@index([curriculum_key])
+}
+model SystemSetting {
+  id               Int      @id @default(autoincrement())
+  settingKey       String   @unique
+  settingValue     String
+  updatedByUserId  Int?
+  updatedAt        DateTime @updatedAt
+}
+
+model FacultyLoginSession {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  sessionToken  String   @unique
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+
+  user          users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model offered_course_manual_cooffers {
+  id                  Int             @id @default(autoincrement())
+  offered_course_id   Int
+  target_program_code String?         @db.VarChar(100)
+  manual_course_code  String          @db.VarChar(100)
+  note                String?         @db.VarChar(300)
+  created_at          DateTime        @default(now())
+  offered_courses     offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([offered_course_id], map: "ix_offered_course_manual_cooffers_offered_course_id")
+  @@index([target_program_code], map: "ix_offered_course_manual_cooffers_target_program_code")
+}
+model faculty_login_sessions {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  teacher_id    Int?
+  session_token String   @unique @db.VarChar(191)
+  created_at    DateTime @default(now())
+  expires_at    DateTime
+  warned_at     DateTime?
+  revoked_at    DateTime?
+
+  @@index([user_id], map: "ix_faculty_login_sessions_user_id")
+  @@index([teacher_id], map: "ix_faculty_login_sessions_teacher_id")
+  @@index([expires_at], map: "ix_faculty_login_sessions_expires_at")
+}
+
+model notifications {
+  id                Int      @id @default(autoincrement())
+  recipient_user_id Int?
+  recipient_teacher_id Int?
+  event_type        String   @db.VarChar(100)
+  title             String   @db.VarChar(200)
+  message           String   @db.Text
+  is_read           Boolean  @default(false)
+  created_by_user_id Int?
+  created_at        DateTime @default(now())
+  read_at           DateTime?
+
+  @@index([recipient_user_id], map: "ix_notifications_recipient_user_id")
+  @@index([recipient_teacher_id], map: "ix_notifications_recipient_teacher_id")
+  @@index([event_type], map: "ix_notifications_event_type")
+  @@index([is_read], map: "ix_notifications_is_read")
+}

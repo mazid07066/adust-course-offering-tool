@@ -242,6 +242,18 @@ if (!termName) {
       preassignedRows.map((row) => row.offered_course_id)
     );
 
+    const finalMarker = await prisma.systemSetting.findUnique({
+  where: {
+    settingKey: `FACULTY_FINALIZED_TERM_${term.id}_TEACHER_${teacherId}`,
+  },
+  select: {
+    settingValue: true,
+  },
+});
+
+const hasFinalizedMarker = finalMarker?.settingValue === "true";
+
+
     const bufferedOrFinalSelections = selections.filter(
       (row) => row.status === "BUFFER" || row.status === "FINAL"
     );
@@ -508,7 +520,8 @@ if (!termName) {
         : null,
       canEdit: editAccess.allowed,
       editMessage: editAccess.allowed ? "" : editAccess.message,
-      hasFinalized: selections.some((row) => row.status === "FINAL"),
+      hasFinalized:
+  hasFinalizedMarker || selections.some((row) => row.status === "FINAL"),
       creditPolicy,
       preassignedCredits,
       chosenCredits,

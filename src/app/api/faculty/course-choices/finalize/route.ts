@@ -3,10 +3,16 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { requireFacultyApi } from "@/lib/auth-guard";
 import { canFacultyEdit } from "@/lib/faculty-access";
+import { getFacultyLevelCreditPolicy } from "@/lib/system-settings";
 import {
-  getFacultyLevelCreditPolicy,
-  getActiveFacultySeniorityLevel,
-} from "@/lib/system-settings";
+  revokeFacultySession,
+  sendFacultyTurnNotification,
+} from "@/lib/faculty-session";
+import { getCurrentActiveFacultyTurn } from "@/lib/faculty-turn";
+
+function finalizedMarkerKey(termId: number, teacherId: number) {
+  return `FACULTY_FINALIZED_TERM_${termId}_TEACHER_${teacherId}`;
+}
 
 export async function POST(req: NextRequest) {
   const guard = await requireFacultyApi();
@@ -67,19 +73,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const activeSeniorityLevel = await getActiveFacultySeniorityLevel();
-    const seniorityAllowed =
-      !activeSeniorityLevel ||
-      teacher.seniority_level === null ||
-      teacher.seniority_level === activeSeniorityLevel;
-
-    if (!seniorityAllowed) {
-      return NextResponse.json(
-        { error: "Your seniority level is not active for faculty choice right now." },
-        { status: 403 }
-      );
-    }
-
     const term = await prisma.academic_terms.findFirst({
       where: { name: termName },
       select: { id: true, name: true },
@@ -92,46 +85,89 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const currentBufferSelections = await prisma.faculty_course_selections.findMany({
+    const finalMarker = await prisma.systemSetting.findUnique({
       where: {
-        teacher_id: teacher.id,
-        academic_term_id: term.id,
-        status: "BUFFER",
+        settingKey: finalizedMarkerKey(term.id, teacher.id),
       },
-      include: {
-        offered_courses: {
-          include: {
-            master_courses: {
-              select: {
-                credit: true,
-              },
-            },
-          },
-        },
+      select: {
+        settingValue: true,
       },
     });
 
-    const preassignedAssignments = await prisma.offered_course_teachers.findMany({
-      where: {
-        teacher_id: teacher.id,
-        offered_courses: {
-          offerings: {
-            academic_term_id: term.id,
-          },
+    if (finalMarker?.settingValue === "true") {
+      return NextResponse.json(
+        {
+          error:
+            "Final submission already completed. Reopen is required before editing.",
         },
-      },
-      include: {
-        offered_courses: {
-          include: {
-            master_courses: {
-              select: {
-                credit: true,
+        { status: 400 }
+      );
+    }
+
+    const currentBufferSelections =
+      await prisma.faculty_course_selections.findMany({
+        where: {
+          teacher_id: teacher.id,
+          academic_term_id: term.id,
+          status: "BUFFER",
+        },
+        include: {
+          offered_courses: {
+            include: {
+              master_courses: {
+                select: {
+                  credit: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      });
+
+    const existingFinalSelections =
+      await prisma.faculty_course_selections.findMany({
+        where: {
+          teacher_id: teacher.id,
+          academic_term_id: term.id,
+          status: "FINAL",
+        },
+        select: {
+          id: true,
+        },
+      });
+
+    if (existingFinalSelections.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Final submission already completed. Reopen is required before editing.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const preassignedAssignments =
+      await prisma.offered_course_teachers.findMany({
+        where: {
+          teacher_id: teacher.id,
+          offered_courses: {
+            offerings: {
+              academic_term_id: term.id,
+            },
+          },
+        },
+        include: {
+          offered_courses: {
+            include: {
+              master_courses: {
+                select: {
+                  credit: true,
+                },
+              },
+            },
+          },
+        },
+      });
 
     const preassignedCredits = Array.from(
       new Map(
@@ -153,7 +189,9 @@ export async function POST(req: NextRequest) {
 
     const totalCredits = Number((preassignedCredits + selectedCredits).toFixed(2));
 
-    const creditPolicy = await getFacultyLevelCreditPolicy(teacher.seniority_level);
+    const creditPolicy = await getFacultyLevelCreditPolicy(
+      teacher.seniority_level
+    );
 
     if (
       creditPolicy?.minCredits !== null &&
@@ -181,30 +219,71 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await prisma.faculty_course_selections.updateMany({
-      where: {
-        teacher_id: teacher.id,
-        academic_term_id: term.id,
-        status: "BUFFER",
-      },
-      data: {
-        status: "FINAL",
-        confirmed_at: new Date(),
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.faculty_course_selections.updateMany({
+        where: {
+          teacher_id: teacher.id,
+          academic_term_id: term.id,
+          status: "BUFFER",
+        },
+        data: {
+          status: "FINAL",
+          confirmed_at: new Date(),
+        },
+      });
+
+      await tx.systemSetting.upsert({
+        where: {
+          settingKey: finalizedMarkerKey(term.id, teacher.id),
+        },
+        update: {
+          settingValue: "true",
+        },
+        create: {
+          settingKey: finalizedMarkerKey(term.id, teacher.id),
+          settingValue: "true",
+        },
+      });
     });
+
+    await revokeFacultySession(sessionToken);
+
+    const nextTurn = await getCurrentActiveFacultyTurn();
+
+    if (nextTurn?.teacherId && nextTurn.teacherId !== teacher.id) {
+      await sendFacultyTurnNotification(nextTurn.teacherId);
+    }
 
     return NextResponse.json({
       success: true,
-      message: "Final choice submission completed successfully.",
+      message:
+        currentBufferSelections.length > 0
+          ? "Final choice submission completed successfully. Your turn has been closed and the next faculty may proceed."
+          : "Final submission completed with preassigned load only. Your turn has been closed and the next faculty may proceed.",
       preassignedCredits,
       selectedCredits,
       totalCredits,
       creditPolicy,
+      finalizedWithoutChoiceRows: currentBufferSelections.length === 0,
+      nextTurn: nextTurn
+        ? {
+            teacherId: nextTurn.teacherId,
+            teacherCode: nextTurn.teacherCode,
+            fullName: nextTurn.fullName,
+            seniorityLevel: nextTurn.seniorityLevel,
+          }
+        : null,
     });
   } catch (error) {
     console.error(error);
+
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to finalize faculty choices." },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to finalize faculty choices.",
+      },
       { status: 500 }
     );
   }

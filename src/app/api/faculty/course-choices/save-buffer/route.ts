@@ -3,10 +3,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { requireFacultyApi } from "@/lib/auth-guard";
 import { canFacultyEdit } from "@/lib/faculty-access";
-import {
-  getFacultyLevelCreditPolicy,
-  getActiveFacultySeniorityLevel,
-} from "@/lib/system-settings";
+import { getFacultyLevelCreditPolicy } from "@/lib/system-settings";
 
 const FACULTY_EDITABLE_OFFERING_STATUS = "FACULTY_CHOICE_BUFFER";
 
@@ -20,6 +17,10 @@ function overlaps(
 ) {
   if (a.day_of_week.toUpperCase() !== b.day_of_week.toUpperCase()) return false;
   return a.start_time < b.end_time && b.start_time < a.end_time;
+}
+
+function finalizedMarkerKey(termId: number, teacherId: number) {
+  return `FACULTY_FINALIZED_TERM_${termId}_TEACHER_${teacherId}`;
 }
 
 export async function POST(req: NextRequest) {
@@ -84,19 +85,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const activeSeniorityLevel = await getActiveFacultySeniorityLevel();
-    const seniorityAllowed =
-      !activeSeniorityLevel ||
-      teacher.seniority_level === null ||
-      teacher.seniority_level === activeSeniorityLevel;
-
-    if (!seniorityAllowed) {
-      return NextResponse.json(
-        { error: "Your seniority level is not active for faculty choice right now." },
-        { status: 403 }
-      );
-    }
-
     const term = await prisma.academic_terms.findFirst({
       where: { name: termName },
       select: { id: true, name: true },
@@ -106,6 +94,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "Academic term not found." },
         { status: 404 }
+      );
+    }
+
+    const finalMarker = await prisma.systemSetting.findUnique({
+      where: {
+        settingKey: finalizedMarkerKey(term.id, teacher.id),
+      },
+      select: {
+        settingValue: true,
+      },
+    });
+
+    if (finalMarker?.settingValue === "true") {
+      return NextResponse.json(
+        {
+          error:
+            "Final submission already completed. Reopen is required before editing.",
+        },
+        { status: 400 }
       );
     }
 
@@ -120,7 +127,10 @@ export async function POST(req: NextRequest) {
 
     if (existingFinal) {
       return NextResponse.json(
-        { error: "Final submission already completed. Reopen is required before editing." },
+        {
+          error:
+            "Final submission already completed. Reopen is required before editing.",
+        },
         { status: 400 }
       );
     }
@@ -184,7 +194,9 @@ export async function POST(req: NextRequest) {
     }
 
     const forbiddenPreassignedRows = chosenCourses.filter((course) => {
-      const assignedTeacherIds = course.offered_course_teachers.map((x) => x.teacher_id);
+      const assignedTeacherIds = course.offered_course_teachers.map(
+        (x) => x.teacher_id
+      );
       if (!assignedTeacherIds.length) return false;
       return !assignedTeacherIds.includes(teacher.id);
     });
@@ -200,7 +212,9 @@ export async function POST(req: NextRequest) {
     }
 
     const forbiddenOwnPreassignedRows = chosenCourses.filter((course) => {
-      const assignedTeacherIds = course.offered_course_teachers.map((x) => x.teacher_id);
+      const assignedTeacherIds = course.offered_course_teachers.map(
+        (x) => x.teacher_id
+      );
       return assignedTeacherIds.includes(teacher.id);
     });
 
@@ -230,34 +244,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const preassignedAssignments = await prisma.offered_course_teachers.findMany({
-      where: {
-        teacher_id: teacher.id,
-        offered_courses: {
-          offerings: {
-            academic_term_id: term.id,
-          },
-        },
-      },
-      include: {
-        offered_courses: {
-          include: {
-            master_courses: {
-              select: {
-                credit: true,
-              },
-            },
-            offered_course_slots: {
-              select: {
-                day_of_week: true,
-                start_time: true,
-                end_time: true,
-              },
+    const preassignedAssignments =
+      await prisma.offered_course_teachers.findMany({
+        where: {
+          teacher_id: teacher.id,
+          offered_courses: {
+            offerings: {
+              academic_term_id: term.id,
             },
           },
         },
-      },
-    });
+        include: {
+          offered_courses: {
+            include: {
+              master_courses: {
+                select: {
+                  credit: true,
+                },
+              },
+              offered_course_slots: {
+                select: {
+                  day_of_week: true,
+                  start_time: true,
+                  end_time: true,
+                },
+              },
+            },
+          },
+        },
+      });
 
     const preassignedCourseIds = new Set(
       preassignedAssignments.map((x) => x.offered_course_id)
@@ -278,9 +293,13 @@ export async function POST(req: NextRequest) {
       ).values()
     ).reduce((sum, credit) => sum + credit, 0);
 
-    const totalSelectedCredits = Number((preassignedCredits + selectedCredits).toFixed(2));
+    const totalSelectedCredits = Number(
+      (preassignedCredits + selectedCredits).toFixed(2)
+    );
 
-    const creditPolicy = await getFacultyLevelCreditPolicy(teacher.seniority_level);
+    const creditPolicy = await getFacultyLevelCreditPolicy(
+      teacher.seniority_level
+    );
 
     if (
       creditPolicy?.maxCredits !== null &&
@@ -295,15 +314,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const occupiedSlots = preassignedAssignments.flatMap((assignment) =>
-      assignment.offered_courses.offered_course_slots
+    const occupiedSlots = preassignedAssignments.flatMap(
+      (assignment) => assignment.offered_courses.offered_course_slots
     );
 
     for (const course of chosenCourses) {
       if (preassignedCourseIds.has(course.id)) continue;
 
       for (const slot of course.offered_course_slots) {
-        const conflict = occupiedSlots.some((occupied) => overlaps(slot, occupied));
+        const conflict = occupiedSlots.some((occupied) =>
+          overlaps(slot, occupied)
+        );
+
         if (conflict) {
           return NextResponse.json(
             {
@@ -355,8 +377,14 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error(error);
+
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to save faculty choice buffer." },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to save faculty choice buffer.",
+      },
       { status: 500 }
     );
   }
