@@ -4,6 +4,10 @@ import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { getCatalogProgramByCode } from "@/lib/academic-catalog";
 import { resolveCanonicalProgram } from "@/lib/canonical-program";
 import { buildDraftSectionGroups } from "@/lib/offering-section-group";
+import { OFFERING_STATUS } from "@/lib/offering-status";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type ProgramCandidate = {
   id: number;
@@ -90,12 +94,17 @@ async function getStrictProgramCandidates(programCode: string): Promise<ProgramC
 }
 
 export async function GET(req: NextRequest) {
-  try {
-    await requireCoordinatorOrAdminApi();
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
 
+  try {
     const { searchParams } = new URL(req.url);
-    const programCode = String(searchParams.get("programCode") || "").trim().toUpperCase();
-    const termName = String(searchParams.get("termName") || "").trim().toUpperCase();
+    const programCode = String(searchParams.get("programCode") || "")
+      .trim()
+      .toUpperCase();
+    const termName = String(searchParams.get("termName") || "SUMMER 2026")
+      .trim()
+      .toUpperCase();
 
     if (!programCode) {
       return NextResponse.json(
@@ -107,21 +116,17 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    if (!termName) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "termName is required.",
-        },
-        { status: 400 }
-      );
-    }
-
     const candidates = await getStrictProgramCandidates(programCode);
 
     const drafts = await prisma.offerings.findMany({
       where: {
-        status: "DRAFT",
+        status: {
+          in: [
+            OFFERING_STATUS.DRAFT,
+            OFFERING_STATUS.BUFFER_READY,
+            OFFERING_STATUS.FACULTY_CHOICE_BUFFER,
+          ],
+        },
         academic_terms: {
           name: termName,
         },
@@ -231,6 +236,8 @@ export async function GET(req: NextRequest) {
       drafts: payload,
     });
   } catch (error) {
+    console.error("Load draft offerings error:", error);
+
     const message =
       error instanceof Error ? error.message : "Failed to load draft offerings.";
 

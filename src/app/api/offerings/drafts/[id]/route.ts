@@ -1,118 +1,166 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
-import { canDelete } from "@/lib/offering-status";
 
-export async function DELETE(
-  _request: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
-  await requireCoordinatorOrAdminApi();
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
+const DELETABLE_STATUSES = new Set([
+  "DRAFT",
+  "BUFFER_READY",
+  "FACULTY_CHOICE_BUFFER",
+]);
+
+type RouteContext = {
+  params: Promise<{
+    id: string;
+  }>;
+};
+
+export async function DELETE(_req: NextRequest, context: RouteContext) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
 
   try {
-    const { id } = await context.params;
-    const offeringId = Number(id);
+    const params = await context.params;
+    const offeringId = Number(params.id);
 
-    if (!offeringId) {
+    if (!offeringId || Number.isNaN(offeringId)) {
       return NextResponse.json(
-        { error: "Invalid offering id." },
+        { ok: false, error: "Valid offering id is required." },
         { status: 400 }
       );
     }
 
-    const offering = await prisma.offerings.findFirst({
-      where: { id: offeringId },
+    const offering = await prisma.offerings.findUnique({
+      where: {
+        id: offeringId,
+      },
       include: {
-        offered_courses: {
-          select: {
-            id: true,
-            primary_offered_course_id: true,
-          },
-        },
+        academic_terms: true,
+        programs: true,
       },
     });
 
     if (!offering) {
       return NextResponse.json(
-        { error: "Draft offering not found." },
+        { ok: false, error: "Draft offering not found." },
         { status: 404 }
       );
     }
 
-    if (!canDelete(offering.status)) {
+    const status = String(offering.status || "").trim().toUpperCase();
+
+    if (!DELETABLE_STATUSES.has(status)) {
       return NextResponse.json(
-        { error: "Only deletable offerings can be deleted." },
+        {
+          ok: false,
+          error: `Offering with status ${offering.status} cannot be deleted from this draft cleanup action.`,
+        },
         { status: 400 }
       );
     }
 
-    const secondaryIds = offering.offered_courses
-      .filter((c) => Boolean(c.primary_offered_course_id))
-      .map((c) => c.id);
-
-    const primaryIds = offering.offered_courses
-      .filter((c) => !c.primary_offered_course_id)
-      .map((c) => c.id);
-
-    const deleteOrder = [...secondaryIds, ...primaryIds];
-
-    if (deleteOrder.length > 0) {
-      await prisma.faculty_course_selections.deleteMany({
+    const result = await prisma.$transaction(async (tx) => {
+      const offeredCourses = await tx.offered_courses.findMany({
         where: {
-          offered_course_id: { in: deleteOrder },
+          offering_id: offeringId,
+        },
+        select: {
+          id: true,
         },
       });
 
-      await prisma.offered_course_slots.deleteMany({
-        where: {
-          offered_course_id: { in: deleteOrder },
-        },
-      });
+      const offeredCourseIds = offeredCourses.map((course) => course.id);
 
-      await prisma.offered_course_teachers.deleteMany({
-        where: {
-          offered_course_id: { in: deleteOrder },
-        },
-      });
-
-      await prisma.offered_course_batches.deleteMany({
-        where: {
-          offered_course_id: { in: deleteOrder },
-        },
-      });
-
-      if (secondaryIds.length > 0) {
-        await prisma.offered_courses.deleteMany({
+      if (offeredCourseIds.length > 0) {
+        await tx.faculty_course_selections.deleteMany({
           where: {
-            id: { in: secondaryIds },
+            offered_course_id: {
+              in: offeredCourseIds,
+            },
+          },
+        });
+
+        await tx.offered_course_manual_cooffers.deleteMany({
+          where: {
+            offered_course_id: {
+              in: offeredCourseIds,
+            },
+          },
+        });
+
+        await tx.offered_course_slots.deleteMany({
+          where: {
+            offered_course_id: {
+              in: offeredCourseIds,
+            },
+          },
+        });
+
+        await tx.offered_course_teachers.deleteMany({
+          where: {
+            offered_course_id: {
+              in: offeredCourseIds,
+            },
+          },
+        });
+
+        await tx.offered_course_batches.deleteMany({
+          where: {
+            offered_course_id: {
+              in: offeredCourseIds,
+            },
+          },
+        });
+
+        await tx.offered_courses.updateMany({
+          where: {
+            primary_offered_course_id: {
+              in: offeredCourseIds,
+            },
+          },
+          data: {
+            primary_offered_course_id: null,
+            is_cooffered: false,
+          },
+        });
+
+        await tx.offered_courses.deleteMany({
+          where: {
+            id: {
+              in: offeredCourseIds,
+            },
           },
         });
       }
 
-      if (primaryIds.length > 0) {
-        await prisma.offered_courses.deleteMany({
-          where: {
-            id: { in: primaryIds },
-          },
-        });
-      }
-    }
+      await tx.offerings.delete({
+        where: {
+          id: offeringId,
+        },
+      });
 
-    await prisma.offerings.delete({
-      where: {
-        id: offeringId,
-      },
+      return {
+        deletedOfferingId: offeringId,
+        deletedCourseCount: offeredCourseIds.length,
+        termName: offering.academic_terms.name,
+        programCode: offering.programs.short_name,
+      };
     });
 
     return NextResponse.json({
-      success: true,
+      ok: true,
       message: "Draft offering deleted successfully.",
+      result,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Delete draft offering error:", error);
 
     return NextResponse.json(
       {
+        ok: false,
         error:
           error instanceof Error
             ? error.message

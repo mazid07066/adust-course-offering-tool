@@ -3,6 +3,16 @@ import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { OFFERING_STATUS } from "@/lib/offering-status";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
+type RouteContext = {
+  params: Promise<{
+    id: string;
+  }>;
+};
+
 function normalizeText(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim().toUpperCase();
 }
@@ -16,49 +26,41 @@ function isSlotOptionalCourse(course: {
   const title = normalizeText(course.master_courses.course_title);
   const type = normalizeText(course.master_courses.course_type);
 
-  if (
+  return (
     type.includes("PROJECT") ||
     type.includes("INTERNSHIP") ||
     type.includes("THESIS") ||
-    type.includes("VIVA")
-  ) {
-    return true;
-  }
-
-  if (
+    type.includes("VIVA") ||
     title.includes("FINAL YEAR DESIGN PROJECT") ||
     title.includes("FYDP") ||
     title.includes("INTERNSHIP") ||
     title.includes("THESIS") ||
     title.includes("VIVA")
-  ) {
-    return true;
-  }
-
-  return false;
+  );
 }
 
-export async function POST(
-  _request: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
+export async function POST(_req: NextRequest, context: RouteContext) {
   const guard = await requireCoordinatorOrAdminApi();
   if (guard instanceof Response) return guard;
 
   try {
-    const { id } = await context.params;
-    const offeringId = Number(id);
+    const params = await context.params;
+    const offeringId = Number(params.id);
 
-    if (!offeringId) {
+    if (!offeringId || Number.isNaN(offeringId)) {
       return NextResponse.json(
-        { error: "Invalid offering id." },
+        { ok: false, error: "Valid offering id is required." },
         { status: 400 }
       );
     }
 
-    const offering = await prisma.offerings.findFirst({
-      where: { id: offeringId },
+    const offering = await prisma.offerings.findUnique({
+      where: {
+        id: offeringId,
+      },
       include: {
+        academic_terms: true,
+        programs: true,
         offered_courses: {
           include: {
             master_courses: true,
@@ -71,18 +73,34 @@ export async function POST(
 
     if (!offering) {
       return NextResponse.json(
-        { error: "Offering not found." },
+        { ok: false, error: "Offering not found." },
         { status: 404 }
       );
     }
 
+    const currentStatus = normalizeText(offering.status);
+
+    if (currentStatus === OFFERING_STATUS.FACULTY_CHOICE_BUFFER) {
+      return NextResponse.json({
+        ok: true,
+        message: "Offering is already open for faculty choice.",
+        offering: {
+          id: offering.id,
+          status: offering.status,
+          termName: offering.academic_terms.name,
+          programCode: offering.programs.short_name,
+        },
+      });
+    }
+
     if (
-      offering.status !== OFFERING_STATUS.DRAFT &&
-      offering.status !== OFFERING_STATUS.BUFFER_READY
+      currentStatus !== OFFERING_STATUS.DRAFT &&
+      currentStatus !== OFFERING_STATUS.BUFFER_READY
     ) {
       return NextResponse.json(
         {
-          error: "Only DRAFT or BUFFER_READY offerings can be opened for faculty choice.",
+          ok: false,
+          error: `Only DRAFT or BUFFER_READY offerings can be opened for faculty choice. Current status: ${offering.status}`,
         },
         { status: 400 }
       );
@@ -90,8 +108,12 @@ export async function POST(
 
     const blockers: string[] = [];
 
+    if (offering.academic_terms.name !== "SUMMER 2026") {
+      blockers.push("Only SUMMER 2026 is allowed for the current faculty-choice release.");
+    }
+
     if (offering.offered_courses.length === 0) {
-      blockers.push("Cannot move empty offering to BUFFER_READY.");
+      blockers.push("Cannot open an empty offering for faculty choice.");
     }
 
     for (const course of offering.offered_courses) {
@@ -104,9 +126,7 @@ export async function POST(
         );
       }
 
-      if (!isPrimary) continue;
-
-      if (!slotOptional && course.offered_course_slots.length === 0) {
+      if (isPrimary && !slotOptional && course.offered_course_slots.length === 0) {
         blockers.push(
           `${course.master_courses.course_code} Sec-${course.section}: no meeting slot assigned.`
         );
@@ -116,7 +136,8 @@ export async function POST(
     if (blockers.length > 0) {
       return NextResponse.json(
         {
-          error: "Move to BUFFER_READY blocked.",
+          ok: false,
+          error: "Offering is not ready for faculty choice.",
           blockers,
         },
         { status: 400 }
@@ -124,28 +145,48 @@ export async function POST(
     }
 
     const updated = await prisma.offerings.update({
-      where: { id: offeringId },
+      where: {
+        id: offeringId,
+      },
       data: {
-        status: OFFERING_STATUS.BUFFER_READY,
+        status: OFFERING_STATUS.FACULTY_CHOICE_BUFFER,
       },
       select: {
         id: true,
         status: true,
+        academic_terms: {
+          select: {
+            name: true,
+          },
+        },
+        programs: {
+          select: {
+            short_name: true,
+          },
+        },
       },
     });
 
     return NextResponse.json({
-      success: true,
-      message: "Offering is now BUFFER_READY and ready for later faculty-choice stage.",
-      offering: updated,
+      ok: true,
+      message: "Offering is now open for faculty choice.",
+      offering: {
+        id: updated.id,
+        status: updated.status,
+        termName: updated.academic_terms.name,
+        programCode: updated.programs.short_name,
+      },
     });
   } catch (error) {
+    console.error("Publish draft offering error:", error);
+
     return NextResponse.json(
       {
+        ok: false,
         error:
           error instanceof Error
             ? error.message
-            : "Failed to move offering to BUFFER_READY.",
+            : "Failed to open offering for faculty choice.",
       },
       { status: 500 }
     );
