@@ -30,22 +30,23 @@ type AvailableCourse = {
   courseTitle: string;
   credit: number;
   batchCodes: string[];
-  teacherCodes: string[];
+  teacherCodes?: string[];
+  teacherText?: string[];
   schedule: CourseSchedule[];
   linkedSecondaryCourses: LinkedSecondaryCourse[];
   selectionState:
     | "FREE"
     | "YOU_BUFFER"
     | "YOU_FINAL"
+    | "YOU_PREASSIGNED"
     | "TAKEN_FINAL"
     | "BUFFERED_BY_OTHERS";
-  hasOwnSlotConflict: boolean;
-  finalizedByOtherFaculty: {
-    teacherId: number;
-    teacherCode: string;
-    teacherName: string;
-  } | null;
-  bufferedByOtherFacultyCount: number;
+  isPreassigned?: boolean;
+  isPreassignedToCurrentFaculty?: boolean;
+  isPreassignedToAnotherFaculty?: boolean;
+  locked?: boolean;
+  lockReason?: string;
+  bufferedByOthersCount?: number;
 };
 
 type SelectionRow = {
@@ -88,7 +89,11 @@ type ApiResponse = {
     minCredits: number | null;
     maxCredits: number | null;
   } | null;
+  preassignedCredits?: number;
+  chosenCredits?: number;
+  combinedCurrentCredits?: number;
   currentSelectedCredits?: number;
+  remainingSelectableCredits?: number | null;
   sessionRemainingMinutes?: number;
   availableCourses?: AvailableCourse[];
   selections?: SelectionRow[];
@@ -152,6 +157,11 @@ export default function FacultyCourseChoicePageClient() {
     maxCredits: number | null;
   } | null>(null);
 
+  const [preassignedCredits, setPreassignedCredits] = useState(0);
+  const [chosenCredits, setChosenCredits] = useState(0);
+  const [combinedCurrentCredits, setCombinedCurrentCredits] = useState(0);
+  const [remainingSelectableCredits, setRemainingSelectableCredits] = useState<number | null>(null);
+
   const [availableCourses, setAvailableCourses] = useState<AvailableCourse[]>([]);
   const [selectedCourseIds, setSelectedCourseIds] = useState<number[]>([]);
 
@@ -187,6 +197,18 @@ export default function FacultyCourseChoicePageClient() {
       setCreditPolicy(json.creditPolicy || null);
       setSessionRemainingMinutes(Number(json.sessionRemainingMinutes || 0));
 
+      setPreassignedCredits(Number(json.preassignedCredits || 0));
+      setChosenCredits(Number(json.chosenCredits || 0));
+      setCombinedCurrentCredits(
+        Number(json.combinedCurrentCredits || json.currentSelectedCredits || 0)
+      );
+      setRemainingSelectableCredits(
+        json.remainingSelectableCredits === null ||
+          json.remainingSelectableCredits === undefined
+          ? null
+          : Number(json.remainingSelectableCredits)
+      );
+
       const rows = json.availableCourses || [];
       setAvailableCourses(rows);
 
@@ -220,13 +242,13 @@ export default function FacultyCourseChoicePageClient() {
       .filter(Boolean) as AvailableCourse[];
   }, [selectedCourseIds, courseMap]);
 
-  const liveSelectedCredits = useMemo(() => {
+  const liveBufferCredits = useMemo(() => {
     return selectedCourses.reduce((sum, course) => sum + Number(course.credit || 0), 0);
   }, [selectedCourses]);
 
-  const poolCourses = useMemo(() => {
-    return availableCourses.filter((course) => !selectedCourseIds.includes(course.id));
-  }, [availableCourses, selectedCourseIds]);
+  const liveTotalCredits = useMemo(() => {
+    return Number((preassignedCredits + liveBufferCredits).toFixed(2));
+  }, [preassignedCredits, liveBufferCredits]);
 
   function hasConflictWithCurrentBuffer(course: AvailableCourse) {
     return selectedCourses.some((selected) =>
@@ -241,9 +263,26 @@ export default function FacultyCourseChoicePageClient() {
     const course = courseMap.get(courseId);
     if (!course) return;
 
+    if (course.locked) {
+      setError(course.lockReason || "This course cannot be selected.");
+      return;
+    }
+
     if (hasConflictWithCurrentBuffer(course)) {
       setError(
         `A similar time-slot course is already in your buffer. You cannot add ${course.courseCode} Sec-${course.section}.`
+      );
+      return;
+    }
+
+    const maxCredits = creditPolicy?.maxCredits;
+    if (
+      maxCredits !== null &&
+      maxCredits !== undefined &&
+      Number((liveTotalCredits + Number(course.credit || 0)).toFixed(2)) > maxCredits
+    ) {
+      setError(
+        `Adding ${course.courseCode} exceeds your maximum allowed load of ${maxCredits} credits.`
       );
       return;
     }
@@ -369,6 +408,10 @@ export default function FacultyCourseChoicePageClient() {
     }
   }
 
+  const poolCourses = useMemo(() => {
+    return availableCourses.filter((course) => !selectedCourseIds.includes(course.id));
+  }, [availableCourses, selectedCourseIds]);
+
   return (
     <main className="min-h-screen bg-slate-100 p-6">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -411,7 +454,7 @@ export default function FacultyCourseChoicePageClient() {
             <div>
               <div className="text-sm text-slate-500">Faculty</div>
               <div className="mt-1 font-semibold text-slate-900">
-                {teacherCode} — {teacherName}
+                {teacherCode || "-"} — {teacherName || "-"}
               </div>
               <div className="text-sm text-slate-600">{designation || "-"}</div>
             </div>
@@ -443,12 +486,16 @@ export default function FacultyCourseChoicePageClient() {
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl bg-slate-50 p-4">
               <div className="text-sm text-slate-500">Active Seniority Phase</div>
-              <div className="mt-1 font-semibold text-slate-900">All Levels</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                Level {seniorityLevel ?? "-"}
+              </div>
             </div>
 
             <div className="rounded-xl bg-slate-50 p-4">
               <div className="text-sm text-slate-500">Active Faculty Turn</div>
-              <div className="mt-1 font-semibold text-slate-900">Not fixed</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {teacherCode || "Not fixed"} — {teacherName || ""}
+              </div>
             </div>
 
             <div className="rounded-xl bg-slate-50 p-4">
@@ -460,8 +507,25 @@ export default function FacultyCourseChoicePageClient() {
 
             <div className="rounded-xl bg-slate-50 p-4">
               <div className="text-sm text-slate-500">Selected Credits</div>
+              <div className="mt-1 font-semibold text-slate-900">{liveTotalCredits}</div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Preassigned Credits</div>
+              <div className="mt-1 font-semibold text-slate-900">{preassignedCredits}</div>
+            </div>
+
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Current Buffer Credits</div>
+              <div className="mt-1 font-semibold text-slate-900">{liveBufferCredits}</div>
+            </div>
+
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">Remaining Selectable Credits</div>
               <div className="mt-1 font-semibold text-slate-900">
-                {liveSelectedCredits}
+                {remainingSelectableCredits ?? "-"}
               </div>
             </div>
           </div>
@@ -520,7 +584,11 @@ export default function FacultyCourseChoicePageClient() {
             <div className="mt-4 space-y-3">
               {poolCourses.map((course) => {
                 const slotConflictNow = hasConflictWithCurrentBuffer(course);
-                const addDisabled = !canEdit || hasFinalized || slotConflictNow;
+                const addDisabled =
+                  !canEdit ||
+                  hasFinalized ||
+                  slotConflictNow ||
+                  Boolean(course.locked);
 
                 return (
                   <div key={course.id} className="rounded-xl border border-slate-200 p-4">
@@ -539,15 +607,39 @@ export default function FacultyCourseChoicePageClient() {
                           Offering Status: {course.offeringStatus}
                         </div>
 
+                        {course.teacherCodes && course.teacherCodes.length > 0 ? (
+                          <div className="text-sm text-slate-500">
+                            Teachers: {course.teacherCodes.join(", ")}
+                          </div>
+                        ) : null}
+
+                        {course.selectionState === "YOU_PREASSIGNED" ? (
+                          <div className="mt-2 inline-block rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
+                            Already preassigned to you
+                          </div>
+                        ) : null}
+
+                        {course.isPreassignedToAnotherFaculty ? (
+                          <div className="mt-2 inline-block rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">
+                            Preassigned to another faculty
+                          </div>
+                        ) : null}
+
                         {course.selectionState === "BUFFERED_BY_OTHERS" ? (
                           <div className="mt-2 inline-block rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
-                            Buffered by {course.bufferedByOtherFacultyCount} other faculty member(s)
+                            Buffered by {course.bufferedByOthersCount || 0} other faculty member(s)
                           </div>
                         ) : null}
 
                         {slotConflictNow ? (
                           <div className="mt-2 inline-block rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700">
                             Similar slot course already in your buffer
+                          </div>
+                        ) : null}
+
+                        {course.locked && course.lockReason ? (
+                          <div className="mt-2 inline-block rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                            {course.lockReason}
                           </div>
                         ) : null}
                       </div>

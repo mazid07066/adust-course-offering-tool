@@ -3,9 +3,10 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { requireFacultyApi } from "@/lib/auth-guard";
 import { canFacultyEdit } from "@/lib/faculty-access";
-import { validateFacultySession } from "@/lib/faculty-session";
-import { getFacultyLevelCreditPolicy } from "@/lib/system-settings";
-import { createFacultyNotification } from "@/lib/faculty-notifications";
+import {
+  getFacultyLevelCreditPolicy,
+  getActiveFacultySeniorityLevel,
+} from "@/lib/system-settings";
 
 export async function POST(req: NextRequest) {
   const guard = await requireFacultyApi();
@@ -14,8 +15,33 @@ export async function POST(req: NextRequest) {
   try {
     if (!guard.teacher_id) {
       return NextResponse.json(
-        { error: "Faculty account is not linked to a teacher record." },
+        { error: "Faculty account is not linked to a faculty record." },
         { status: 400 }
+      );
+    }
+
+    const body = await req.json();
+    const termName = String(body.termName || "").trim().toUpperCase();
+
+    if (!termName) {
+      return NextResponse.json(
+        { error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    const teacher = await prisma.teachers.findUnique({
+      where: { id: guard.teacher_id },
+      select: {
+        id: true,
+        seniority_level: true,
+      },
+    });
+
+    if (!teacher) {
+      return NextResponse.json(
+        { error: "Faculty record not found." },
+        { status: 404 }
       );
     }
 
@@ -29,52 +55,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const sessionCheck = await validateFacultySession(sessionToken);
-
-    if (!sessionCheck.valid || !sessionCheck.session) {
-      return NextResponse.json(
-        { error: sessionCheck.message || "Faculty session is invalid." },
-        { status: 401 }
-      );
-    }
-
-    const teacher = await prisma.teachers.findUnique({
-      where: { id: guard.teacher_id },
-      select: {
-        id: true,
-        teacher_code: true,
-        full_name: true,
-        seniority_level: true,
-        is_active: true,
-      },
-    });
-
-    if (!teacher || !teacher.is_active) {
-      return NextResponse.json(
-        { error: "Faculty record is inactive or missing." },
-        { status: 403 }
-      );
-    }
-
-    const editAccess = await canFacultyEdit(sessionToken, {
+    const access = await canFacultyEdit(sessionToken, {
       id: teacher.id,
       seniority_level: teacher.seniority_level,
     });
 
-    if (!editAccess.allowed) {
+    if (!access.allowed) {
       return NextResponse.json(
-        { error: editAccess.message || "You are not the active faculty turn." },
+        { error: access.message || "Editing not allowed." },
         { status: 403 }
       );
     }
 
-    const body = await req.json();
-    const termName = String(body.termName || "").trim().toUpperCase();
+    const activeSeniorityLevel = await getActiveFacultySeniorityLevel();
+    const seniorityAllowed =
+      !activeSeniorityLevel ||
+      teacher.seniority_level === null ||
+      teacher.seniority_level === activeSeniorityLevel;
 
-    if (!termName) {
+    if (!seniorityAllowed) {
       return NextResponse.json(
-        { error: "termName is required." },
-        { status: 400 }
+        { error: "Your seniority level is not active for faculty choice right now." },
+        { status: 403 }
       );
     }
 
@@ -99,7 +101,6 @@ export async function POST(req: NextRequest) {
       include: {
         offered_courses: {
           include: {
-            offerings: true,
             master_courses: {
               select: {
                 credit: true,
@@ -108,37 +109,49 @@ export async function POST(req: NextRequest) {
           },
         },
       },
-      orderBy: [{ priority_order: "asc" }, { id: "asc" }],
     });
 
-    if (currentBufferSelections.length === 0) {
-      return NextResponse.json(
-        { error: "No buffered choices found to finalize." },
-        { status: 400 }
-      );
-    }
-
-    const invalidSelections = currentBufferSelections.filter(
-      (row) =>
-        !["FACULTY_CHOICE_BUFFER", "FACULTY_CHOICE_FINALIZED"].includes(
-          row.offered_courses.offerings.status
-        )
-    );
-
-    if (invalidSelections.length > 0) {
-      return NextResponse.json(
-        {
-          error:
-            "One or more buffered choices are no longer available for faculty choice.",
+    const preassignedAssignments = await prisma.offered_course_teachers.findMany({
+      where: {
+        teacher_id: teacher.id,
+        offered_courses: {
+          offerings: {
+            academic_term_id: term.id,
+          },
         },
-        { status: 400 }
-      );
-    }
+      },
+      include: {
+        offered_courses: {
+          include: {
+            master_courses: {
+              select: {
+                credit: true,
+              },
+            },
+          },
+        },
+      },
+    });
 
-    const totalCredits = currentBufferSelections.reduce(
-      (sum, row) => sum + Number(row.offered_courses.master_courses.credit || 0),
-      0
-    );
+    const preassignedCredits = Array.from(
+      new Map(
+        preassignedAssignments.map((x) => [
+          x.offered_course_id,
+          Number(x.offered_courses.master_courses.credit || 0),
+        ])
+      ).values()
+    ).reduce((sum, credit) => sum + credit, 0);
+
+    const selectedCredits = Array.from(
+      new Map(
+        currentBufferSelections.map((x) => [
+          x.offered_course_id,
+          Number(x.offered_courses.master_courses.credit || 0),
+        ])
+      ).values()
+    ).reduce((sum, credit) => sum + credit, 0);
+
+    const totalCredits = Number((preassignedCredits + selectedCredits).toFixed(2));
 
     const creditPolicy = await getFacultyLevelCreditPolicy(teacher.seniority_level);
 
@@ -149,7 +162,7 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json(
         {
-          error: `Selected credits ${totalCredits} are below your required minimum ${creditPolicy.minCredits}.`,
+          error: `Total load ${totalCredits} is below the minimum required ${creditPolicy.minCredits}. Preassigned load is already included in this calculation.`,
         },
         { status: 400 }
       );
@@ -162,7 +175,7 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json(
         {
-          error: `Selected credits ${totalCredits} exceed your allowed maximum ${creditPolicy.maxCredits}.`,
+          error: `Total load ${totalCredits} exceeds the maximum allowed ${creditPolicy.maxCredits}.`,
         },
         { status: 400 }
       );
@@ -180,23 +193,18 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await createFacultyNotification({
-      recipientUserId: guard.id,
-      recipientTeacherId: teacher.id,
-      eventType: "FACULTY_CHOICE_FINAL_SUBMITTED",
-      title: "Faculty choice final submission completed",
-      message: `${teacher.teacher_code} - ${teacher.full_name}, your final choices for ${term.name} have been submitted for coordinator/admin review.`,
-    });
-
     return NextResponse.json({
       success: true,
       message: "Final choice submission completed successfully.",
+      preassignedCredits,
+      selectedCredits,
       totalCredits,
+      creditPolicy,
     });
   } catch (error) {
     console.error(error);
     return NextResponse.json(
-      { error: "Failed to finalize faculty choices." },
+      { error: error instanceof Error ? error.message : "Failed to finalize faculty choices." },
       { status: 500 }
     );
   }

@@ -1,45 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireFacultyApi } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
+import { requireFacultyApi } from "@/lib/auth-guard";
 
-type ProgramTallyRow = {
-  programCode: string;
-  theoryCredits: number;
-  labCredits: number;
-  totalCredits: number;
-};
+export const runtime = "nodejs";
 
-type ScheduleRow = {
-  courseCode: string;
-  courseTitle: string;
-  section: string;
-  credit: number;
-  category: "THEORY" | "LAB" | "PROJECT";
-  dayOfWeek: string;
-  timeText: string;
-  roomText: string;
-  batchCodes: string[];
-};
+function uniqueByCourseId<T extends { offeredCourseId: number }>(rows: T[]) {
+  const seen = new Set<number>();
+  const out: T[] = [];
 
-function isLabCourse(title: string, courseType: string | null | undefined) {
-  const t = String(title || "").toUpperCase();
-  const ct = String(courseType || "").toUpperCase();
-  return t.includes("LAB") || ct.includes("LAB");
-}
+  for (const row of rows) {
+    if (seen.has(row.offeredCourseId)) continue;
+    seen.add(row.offeredCourseId);
+    out.push(row);
+  }
 
-function isProjectLikeCourse(title: string, courseType: string | null | undefined) {
-  const t = String(title || "").toUpperCase();
-  const ct = String(courseType || "").toUpperCase();
-  return (
-    t.includes("PROJECT") ||
-    t.includes("INTERNSHIP") ||
-    t.includes("THESIS") ||
-    ct.includes("PROJECT")
-  );
-}
-
-function uniqueStrings(values: string[]) {
-  return Array.from(new Set(values.filter(Boolean)));
+  return out;
 }
 
 export async function GET(req: NextRequest) {
@@ -49,13 +24,15 @@ export async function GET(req: NextRequest) {
   try {
     if (!guard.teacher_id) {
       return NextResponse.json(
-        { error: "Faculty account is not linked to a teacher record." },
+        { error: "Faculty account is not linked to a faculty record." },
         { status: 400 }
       );
     }
 
     const { searchParams } = new URL(req.url);
-    const termName = String(searchParams.get("termName") || "").trim().toUpperCase();
+    const termName = String(searchParams.get("termName") || "")
+      .trim()
+      .toUpperCase();
 
     if (!termName) {
       return NextResponse.json(
@@ -64,28 +41,39 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const [teacher, term] = await Promise.all([
-      prisma.teachers.findUnique({
-        where: { id: guard.teacher_id },
-        include: {
-          departments: true,
+    const teacher = await prisma.teachers.findUnique({
+      where: { id: guard.teacher_id },
+      select: {
+        id: true,
+        teacher_code: true,
+        full_name: true,
+        designation: true,
+        departments: {
+          select: {
+            id: true,
+            short_name: true,
+            name: true,
+          },
         },
-      }),
-      prisma.academic_terms.findFirst({
-        where: { name: termName },
-        select: {
-          id: true,
-          name: true,
-        },
-      }),
-    ]);
+      },
+    });
 
     if (!teacher) {
       return NextResponse.json(
-        { error: "Faculty record not found." },
+        { error: "Faculty not found." },
         { status: 404 }
       );
     }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: {
+        name: termName,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
 
     if (!term) {
       return NextResponse.json(
@@ -94,15 +82,19 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const selections = await prisma.faculty_course_selections.findMany({
+    const assignedRows = await prisma.offered_course_teachers.findMany({
       where: {
         teacher_id: teacher.id,
-        academic_term_id: term.id,
-        status: "FINAL",
+        offered_courses: {
+          offerings: {
+            academic_term_id: term.id,
+          },
+        },
       },
       include: {
         offered_courses: {
           include: {
+            offerings: true,
             master_courses: {
               include: {
                 program: true,
@@ -122,129 +114,106 @@ export async function GET(req: NextRequest) {
           },
         },
       },
-      orderBy: [{ priority_order: "asc" }, { id: "asc" }],
     });
 
-    const submissionAt =
-      selections
-        .map((row) => row.confirmed_at || row.selected_at)
-        .filter(Boolean)
-        .sort((a, b) => new Date(b as Date).getTime() - new Date(a as Date).getTime())[0] ||
-      null;
-
-    let totalTheoryCredits = 0;
-    let totalLabCredits = 0;
-
-    const tallyMap = new Map<string, ProgramTallyRow>();
-    const scheduleRows: ScheduleRow[] = [];
-
-    for (const row of selections) {
-      const course = row.offered_courses;
-      const master = course.master_courses;
-
-      const programCode = master.program.short_name;
-      const credit = Number(master.credit || 0);
-
-      const category: "THEORY" | "LAB" | "PROJECT" = isProjectLikeCourse(
-        master.course_title,
-        master.course_type
-      )
-        ? "PROJECT"
-        : isLabCourse(master.course_title, master.course_type)
-        ? "LAB"
-        : "THEORY";
-
-      if (category === "LAB") {
-        totalLabCredits += credit;
-      } else {
-        totalTheoryCredits += credit;
-      }
-
-      if (!tallyMap.has(programCode)) {
-        tallyMap.set(programCode, {
-          programCode,
-          theoryCredits: 0,
-          labCredits: 0,
-          totalCredits: 0,
-        });
-      }
-
-      const tally = tallyMap.get(programCode)!;
-      if (category === "LAB") {
-        tally.labCredits += credit;
-      } else {
-        tally.theoryCredits += credit;
-      }
-      tally.totalCredits += credit;
-
-      const batchCodes = uniqueStrings(
-        course.offered_course_batches.map((x) => x.batches.batch_code)
-      );
-
-      if (course.offered_course_slots.length === 0) {
-        scheduleRows.push({
-          courseCode: master.course_code,
-          courseTitle: master.course_title,
-          section: course.section,
-          credit,
-          category,
-          dayOfWeek: "-",
-          timeText: "-",
-          roomText: "-",
-          batchCodes,
-        });
-      } else {
-        for (const slot of course.offered_course_slots) {
-          scheduleRows.push({
-            courseCode: master.course_code,
-            courseTitle: master.course_title,
-            section: course.section,
-            credit,
-            category,
-            dayOfWeek: slot.day_of_week,
-            timeText: `${slot.start_time} - ${slot.end_time}`,
-            roomText: slot.rooms?.room_code || "-",
-            batchCodes,
-          });
-        }
-      }
-    }
-
-    scheduleRows.sort((a, b) => {
-      if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek.localeCompare(b.dayOfWeek);
-      if (a.timeText !== b.timeText) return a.timeText.localeCompare(b.timeText);
-      if (a.courseCode !== b.courseCode) return a.courseCode.localeCompare(b.courseCode);
-      return a.section.localeCompare(b.section);
+    const chosenRows = await prisma.faculty_course_selections.findMany({
+      where: {
+        teacher_id: teacher.id,
+        academic_term_id: term.id,
+        status: "FINAL",
+      },
+      include: {
+        offered_courses: {
+          include: {
+            offerings: true,
+            master_courses: {
+              include: {
+                program: true,
+              },
+            },
+            offered_course_batches: {
+              include: {
+                batches: true,
+              },
+            },
+            offered_course_slots: {
+              include: {
+                rooms: true,
+              },
+              orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+            },
+          },
+        },
+      },
     });
 
-    const programTallies = Array.from(tallyMap.values()).sort((a, b) =>
-      a.programCode.localeCompare(b.programCode)
-    );
+    const assignedMapped = assignedRows.map((row) => ({
+      source: "ASSIGNED" as const,
+      offeredCourseId: row.offered_course_id,
+      courseCode: row.offered_courses.master_courses.course_code,
+      courseTitle: row.offered_courses.master_courses.course_title,
+      credit: Number(row.offered_courses.master_courses.credit || 0),
+      section: row.offered_courses.section,
+      programCode: row.offered_courses.master_courses.program.short_name,
+      programName: row.offered_courses.master_courses.program.name,
+      batchCodes: row.offered_courses.offered_course_batches.map(
+        (x) => x.batches.batch_code
+      ),
+      schedule: row.offered_courses.offered_course_slots.map((slot) => ({
+        dayOfWeek: slot.day_of_week,
+        startTime: slot.start_time,
+        endTime: slot.end_time,
+        roomCode: slot.rooms?.room_code || "-",
+      })),
+    }));
+
+    const chosenMapped = chosenRows.map((row) => ({
+      source: "FINALIZED_CHOICE" as const,
+      offeredCourseId: row.offered_course_id,
+      courseCode: row.offered_courses.master_courses.course_code,
+      courseTitle: row.offered_courses.master_courses.course_title,
+      credit: Number(row.offered_courses.master_courses.credit || 0),
+      section: row.offered_courses.section,
+      programCode: row.offered_courses.master_courses.program.short_name,
+      programName: row.offered_courses.master_courses.program.name,
+      batchCodes: row.offered_courses.offered_course_batches.map(
+        (x) => x.batches.batch_code
+      ),
+      schedule: row.offered_courses.offered_course_slots.map((slot) => ({
+        dayOfWeek: slot.day_of_week,
+        startTime: slot.start_time,
+        endTime: slot.end_time,
+        roomCode: slot.rooms?.room_code || "-",
+      })),
+    }));
+
+    const combined = uniqueByCourseId([...assignedMapped, ...chosenMapped]);
+
+    const totalCredits = combined.reduce((sum, row) => sum + row.credit, 0);
 
     return NextResponse.json({
-      success: true,
-      faculty: {
-        teacherId: teacher.id,
-        departmentName: teacher.departments?.name || "-",
-        departmentCode: teacher.departments?.short_name || "-",
-        fullName: teacher.full_name,
-        designation: teacher.designation || "-",
-        initial: teacher.teacher_code,
-      },
+      ok: true,
       termName: term.name,
-      submittedAt: submissionAt ? new Date(submissionAt).toISOString() : null,
-      totals: {
-        theoryCredits: totalTheoryCredits,
-        labCredits: totalLabCredits,
-        totalCredits: totalTheoryCredits + totalLabCredits,
+      faculty: {
+        id: teacher.id,
+        teacherCode: teacher.teacher_code,
+        fullName: teacher.full_name,
+        designation: teacher.designation,
+        departmentCode: teacher.departments?.short_name || "",
+        departmentName: teacher.departments?.name || "",
       },
-      programTallies,
-      scheduleRows,
+      totalCredits,
+      rows: combined,
     });
   } catch (error) {
     console.error(error);
     return NextResponse.json(
-      { error: "Failed to load faculty load sheet." },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load faculty load sheet.",
+      },
       { status: 500 }
     );
   }

@@ -52,10 +52,13 @@ export async function canFacultyEdit(
     };
   }
 
-  if (!teacher) {
+  const effectiveTeacherId =
+    teacher?.id ?? revalidation.session.teacher_id ?? null;
+
+  if (!effectiveTeacherId) {
     return {
       allowed: false,
-      message: "Faculty record is missing.",
+      message: "Faculty account is not linked to a faculty record.",
     };
   }
 
@@ -68,7 +71,7 @@ export async function canFacultyEdit(
     };
   }
 
-  if (activeTurn.teacherId !== teacher.id) {
+  if (activeTurn.teacherId !== effectiveTeacherId) {
     return {
       allowed: false,
       message: `Current active turn belongs to ${activeTurn.teacherCode} - ${activeTurn.fullName}.`,

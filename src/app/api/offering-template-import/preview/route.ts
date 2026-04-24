@@ -3,155 +3,268 @@ import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { parseOfferingTemplateWorkbook } from "@/lib/offering-template-parser";
 import {
-  buildRoomLookupCandidates,
   isBlankLikeFaculty,
   isSlotOptionalCourseType,
   normalizeCourseCode,
   normalizeCourseTitle,
-  normalizeRoomCode,
   normalizeTeacherCode,
   parseOneCourseCodeAliases,
-  uniqueStrings,
 } from "@/lib/offering-template-normalize";
-import { resolveProgramForOfferingTemplate } from "@/lib/offering-template-program-resolver";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
+
+export const runtime = "nodejs";
 
 type PreviewRowStatus = "READY" | "WARNING" | "BLOCKED";
 
-type MasterCourseLite = {
-  id: number;
-  course_code: string;
-  course_title: string;
-  credit: number;
+type ParsedSlot = {
+  day: string;
+  rawTime: string;
+  startTime: string;
+  endTime: string;
+  timeParseOk: boolean;
+  timeParseReason: string;
 };
 
-type StoredRoomLite = {
-  id: number;
-  room_code: string;
-  room_type: string | null;
+type PreviewRow = {
+  rowKey: string;
+  batchCode: string;
+  courseTitle: string;
+  courseCode: string;
+  coofferedCourseCode: string;
+  facultyInitial: string;
+  section: string;
+  credits: number;
+  day: string;
+  rawTime: string;
+  startTime: string;
+  endTime: string;
+  timeParseOk: boolean;
+  room: string;
+  courseType: string;
+  parsedSlots: ParsedSlot[];
+  status: PreviewRowStatus;
+  issues: string[];
+  resolvedCourseId: number | null;
+  resolvedCourseTitle: string | null;
+  resolvedCourseCode: string | null;
+  resolvedCourseMatchedBy: string | null;
+  resolvedCourseMatchedValue: string | null;
+  resolvedBatchId: number | null;
+  resolvedTeacherId: number | null;
+  resolvedTeacherCode: string | null;
+  resolvedRoomId: number | null;
+  resolvedRoomCode: string | null;
+  slotOptional: boolean;
 };
 
-function splitStoredRoomCode(stored: string) {
-  const raw = String(stored || "").trim();
-  const parts = raw.split("|").map((x) => x.trim());
-
-  if (parts.length >= 2) {
-    return {
-      roomCode: normalizeRoomCode(parts[0]),
-      roomNumber: normalizeRoomCode(parts.slice(1).join(" | ")),
-    };
-  }
-
-  return {
-    roomCode: normalizeRoomCode(raw),
-    roomNumber: "",
-  };
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
-function buildRoomMaps(rooms: StoredRoomLite[]) {
-  const byNumber = new Map<string, StoredRoomLite>();
-  const byStoredText = new Map<string, StoredRoomLite>();
+function normalizeUpper(value: unknown) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function digitsOnly(value: unknown) {
+  return String(value ?? "").replace(/\D+/g, "").trim();
+}
+
+function safeRoomNumber(room: any) {
+  const raw = room?.room_number;
+  if (raw === null || raw === undefined) return "";
+  return String(raw).trim().toUpperCase();
+}
+
+function resolveRoom(inputRoom: string, rooms: any[]) {
+  const raw = String(inputRoom || "").trim();
+  if (!raw) return null;
+
+  const normalizedInput = normalizeUpper(raw);
+  const inputDigits = digitsOnly(raw);
 
   for (const room of rooms) {
-    const parsed = splitStoredRoomCode(room.room_code);
+    const roomCode = normalizeUpper(room.room_code);
+    const roomNumber = safeRoomNumber(room);
+    const roomCodeDigits = digitsOnly(room.room_code);
+    const roomNumberDigits = digitsOnly(room.room_number);
 
-    if (parsed.roomNumber && !byNumber.has(parsed.roomNumber)) {
-      byNumber.set(parsed.roomNumber, room);
-    }
-
-    byStoredText.set(normalizeRoomCode(room.room_code), room);
-
-    if (parsed.roomCode) {
-      byStoredText.set(parsed.roomCode, room);
-    }
-  }
-
-  return { byNumber, byStoredText };
-}
-
-function resolveRoom(
-  rawRoomValue: string,
-  roomMaps: ReturnType<typeof buildRoomMaps>
-) {
-  const candidates = buildRoomLookupCandidates(rawRoomValue);
-
-  for (const candidate of candidates) {
-    if (/^\d{2,4}$/.test(candidate)) {
-      const byNumber = roomMaps.byNumber.get(candidate);
-      if (byNumber) return byNumber;
+    if (
+      normalizedInput === roomCode ||
+      normalizedInput === roomNumber ||
+      (inputDigits && inputDigits === roomCodeDigits) ||
+      (inputDigits && inputDigits === roomNumberDigits)
+    ) {
+      return room;
     }
   }
 
-  for (const candidate of candidates) {
-    const byText = roomMaps.byStoredText.get(normalizeRoomCode(candidate));
-    if (byText) return byText;
+  for (const room of rooms) {
+    const roomCode = normalizeUpper(room.room_code);
+    const roomNumber = safeRoomNumber(room);
+    const roomType = normalizeUpper(room.room_type);
+    const building = normalizeUpper(room.building);
+
+    const candidates = [
+      roomCode,
+      roomNumber,
+      `${roomCode}-${roomNumber}`,
+      `${roomType}-${roomNumber}`,
+      `${building}-${roomNumber}`,
+      `${roomType} (${roomNumber})`,
+      `${roomCode} (${roomNumber})`,
+    ].filter(Boolean);
+
+    if (candidates.includes(normalizedInput)) {
+      return room;
+    }
   }
 
   return null;
 }
 
-function resolveMasterCourse(
-  rowCourseCode: string,
-  rowCoofferedCourseCode: string,
-  rowCourseTitle: string,
-  masterCourses: MasterCourseLite[]
+function resolveTeacher(inputTeacherCode: string, teachers: any[]) {
+  const normalized = normalizeTeacherCode(inputTeacherCode);
+  if (!normalized) return null;
+
+  return (
+    teachers.find(
+      (teacher) => normalizeTeacherCode(teacher.teacher_code) === normalized
+    ) || null
+  );
+}
+
+function resolveBatch(inputBatchCode: string, batches: any[]) {
+  const normalized = normalizeUpper(inputBatchCode);
+  if (!normalized) return null;
+
+  return (
+    batches.find((batch) => normalizeUpper(batch.batch_code) === normalized) || null
+  );
+}
+
+function resolveCourseByCodeOrTitle(
+  row: {
+    courseCode: string;
+    coofferedCourseCode: string;
+    courseTitle: string;
+  },
+  masterCourses: any[]
 ) {
-  const codeMap = new Map(
-    masterCourses.map((item) => [normalizeCourseCode(item.course_code), item])
-  );
+  const directCodes = uniqueStrings([
+    normalizeCourseCode(row.courseCode),
+    normalizeCourseCode(row.coofferedCourseCode),
+    ...parseOneCourseCodeAliases(row.courseCode),
+    ...parseOneCourseCodeAliases(row.coofferedCourseCode),
+  ]);
 
-  const titleMap = new Map(
-    masterCourses.map((item) => [normalizeCourseTitle(item.course_title), item])
-  );
+  for (const code of directCodes) {
+    if (!code) continue;
 
-  const directMain = codeMap.get(normalizeCourseCode(rowCourseCode));
-  if (directMain) {
-    return {
-      course: directMain,
-      matchedBy: "MAIN_CODE",
-      matchedValue: normalizeCourseCode(rowCourseCode),
-    };
-  }
+    const matched = masterCourses.find(
+      (course) => normalizeCourseCode(course.course_code) === code
+    );
 
-  const aliasCodes = parseOneCourseCodeAliases(rowCoofferedCourseCode);
-  for (const alias of aliasCodes) {
-    const found = codeMap.get(alias);
-    if (found) {
+    if (matched) {
       return {
-        course: found,
-        matchedBy: "ALTERNATE_CODE",
-        matchedValue: alias,
+        course: matched,
+        matchedBy: "COURSE_CODE",
+        matchedValue: code,
       };
     }
   }
 
-  const titleMatch = titleMap.get(normalizeCourseTitle(rowCourseTitle));
-  if (titleMatch) {
-    return {
-      course: titleMatch,
-      matchedBy: "TITLE",
-      matchedValue: normalizeCourseTitle(rowCourseTitle),
-    };
+  const normalizedTitle = normalizeCourseTitle(row.courseTitle);
+  if (normalizedTitle) {
+    const matched = masterCourses.find((course) => {
+      const courseTitle = normalizeCourseTitle(course.course_title);
+      const normalizedStored = normalizeUpper(course.normalized_title || "");
+      return courseTitle === normalizedTitle || normalizedStored === normalizedTitle;
+    });
+
+    if (matched) {
+      return {
+        course: matched,
+        matchedBy: "COURSE_TITLE",
+        matchedValue: normalizedTitle,
+      };
+    }
   }
 
   return {
     course: null,
-    matchedBy: "",
-    matchedValue: "",
+    matchedBy: null,
+    matchedValue: null,
+  };
+}
+
+async function resolveTargetProgram(requestedProgramCode: string) {
+  const catalogEntry = await prisma.academic_catalog_entries.findFirst({
+    where: {
+      program_code: requestedProgramCode,
+      is_active: true,
+    },
+    select: {
+      department_code: true,
+      department_name: true,
+      program_code: true,
+      program_title: true,
+      study_shift: true,
+      display_label: true,
+      curriculum_key: true,
+    },
+  });
+
+  if (!catalogEntry) {
+    throw new Error("Selected academic identity was not found in Academic Setup.");
+  }
+
+  const exactProgram = await prisma.programs.findFirst({
+    where: {
+      short_name: requestedProgramCode,
+    },
+  });
+
+  if (exactProgram) {
+    return {
+      requestedProgramCode,
+      program: exactProgram,
+      matchedProgramCodes: [requestedProgramCode],
+      displayLabel: catalogEntry.display_label,
+      curriculumKey: catalogEntry.curriculum_key,
+    };
+  }
+
+  const canonicalProgram = await resolveCanonicalProgram({
+    department_code: catalogEntry.department_code,
+    department_name: catalogEntry.department_name,
+    program_code: catalogEntry.program_code,
+    program_title: catalogEntry.program_title,
+    study_shift: catalogEntry.study_shift,
+  });
+
+  return {
+    requestedProgramCode,
+    program: canonicalProgram,
+    matchedProgramCodes: [requestedProgramCode, canonicalProgram.short_name],
+    displayLabel: catalogEntry.display_label,
+    curriculumKey: catalogEntry.curriculum_key,
   };
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    await requireCoordinatorOrAdminApi();
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
 
+  try {
     const formData = await req.formData();
-    const file = formData.get("file");
+
     const requestedProgramCode = String(formData.get("programCode") || "")
       .trim()
       .toUpperCase();
     const termName = String(formData.get("termName") || "")
       .trim()
       .toUpperCase();
+    const file = formData.get("file") as File | null;
 
     if (!requestedProgramCode) {
       return NextResponse.json(
@@ -167,129 +280,95 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!(file instanceof File)) {
+    if (!file) {
       return NextResponse.json(
-        { ok: false, error: "An Excel file is required." },
+        { ok: false, error: "Excel file is required." },
         { status: 400 }
       );
     }
 
-    const resolvedProgramInfo = await resolveProgramForOfferingTemplate(
-      requestedProgramCode
-    );
-
+    const resolvedProgramInfo = await resolveTargetProgram(requestedProgramCode);
     const program = resolvedProgramInfo.program;
 
     const fileBuffer = Buffer.from(await file.arrayBuffer());
     const parsed = parseOfferingTemplateWorkbook(fileBuffer);
 
-    const [masterCourses, batches, teachers, rooms] = await Promise.all([
+    const [masterCourses, teachers, rooms, batches] = await Promise.all([
       prisma.master_courses.findMany({
         where: {
           program_id: program.id,
-          is_active: true,
         },
-        select: {
-          id: true,
-          course_code: true,
-          course_title: true,
-          credit: true,
-        },
-      }),
-      prisma.batches.findMany({
-        where: {
-          program_id: program.id,
-        },
-        select: {
-          id: true,
-          batch_code: true,
-        },
+        orderBy: [{ course_code: "asc" }],
       }),
       prisma.teachers.findMany({
         where: {
           is_active: true,
         },
-        select: {
-          id: true,
-          teacher_code: true,
-          full_name: true,
-        },
+        orderBy: [{ teacher_code: "asc" }],
       }),
       prisma.rooms.findMany({
         where: {
           is_active: true,
         },
-        select: {
-          id: true,
-          room_code: true,
-          room_type: true,
+        orderBy: [{ room_code: "asc" }],
+      }),
+      prisma.batches.findMany({
+        where: {
+          program_id: program.id,
         },
+        orderBy: [{ batch_code: "asc" }],
       }),
     ]);
 
-    const batchMap = new Map(
-      batches.map((item) => [String(item.batch_code).trim(), item])
-    );
-
-    const teacherMap = new Map(
-      teachers.map((item) => [normalizeTeacherCode(item.teacher_code), item])
-    );
-
-    const roomMaps = buildRoomMaps(rooms);
-
-    const previewRows = parsed.rows.map((row) => {
+    const previewRows: PreviewRow[] = parsed.rows.map((row) => {
       const issues: string[] = [];
       let status: PreviewRowStatus = "READY";
 
-      const courseResolution = resolveMasterCourse(
-        row.courseCode,
-        row.coofferedCourseCode,
-        row.courseTitle,
-        masterCourses
-      );
-
+      const courseResolution = resolveCourseByCodeOrTitle(row, masterCourses);
       const resolvedCourse = courseResolution.course;
-      const resolvedBatch = batchMap.get(String(row.batchCode).trim());
-      const resolvedTeacher = !isBlankLikeFaculty(row.facultyInitial)
-        ? teacherMap.get(normalizeTeacherCode(row.facultyInitial))
-        : null;
-
-      const resolvedRoom = resolveRoom(row.room, roomMaps);
-      const slotOptional = isSlotOptionalCourseType(row.courseType, row.courseTitle);
-
-      if (!resolvedBatch) {
-        issues.push(
-          `Batch ${row.batchCode} is not yet present under internal program ${program.short_name}. It will be treated as an incoming/new batch candidate.`
-        );
-        status = "WARNING";
-      }
 
       if (!resolvedCourse) {
         issues.push(
-          `Course could not be resolved by main code (${row.courseCode}), alternate code (${row.coofferedCourseCode || "-"}) or title (${row.courseTitle}).`
+          `Course could not be matched from ${row.courseCode || row.coofferedCourseCode || row.courseTitle}.`
         );
         status = "BLOCKED";
       }
 
-      if (!row.section) {
-        issues.push("Section is empty.");
+      const resolvedBatch = resolveBatch(row.batchCode, batches);
+      if (!resolvedBatch) {
+        issues.push(`Batch ${row.batchCode} was not found under ${program.short_name}.`);
         status = "BLOCKED";
       }
 
+      const resolvedTeacher = isBlankLikeFaculty(row.facultyInitial)
+        ? null
+        : resolveTeacher(row.facultyInitial, teachers);
+
+      const resolvedRoom = row.room ? resolveRoom(row.room, rooms) : null;
+      const slotOptional = isSlotOptionalCourseType(row.courseType, row.courseTitle);
+
       if (!slotOptional) {
-        if (!row.day) {
-          issues.push("Day is empty.");
+        if (!row.parsedSlots.length) {
+          issues.push("No valid slot parsed from Slot 1 / Slot 2 + Time.");
           status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
         }
 
-        if (!row.timeParseOk) {
-          issues.push(row.timeParseReason || "Time could not be parsed.");
+        const invalidSlot = row.parsedSlots.find((slot) => !slot.timeParseOk);
+        if (invalidSlot) {
+          issues.push(
+            `Time parse issue: ${invalidSlot.timeParseReason || "invalid time format"}.`
+          );
+          status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+        }
+
+        if (!row.room) {
+          issues.push("Room is missing.");
           status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
         }
 
         if (row.room && !resolvedRoom) {
           issues.push(
-            `Room ${row.room} was not matched to an active room number or stored room label. Slot import will be skipped unless room mapping is fixed.`
+            `Room ${row.room} was not matched to an active room entry. Slot import will be skipped unless room mapping is fixed.`
           );
           status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
         }
@@ -310,7 +389,22 @@ export async function POST(req: NextRequest) {
       }
 
       return {
-        ...row,
+        rowKey: row.rowKey,
+        batchCode: row.batchCode,
+        courseTitle: row.courseTitle,
+        courseCode: row.courseCode,
+        coofferedCourseCode: row.coofferedCourseCode,
+        facultyInitial: row.facultyInitial,
+        section: row.section,
+        credits: row.credits,
+        day: row.day,
+        rawTime: row.rawTime,
+        startTime: row.startTime,
+        endTime: row.endTime,
+        timeParseOk: row.timeParseOk,
+        room: row.room,
+        courseType: row.courseType,
+        parsedSlots: row.parsedSlots,
         status,
         issues,
         resolvedCourseId: resolvedCourse?.id ?? null,
@@ -352,6 +446,8 @@ export async function POST(req: NextRequest) {
       previewRows,
     });
   } catch (error) {
+    console.error(error);
+
     const message =
       error instanceof Error ? error.message : "Failed to preview offering template.";
 

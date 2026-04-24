@@ -9,6 +9,15 @@ import {
   parseTimeRange,
 } from "@/lib/offering-template-normalize";
 
+export type ParsedTemplateSlot = {
+  day: string;
+  rawTime: string;
+  startTime: string;
+  endTime: string;
+  timeParseOk: boolean;
+  timeParseReason: string;
+};
+
 export type ParsedTemplateRow = {
   rowKey: string;
   sourceSheetName: string;
@@ -22,15 +31,21 @@ export type ParsedTemplateRow = {
   facultyInitial: string;
   section: string;
   credits: number;
+
   day: string;
   rawTime: string;
   startTime: string;
   endTime: string;
   timeParseOk: boolean;
   timeParseReason: string;
+
   tentativeEnrollment: string;
   room: string;
   courseType: string;
+
+  slot1: string;
+  slot2: string;
+  parsedSlots: ParsedTemplateSlot[];
 };
 
 export type ParsedTemplateResult = {
@@ -60,8 +75,13 @@ function rowLooksLikeData(row: unknown[]) {
   return Boolean(courseTitle && courseCode);
 }
 
+function normalizeDay(value: unknown) {
+  return normalizeText(value).toUpperCase();
+}
+
 export function parseOfferingTemplateWorkbook(fileBuffer: Buffer): ParsedTemplateResult {
   const workbook = XLSX.read(fileBuffer, { type: "buffer" });
+
   const preferredSheetName =
     workbook.SheetNames.find((name) => normalizeText(name).toUpperCase() === "FINAL") ||
     workbook.SheetNames[0];
@@ -96,9 +116,7 @@ export function parseOfferingTemplateWorkbook(fileBuffer: Buffer): ParsedTemplat
     }
 
     if (rowIsHeader(row)) {
-      if (currentBatchCode) {
-        insideBatchTable = true;
-      }
+      insideBatchTable = true;
       continue;
     }
 
@@ -110,30 +128,70 @@ export function parseOfferingTemplateWorkbook(fileBuffer: Buffer): ParsedTemplat
       continue;
     }
 
-    const timeInfo = parseTimeRange(row[8]);
+    const serialNo = normalizeText(row[0]);
+    const courseTitle = normalizeText(row[1]);
+    const courseCode = normalizeCourseCode(row[2]);
+    const coofferedCourseCode = normalizeCourseCode(row[3]);
+    const facultyInitial = normalizeTeacherCode(row[4]);
+    const section = normalizeText(row[5]);
+    const credits = parseCredit(row[6]);
+
+    const slot1 = normalizeDay(row[7]);
+    const slot2 = normalizeDay(row[8]);
+
+    const rawTime = normalizeText(row[9]).replace(/\s*\n\s*/g, " ");
+    const parsedTime = parseTimeRange(rawTime);
+
+    const room = normalizeRoomCode(row[10]);
+    const courseType = normalizeText(row[11]);
+    const tentativeEnrollment = "";
+
+    const parsedSlots: ParsedTemplateSlot[] = [];
+    const seenSlotKeys = new Set<string>();
+
+    for (const day of [slot1, slot2].filter(Boolean)) {
+      const slotKey = `${day}__${parsedTime.startTime || ""}__${parsedTime.endTime || ""}`;
+      if (seenSlotKeys.has(slotKey)) continue;
+      seenSlotKeys.add(slotKey);
+
+      parsedSlots.push({
+        day,
+        rawTime,
+        startTime: parsedTime.startTime,
+        endTime: parsedTime.endTime,
+        timeParseOk: parsedTime.ok,
+        timeParseReason: parsedTime.reason,
+      });
+    }
 
     rows.push({
-      rowKey: `${preferredSheetName}-${i + 1}-${currentBatchCode}-${normalizeCourseCode(row[2])}`,
+      rowKey: `${preferredSheetName}:${i + 1}:${currentBatchCode}:${courseCode}:${section}`,
       sourceSheetName: preferredSheetName,
       sourceRowNumber: i + 1,
       batchHeaderText: currentBatchHeaderText,
       batchCode: currentBatchCode,
-      serialNo: normalizeText(row[0]),
-      courseTitle: normalizeText(row[1]),
-      courseCode: normalizeCourseCode(row[2]),
-      coofferedCourseCode: normalizeCourseCode(row[3]),
-      facultyInitial: normalizeTeacherCode(row[4]),
-      section: normalizeText(row[5]),
-      credits: parseCredit(row[6]),
-      day: normalizeText(row[7]),
-      rawTime: normalizeText(row[8]),
-      startTime: timeInfo.startTime,
-      endTime: timeInfo.endTime,
-      timeParseOk: timeInfo.ok,
-      timeParseReason: timeInfo.reason,
-      tentativeEnrollment: "",
-      room: normalizeRoomCode(row[9]),
-      courseType: normalizeText(row[10]),
+      serialNo,
+      courseTitle,
+      courseCode,
+      coofferedCourseCode,
+      facultyInitial,
+      section,
+      credits,
+
+      day: parsedSlots.map((slot) => slot.day).join(" / "),
+      rawTime,
+      startTime: parsedTime.startTime,
+      endTime: parsedTime.endTime,
+      timeParseOk: parsedTime.ok,
+      timeParseReason: parsedTime.reason,
+
+      tentativeEnrollment,
+      room,
+      courseType,
+
+      slot1,
+      slot2,
+      parsedSlots,
     });
   }
 

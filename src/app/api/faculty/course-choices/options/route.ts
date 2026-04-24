@@ -7,8 +7,11 @@ import {
   getRemainingMinutes,
   processFacultySessionWarningsAndExpiry,
 } from "@/lib/faculty-session";
-import { canFacultyEdit, canFacultyViewOfferingStatus } from "@/lib/faculty-access";
-import { getFacultyChoiceWindowStatus, getFacultyLevelCreditPolicy } from "@/lib/system-settings";
+import { canFacultyEdit } from "@/lib/faculty-access";
+import {
+  getFacultyChoiceWindowStatus,
+  getFacultyLevelCreditPolicy,
+} from "@/lib/system-settings";
 import { getCurrentActiveFacultyTurn } from "@/lib/faculty-turn";
 
 const FACULTY_VISIBLE_OFFERING_STATUSES = [
@@ -16,38 +19,23 @@ const FACULTY_VISIBLE_OFFERING_STATUSES = [
   "FACULTY_CHOICE_FINALIZED",
 ];
 
-type SlotLike = {
-  day_of_week: string;
-  start_time: string;
-  end_time: string;
+type TeacherLite = {
+  teacher_id: number;
+  assigned_credit?: number | null;
+  teachers?: {
+    teacher_code: string;
+    full_name: string;
+  } | null;
 };
 
-function timeToMinutes(value: string) {
-  const [h, m] = value.split(":").map(Number);
-  return h * 60 + m;
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
-function slotsOverlap(a: SlotLike, b: SlotLike) {
-  if (String(a.day_of_week).toUpperCase() !== String(b.day_of_week).toUpperCase()) {
-    return false;
-  }
-
-  const aStart = timeToMinutes(a.start_time);
-  const aEnd = timeToMinutes(a.end_time);
-  const bStart = timeToMinutes(b.start_time);
-  const bEnd = timeToMinutes(b.end_time);
-
-  return aStart < bEnd && bStart < aEnd;
-}
-
-function sumDistinctCredits(
+function sumDistinctCreditsByCourse(
   rows: Array<{
     offered_course_id: number;
-    offered_courses: {
-      master_courses: {
-        credit: number;
-      };
-    };
+    credit: number;
   }>
 ) {
   const seen = new Set<number>();
@@ -56,10 +44,18 @@ function sumDistinctCredits(
   for (const row of rows) {
     if (seen.has(row.offered_course_id)) continue;
     seen.add(row.offered_course_id);
-    total += Number(row.offered_courses.master_courses.credit || 0);
+    total += Number(row.credit || 0);
   }
 
-  return total;
+  return Number(total.toFixed(2));
+}
+
+function overlaps(
+  a: { dayOfWeek: string; startTime: string; endTime: string },
+  b: { dayOfWeek: string; startTime: string; endTime: string }
+) {
+  if (a.dayOfWeek.toUpperCase() !== b.dayOfWeek.toUpperCase()) return false;
+  return a.startTime < b.endTime && b.startTime < a.endTime;
 }
 
 export async function GET(req: NextRequest) {
@@ -69,7 +65,19 @@ export async function GET(req: NextRequest) {
   try {
     if (!guard.teacher_id) {
       return NextResponse.json(
-        { error: "Faculty account is not linked to a teacher record." },
+        { error: "Faculty account is not linked to a faculty record." },
+        { status: 400 }
+      );
+    }
+
+    const { searchParams } = new URL(req.url);
+    const termName = String(searchParams.get("termName") || "")
+      .trim()
+      .toUpperCase();
+
+    if (!termName) {
+      return NextResponse.json(
+        { error: "termName is required." },
         { status: 400 }
       );
     }
@@ -79,44 +87,23 @@ export async function GET(req: NextRequest) {
 
     if (!sessionToken) {
       return NextResponse.json(
-        { error: "Faculty session token is missing." },
+        { error: "Faculty session token missing." },
+        { status: 401 }
+      );
+    }
+
+    const sessionCheck = await validateFacultySession(sessionToken);
+
+    if (!sessionCheck.valid || !sessionCheck.session) {
+      return NextResponse.json(
+        { error: sessionCheck.message || "Session expired." },
         { status: 401 }
       );
     }
 
     await processFacultySessionWarningsAndExpiry(sessionToken);
-    const sessionCheck = await validateFacultySession(sessionToken);
 
-    if (!sessionCheck.valid || !sessionCheck.session) {
-      return NextResponse.json(
-        { error: sessionCheck.message || "Faculty session is invalid." },
-        { status: 401 }
-      );
-    }
-
-    const teacher = await prisma.teachers.findUnique({
-      where: { id: guard.teacher_id },
-      include: {
-        departments: true,
-      },
-    });
-
-    if (!teacher) {
-      return NextResponse.json(
-        { error: "Faculty record not found." },
-        { status: 404 }
-      );
-    }
-
-    const { searchParams } = new URL(req.url);
-    const termName = String(searchParams.get("termName") || "").trim().toUpperCase();
-
-    if (!termName) {
-      return NextResponse.json(
-        { error: "termName is required." },
-        { status: 400 }
-      );
-    }
+    const teacherId = guard.teacher_id;
 
     const term = await prisma.academic_terms.findFirst({
       where: { name: termName },
@@ -130,20 +117,46 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const windowStatus = await getFacultyChoiceWindowStatus();
-    const creditPolicy = await getFacultyLevelCreditPolicy(teacher.seniority_level);
-    const activeTurn = await getCurrentActiveFacultyTurn();
+    const teacher = await prisma.teachers.findUnique({
+      where: { id: teacherId },
+      select: {
+        id: true,
+        teacher_code: true,
+        full_name: true,
+        designation: true,
+        seniority_level: true,
+        departments: {
+          select: {
+            short_name: true,
+            name: true,
+          },
+        },
+      },
+    });
 
+    if (!teacher) {
+      return NextResponse.json(
+        { error: "Faculty record is missing." },
+        { status: 404 }
+      );
+    }
+
+    const windowStatus = await getFacultyChoiceWindowStatus();
     const editAccess = await canFacultyEdit(sessionToken, {
       id: teacher.id,
       seniority_level: teacher.seniority_level,
     });
+    const activeTurn = await getCurrentActiveFacultyTurn();
+    const creditPolicy = await getFacultyLevelCreditPolicy(
+      teacher.seniority_level
+    );
 
     const selections = await prisma.faculty_course_selections.findMany({
       where: {
-        teacher_id: teacher.id,
+        teacher_id: teacherId,
         academic_term_id: term.id,
       },
+      orderBy: [{ priority_order: "asc" }, { id: "asc" }],
       include: {
         offered_courses: {
           include: {
@@ -186,14 +199,79 @@ export async function GET(req: NextRequest) {
           },
         },
       },
-      orderBy: [{ priority_order: "asc" }, { id: "asc" }],
     });
 
-    const ownChosenCourses = selections.map((x) => x.offered_courses);
-    const ownChosenSlots = ownChosenCourses.flatMap((x) => x.offered_course_slots);
-    const ownSelectedCourseIds = new Set(selections.map((x) => x.offered_course_id));
+    const preassignedRows = await prisma.offered_course_teachers.findMany({
+      where: {
+        teacher_id: teacherId,
+        offered_courses: {
+          offerings: {
+            academic_term_id: term.id,
+          },
+        },
+      },
+      include: {
+        offered_courses: {
+          include: {
+            master_courses: true,
+            offered_course_slots: {
+              include: {
+                rooms: true,
+              },
+            },
+          },
+        },
+      },
+    });
 
-    const offerings = await prisma.offered_courses.findMany({
+    const preassignedCourseIds = new Set(
+      preassignedRows.map((row) => row.offered_course_id)
+    );
+
+    const bufferedOrFinalSelections = selections.filter(
+      (row) => row.status === "BUFFER" || row.status === "FINAL"
+    );
+
+    const selectedCourseIds = new Set(
+      bufferedOrFinalSelections.map((row) => row.offered_course_id)
+    );
+
+    const preassignedCredits = sumDistinctCreditsByCourse(
+      preassignedRows.map((row) => ({
+        offered_course_id: row.offered_course_id,
+        credit: Number(row.offered_courses.master_courses.credit || 0),
+      }))
+    );
+
+    const chosenCredits = sumDistinctCreditsByCourse(
+      bufferedOrFinalSelections.map((row) => ({
+        offered_course_id: row.offered_course_id,
+        credit: Number(row.offered_courses.master_courses.credit || 0),
+      }))
+    );
+
+    const combinedCurrentCredits = Number(
+      (preassignedCredits + chosenCredits).toFixed(2)
+    );
+
+    const occupiedSchedules = [
+      ...preassignedRows.flatMap((row) =>
+        row.offered_courses.offered_course_slots.map((slot) => ({
+          dayOfWeek: slot.day_of_week,
+          startTime: slot.start_time,
+          endTime: slot.end_time,
+        }))
+      ),
+      ...bufferedOrFinalSelections.flatMap((row) =>
+        row.offered_courses.offered_course_slots.map((slot) => ({
+          dayOfWeek: slot.day_of_week,
+          startTime: slot.start_time,
+          endTime: slot.end_time,
+        }))
+      ),
+    ];
+
+    const offeredCourses = await prisma.offered_courses.findMany({
       where: {
         primary_offered_course_id: null,
         offerings: {
@@ -203,9 +281,18 @@ export async function GET(req: NextRequest) {
           },
         },
       },
-      orderBy: [{ section: "asc" }, { id: "asc" }],
+      orderBy: [
+        { offerings: { program_id: "asc" } },
+        { section: "asc" },
+        { id: "asc" },
+      ],
       include: {
-        offerings: true,
+        offerings: {
+          include: {
+            programs: true,
+            academic_terms: true,
+          },
+        },
         master_courses: {
           include: {
             program: true,
@@ -245,93 +332,142 @@ export async function GET(req: NextRequest) {
           where: {
             academic_term_id: term.id,
           },
-          include: {
-            teachers: true,
+          select: {
+            teacher_id: true,
+            status: true,
           },
         },
       },
     });
 
-    const availableCourses = offerings
-      .filter((row) => canFacultyViewOfferingStatus(row.offerings.status))
-      .map((course) => {
-        const finalByOther = course.faculty_course_selections.find(
-          (x) => x.status === "FINAL" && x.teacher_id !== teacher.id
+    const availableCourses = offeredCourses.map((course) => {
+      const assignedTeachers = (course.offered_course_teachers || []) as TeacherLite[];
+
+      const assignedTeacherIds = assignedTeachers.map((row) => row.teacher_id);
+
+      const assignedTeacherCodes = uniqueStrings(
+        assignedTeachers.map((row) => row.teachers?.teacher_code || "")
+      );
+
+      const assignedTeacherText = uniqueStrings(
+        assignedTeachers.map((row) =>
+          row.teachers?.teacher_code && row.teachers?.full_name
+            ? `${row.teachers.teacher_code} - ${row.teachers.full_name}`
+            : ""
+        )
+      );
+
+      const isPreassigned = assignedTeacherIds.length > 0;
+      const isPreassignedToCurrentFaculty = assignedTeacherIds.includes(teacherId);
+      const isPreassignedToAnotherFaculty =
+        isPreassigned && !isPreassignedToCurrentFaculty;
+
+      const isInMyBufferOrFinal = selectedCourseIds.has(course.id);
+      const isAlreadyInMyOfficialLoad = preassignedCourseIds.has(course.id);
+
+      const othersFinal = course.faculty_course_selections.find(
+        (row) => row.teacher_id !== teacherId && row.status === "FINAL"
+      );
+
+      const othersBufferCount = course.faculty_course_selections.filter(
+        (row) => row.teacher_id !== teacherId && row.status === "BUFFER"
+      ).length;
+
+      const schedule = course.offered_course_slots.map((slot) => ({
+        id: slot.id,
+        dayOfWeek: slot.day_of_week,
+        startTime: slot.start_time,
+        endTime: slot.end_time,
+        roomCode:
+          (slot.rooms as unknown as { room_number?: string | number | null })
+            ?.room_number !== undefined &&
+          (slot.rooms as unknown as { room_number?: string | number | null })
+            ?.room_number !== null
+            ? String(
+                (slot.rooms as unknown as { room_number?: string | number | null })
+                  .room_number
+              )
+            : slot.rooms?.room_code || "-",
+      }));
+
+      let selectionState:
+        | "FREE"
+        | "YOU_BUFFER"
+        | "YOU_FINAL"
+        | "YOU_PREASSIGNED"
+        | "TAKEN_FINAL"
+        | "BUFFERED_BY_OTHERS" = "FREE";
+
+      const mySelection = selections.find(
+        (row) => row.offered_course_id === course.id
+      );
+
+      if (isAlreadyInMyOfficialLoad) {
+        selectionState = "YOU_PREASSIGNED";
+      } else if (mySelection?.status === "FINAL") {
+        selectionState = "YOU_FINAL";
+      } else if (mySelection?.status === "BUFFER") {
+        selectionState = "YOU_BUFFER";
+      } else if (othersFinal) {
+        selectionState = "TAKEN_FINAL";
+      } else if (othersBufferCount > 0) {
+        selectionState = "BUFFERED_BY_OTHERS";
+      }
+
+      let locked = false;
+      let lockReason = "";
+
+      if (isPreassignedToAnotherFaculty) {
+        locked = true;
+        lockReason = "Already preassigned to another faculty.";
+      } else if (isAlreadyInMyOfficialLoad) {
+        locked = true;
+        lockReason = "Already preassigned to you.";
+      } else if (selectionState === "TAKEN_FINAL") {
+        locked = true;
+        lockReason = "Already finalized by another faculty.";
+      } else {
+        const hasScheduleConflict = schedule.some((slot) =>
+          occupiedSchedules.some((occupied) => overlaps(slot, occupied))
         );
 
-        const bufferedByOthers = course.faculty_course_selections.filter(
-          (x) => x.status === "BUFFER" && x.teacher_id !== teacher.id
-        );
+        if (!isInMyBufferOrFinal && hasScheduleConflict) {
+          locked = true;
+          lockReason =
+            "Conflicts with your existing preassigned/buffered/finalized load.";
+        }
+      }
 
-        const ownFinal = course.faculty_course_selections.find(
-          (x) => x.status === "FINAL" && x.teacher_id === teacher.id
-        );
-
-        const ownBuffer = course.faculty_course_selections.find(
-          (x) => x.status === "BUFFER" && x.teacher_id === teacher.id
-        );
-
-        const hasOwnSlotConflict =
-          !ownFinal &&
-          !ownBuffer &&
-          course.offered_course_slots.length > 0 &&
-          ownChosenSlots.length > 0 &&
-          course.offered_course_slots.some((slotA) =>
-            ownChosenSlots.some((slotB) => slotsOverlap(slotA, slotB))
-          );
-
-        return {
-          id: course.id,
-          section: course.section,
-          offeringStatus: course.offerings.status,
-          programCode: course.master_courses.program.short_name,
-          programName: course.master_courses.program.name,
-          courseCode: course.master_courses.course_code,
-          courseTitle: course.master_courses.course_title,
-          credit: Number(course.master_courses.credit || 0),
-          batchCodes: course.offered_course_batches.map((x) => x.batches.batch_code),
-          teacherCodes: course.offered_course_teachers.map(
-            (x) => x.teachers?.teacher_code || "-"
-          ),
-          schedule: course.offered_course_slots.map((slot) => ({
-            id: slot.id,
-            dayOfWeek: slot.day_of_week,
-            startTime: slot.start_time,
-            endTime: slot.end_time,
-            roomCode: slot.rooms?.room_code ?? "-",
-          })),
-          linkedSecondaryCourses: course.secondary_offered_courses.map((secondary) => ({
-            id: secondary.id,
-            courseCode: secondary.master_courses.course_code,
-            courseTitle: secondary.master_courses.course_title,
-            section: secondary.section,
-            programCode: secondary.master_courses.program.short_name,
-            batchCodes: secondary.offered_course_batches.map((x) => x.batches.batch_code),
-          })),
-          selectionState: ownFinal
-            ? "YOU_FINAL"
-            : ownBuffer
-            ? "YOU_BUFFER"
-            : finalByOther
-            ? "TAKEN_FINAL"
-            : bufferedByOthers.length > 0
-            ? "BUFFERED_BY_OTHERS"
-            : "FREE",
-          hasOwnSlotConflict,
-          finalizedByOtherFaculty: finalByOther
-            ? {
-                teacherId: finalByOther.teacher_id,
-                teacherCode: finalByOther.teachers?.teacher_code || "-",
-                teacherName: finalByOther.teachers?.full_name || "-",
-              }
-            : null,
-          bufferedByOtherFacultyCount: bufferedByOthers.length,
-        };
-      })
-      .filter((course) => course.selectionState !== "TAKEN_FINAL");
-
-    const currentSelectedCredits = sumDistinctCredits(selections);
-    const hasFinalized = selections.some((row) => row.status === "FINAL");
+      return {
+        id: course.id,
+        section: course.section,
+        offeringStatus: course.offerings.status,
+        programCode: course.master_courses.program.short_name,
+        programName: course.master_courses.program.name,
+        courseCode: course.master_courses.course_code,
+        courseTitle: course.master_courses.course_title,
+        credit: Number(course.master_courses.credit || 0),
+        batchCodes: course.offered_course_batches.map((x) => x.batches.batch_code),
+        teacherCodes: assignedTeacherCodes,
+        teacherText: assignedTeacherText,
+        schedule,
+        linkedSecondaryCourses: course.secondary_offered_courses.map((secondary) => ({
+          id: secondary.id,
+          courseCode: secondary.master_courses.course_code,
+          courseTitle: secondary.master_courses.course_title,
+          section: secondary.section,
+          programCode: secondary.master_courses.program.short_name,
+          batchCodes: secondary.offered_course_batches.map((x) => x.batches.batch_code),
+        })),
+        selectionState,
+        isPreassigned,
+        isPreassignedToCurrentFaculty,
+        isPreassignedToAnotherFaculty,
+        locked,
+        lockReason,
+        bufferedByOthersCount: othersBufferCount,
+      };
+    });
 
     return NextResponse.json({
       success: true,
@@ -340,7 +476,7 @@ export async function GET(req: NextRequest) {
         teacher_code: teacher.teacher_code,
         full_name: teacher.full_name,
         designation: teacher.designation,
-        department_code: teacher.departments?.short_name || null,
+        department_code: teacher.departments?.short_name || "",
         seniority_level: teacher.seniority_level,
       },
       term: {
@@ -356,11 +492,19 @@ export async function GET(req: NextRequest) {
             seniorityLevel: activeTurn.seniorityLevel,
           }
         : null,
-      canEdit: editAccess.allowed && !hasFinalized,
+      canEdit: editAccess.allowed,
       editMessage: editAccess.allowed ? "" : editAccess.message,
-      hasFinalized,
+      hasFinalized: selections.some((row) => row.status === "FINAL"),
       creditPolicy,
-      currentSelectedCredits,
+      preassignedCredits,
+      chosenCredits,
+      combinedCurrentCredits,
+      currentSelectedCredits: combinedCurrentCredits,
+      remainingSelectableCredits:
+        creditPolicy?.maxCredits !== null &&
+        creditPolicy?.maxCredits !== undefined
+          ? Number((creditPolicy.maxCredits - preassignedCredits).toFixed(2))
+          : null,
       sessionRemainingMinutes: getRemainingMinutes(sessionCheck.session.expires_at),
       availableCourses,
       selections: selections.map((selection) => ({
@@ -368,8 +512,12 @@ export async function GET(req: NextRequest) {
         offeredCourseId: selection.offered_course_id,
         priorityOrder: selection.priority_order,
         status: selection.status,
-        selectedAt: selection.selected_at ? selection.selected_at.toISOString() : null,
-        confirmedAt: selection.confirmed_at ? selection.confirmed_at.toISOString() : null,
+        selectedAt: selection.selected_at
+          ? selection.selected_at.toISOString()
+          : null,
+        confirmedAt: selection.confirmed_at
+          ? selection.confirmed_at.toISOString()
+          : null,
         course: {
           id: selection.offered_courses.id,
           section: selection.offered_courses.section,
@@ -390,24 +538,32 @@ export async function GET(req: NextRequest) {
             dayOfWeek: slot.day_of_week,
             startTime: slot.start_time,
             endTime: slot.end_time,
-            roomCode: slot.rooms?.room_code ?? "-",
+            roomCode: slot.rooms?.room_code || "-",
           })),
-          linkedSecondaryCourses:
-            selection.offered_courses.secondary_offered_courses.map((secondary) => ({
-              id: secondary.id,
-              courseCode: secondary.master_courses.course_code,
-              courseTitle: secondary.master_courses.course_title,
-              section: secondary.section,
-              programCode: secondary.master_courses.program.short_name,
-              batchCodes: secondary.offered_course_batches.map((x) => x.batches.batch_code),
-            })),
+        },
+      })),
+      preassignedCourses: preassignedRows.map((assignment) => ({
+        offeredCourseId: assignment.offered_course_id,
+        assignedCredit: Number(assignment.assigned_credit || 0),
+        loadType: assignment.load_type,
+        course: {
+          id: assignment.offered_courses.id,
+          section: assignment.offered_courses.section,
+          courseCode: assignment.offered_courses.master_courses.course_code,
+          courseTitle: assignment.offered_courses.master_courses.course_title,
+          credit: Number(assignment.offered_courses.master_courses.credit || 0),
         },
       })),
     });
   } catch (error) {
     console.error(error);
     return NextResponse.json(
-      { error: "Failed to load faculty course choice options." },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load faculty course choice options.",
+      },
       { status: 500 }
     );
   }
