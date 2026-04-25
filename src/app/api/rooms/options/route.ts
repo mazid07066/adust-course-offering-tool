@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { SCHEDULE_CONFLICT_STATUSES } from "@/lib/course-schedule-policy";
 
 function isValidTime(value: string) {
   return /^\d{2}:\d{2}$/.test(value);
@@ -67,7 +68,7 @@ export async function GET(req: NextRequest) {
                   offered_courses: {
                     offerings: {
                       status: {
-                        in: ["DRAFT", "CONFIRMED"],
+                        in: SCHEDULE_CONFLICT_STATUSES,
                       },
                     },
                   },
@@ -94,7 +95,9 @@ export async function GET(req: NextRequest) {
         const parsed = splitStoredRoomCode(room.room_code);
         return {
           id: room.id,
-          roomCode: `${parsed.roomCode} | ${parsed.roomNumber} | ${room.room_type}`,
+          room_code: room.room_code,
+          room_type: room.room_type,
+          roomCode: `${parsed.roomCode}${parsed.roomNumber ? ` | ${parsed.roomNumber}` : ""} | ${room.room_type}`,
         };
       }),
     });

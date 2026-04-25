@@ -1,4 +1,4 @@
-export const OFFERING_STATUS = {
+﻿export const OFFERING_STATUS = {
   DRAFT: "DRAFT",
   BUFFER_READY: "BUFFER_READY",
   FACULTY_CHOICE_BUFFER: "FACULTY_CHOICE_BUFFER",
@@ -23,10 +23,6 @@ export function canDeleteOffering(status: string) {
   return clean === OFFERING_STATUS.DRAFT;
 }
 
-/**
- * Backward-compatible alias.
- * Some older routes still import canDelete.
- */
 export function canDelete(status: string) {
   return canDeleteOffering(status);
 }
@@ -36,7 +32,9 @@ export function canModifySlots(status: string) {
 
   return (
     clean === OFFERING_STATUS.DRAFT ||
-    clean === OFFERING_STATUS.BUFFER_READY
+    clean === OFFERING_STATUS.BUFFER_READY ||
+    clean === OFFERING_STATUS.FACULTY_CHOICE_BUFFER ||
+    clean === OFFERING_STATUS.FACULTY_CHOICE_FINALIZED
   );
 }
 
