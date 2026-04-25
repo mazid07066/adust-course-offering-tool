@@ -1,16 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
-import {
-  getFacultyLoadLevel,
-  getFacultyLoadMessage,
-} from "@/lib/faculty-assignment-policy";
-
-const REPORT_VISIBLE_OFFERING_STATUSES = [
-  "FACULTY_CHOICE_BUFFER",
-  "FACULTY_CHOICE_FINALIZED",
-  "CONFIRMED",
-];
+import { normalizeReportParam } from "@/lib/report-visible-statuses";
 
 function csvEscape(value: string | number | null | undefined) {
   const text = String(value ?? "");
@@ -20,13 +11,21 @@ function csvEscape(value: string | number | null | undefined) {
   return text;
 }
 
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
 export async function GET(req: NextRequest) {
   const guard = await requireCoordinatorOrAdminApi();
   if (guard instanceof Response) return guard;
 
   try {
     const { searchParams } = new URL(req.url);
-    const termName = String(searchParams.get("termName") || "").trim().toUpperCase();
+
+    const termName = normalizeReportParam(searchParams.get("termName"));
+    const programCode = normalizeReportParam(searchParams.get("programCode"));
+    const batchCode = normalizeReportParam(searchParams.get("batchCode"));
+    const teacherId = Number(searchParams.get("teacherId") || 0);
 
     if (!termName) {
       return NextResponse.json(
@@ -49,21 +48,43 @@ export async function GET(req: NextRequest) {
 
     const assignments = await prisma.offered_course_teachers.findMany({
       where: {
+        ...(teacherId ? { teacher_id: teacherId } : {}),
         offered_courses: {
-          primary_offered_course_id: null,
           offerings: {
             academic_term_id: term.id,
-            status: {
-              in: REPORT_VISIBLE_OFFERING_STATUSES,
-            },
           },
+          ...(programCode
+            ? {
+                master_courses: {
+                  program: {
+                    short_name: programCode,
+                  },
+                },
+              }
+            : {}),
+          ...(batchCode
+            ? {
+                offered_course_batches: {
+                  some: {
+                    batches: {
+                      batch_code: batchCode,
+                    },
+                  },
+                },
+              }
+            : {}),
         },
       },
-      orderBy: [{ teacher_id: "asc" }, { offered_course_id: "asc" }],
+      orderBy: [
+        { teacher_id: "asc" },
+        { offered_course_id: "asc" },
+        { id: "asc" },
+      ],
       include: {
         teachers: true,
         offered_courses: {
           include: {
+            offerings: true,
             master_courses: {
               include: {
                 program: true,
@@ -76,7 +97,11 @@ export async function GET(req: NextRequest) {
             },
             secondary_offered_courses: {
               include: {
-                master_courses: true,
+                master_courses: {
+                  include: {
+                    program: true,
+                  },
+                },
               },
             },
           },
@@ -88,67 +113,73 @@ export async function GET(req: NextRequest) {
       "Teacher Code",
       "Teacher Name",
       "Designation",
+      "Offering Status",
+      "Program",
       "Course Code",
       "Course Title",
       "Section",
-      "Program",
+      "Load Type",
       "Assigned Credit",
       "Batches",
       "Linked Secondary Courses",
-      "Load Level",
-      "Load Message",
     ];
-
-    const teacherCreditMap = new Map<number, number>();
-
-    for (const row of assignments) {
-      teacherCreditMap.set(
-        row.teacher_id,
-        (teacherCreditMap.get(row.teacher_id) || 0) +
-          Number(row.assigned_credit || 0)
-      );
-    }
 
     const lines = [headers.map(csvEscape).join(",")];
 
     for (const row of assignments) {
-      const totalAssignedCredits = teacherCreditMap.get(row.teacher_id) || 0;
-
       lines.push(
         [
           row.teachers.teacher_code,
           row.teachers.full_name,
           row.teachers.designation || "-",
+          row.offered_courses.offerings.status,
+          row.offered_courses.master_courses.program.short_name,
           row.offered_courses.master_courses.course_code,
           row.offered_courses.master_courses.course_title,
           row.offered_courses.section,
-          row.offered_courses.master_courses.program.short_name,
+          row.load_type,
           Number(row.assigned_credit || 0),
-          row.offered_courses.offered_course_batches
-            .map((x) => x.batches.batch_code)
-            .join(", "),
-          row.offered_courses.secondary_offered_courses
-            .map((secondary) => secondary.master_courses.course_code)
-            .join(", "),
-          getFacultyLoadLevel(totalAssignedCredits),
-          getFacultyLoadMessage(totalAssignedCredits),
+          uniqueStrings(
+            row.offered_courses.offered_course_batches.map(
+              (x) => x.batches.batch_code
+            )
+          ).join(", "),
+          uniqueStrings(
+            row.offered_courses.secondary_offered_courses.map(
+              (secondary) =>
+                `${secondary.master_courses.program.short_name}:${secondary.master_courses.course_code}`
+            )
+          ).join(", "),
         ]
           .map(csvEscape)
           .join(",")
       );
     }
 
+    const filterPart = [
+      term.name.replace(/\s+/g, "_"),
+      teacherId ? `TEACHER_${teacherId}` : "ALL_FACULTY",
+      programCode || "ALL_PROGRAMS",
+      batchCode || "ALL_BATCHES",
+    ].join("_");
+
     return new NextResponse(lines.join("\n"), {
       status: 200,
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="faculty_load_${term.name.replace(/\s+/g, "_")}.csv"`,
+        "Content-Disposition": `attachment; filename="faculty_load_${filterPart}.csv"`,
       },
     });
   } catch (error) {
-    console.error(error);
+    console.error("Faculty load export error:", error);
+
     return NextResponse.json(
-      { error: "Failed to export faculty load report." },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to export faculty load report.",
+      },
       { status: 500 }
     );
   }
