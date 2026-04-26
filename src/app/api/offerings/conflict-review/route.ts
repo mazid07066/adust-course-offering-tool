@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { analyzeOfferingConflicts, OfferingRowInput } from "@/lib/offering-conflicts";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 function parseAcademicTerm(termName: string) {
   const match = termName.trim().toUpperCase().match(/^(SPRING|SUMMER|FALL)\s+(\d{4})$/);
@@ -31,6 +32,7 @@ export async function POST(request: NextRequest) {
     } = body;
 
     if (!suggested_term_name || !Array.isArray(rows)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "suggested_term_name and rows are required" },
         { status: 400 }
@@ -56,6 +58,7 @@ export async function POST(request: NextRequest) {
 
     const result = await analyzeOfferingConflicts(term.id, rows);
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       success: true,
       ...result,
@@ -63,6 +66,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error(error);
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to review conflicts",

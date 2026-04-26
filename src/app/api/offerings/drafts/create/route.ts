@@ -4,6 +4,7 @@ import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { getCatalogProgramByCode } from "@/lib/academic-catalog";
 import { resolveCanonicalProgram } from "@/lib/canonical-program";
 import { parseAcademicTerm } from "@/lib/semester-utils";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 type ProgramCandidate = {
   id: number;
@@ -347,6 +348,7 @@ export async function POST(req: NextRequest) {
     const termName = String(body.termName || "").trim().toUpperCase();
 
     if (!programCode || !termName) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -359,6 +361,7 @@ export async function POST(req: NextRequest) {
     const resolved = await getProgramCandidates(programCode);
 
     if (resolved.candidates.length === 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -393,6 +396,7 @@ export async function POST(req: NextRequest) {
     if (existingDraft) {
       const removedCount = await deduplicateDraftByLatest(existingDraft.id);
 
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json({
         ok: true,
         draftId: existingDraft.id,
@@ -426,6 +430,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       draftId: draft.id,
@@ -437,6 +442,7 @@ export async function POST(req: NextRequest) {
     const message =
       error instanceof Error ? error.message : "Failed to create draft offering.";
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,

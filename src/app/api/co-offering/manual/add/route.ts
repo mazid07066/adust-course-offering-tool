@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 function normalizeText(value: unknown) {
   return String(value ?? "").trim().toUpperCase();
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest) {
     const noteRaw = String(body.note ?? "").trim();
 
     if (!Number.isFinite(offeredCourseId) || offeredCourseId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid offeredCourseId is required." },
         { status: 400 }
@@ -25,6 +27,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!manualCourseCode) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "manualCourseCode is required." },
         { status: 400 }
@@ -39,6 +42,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!offeredCourse) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Offered course not found." },
         { status: 404 }
@@ -46,6 +50,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!["DRAFT", "BUFFER_READY"].includes(String(offeredCourse.offerings.status || ""))) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Manual co-offered codes can only be edited before final publish." },
         { status: 400 }
@@ -64,6 +69,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (existing) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "This manual co-offered code already exists for the selected section." },
         { status: 400 }
@@ -81,6 +87,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       message: "Manual co-offered code added successfully.",
@@ -90,6 +97,7 @@ export async function POST(req: NextRequest) {
     const message =
       error instanceof Error ? error.message : "Failed to add manual co-offered code.";
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,

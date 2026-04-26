@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { createFacultyNotification } from "@/lib/faculty-notifications";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 export async function POST(req: NextRequest) {
   const guard = await requireCoordinatorOrAdminApi();
@@ -13,6 +14,7 @@ export async function POST(req: NextRequest) {
     const termName = String(body.termName || "").trim().toUpperCase();
 
     if (!teacherId || !termName) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "teacherId and termName are required." },
         { status: 400 }
@@ -31,6 +33,7 @@ export async function POST(req: NextRequest) {
     ]);
 
     if (!teacher || !term) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "Teacher or term not found." },
         { status: 404 }
@@ -64,12 +67,14 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       success: true,
       message: "Faculty choices cleared successfully.",
     });
   } catch (error) {
     console.error(error);
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       { error: "Failed to clear faculty choices." },
       { status: 500 }

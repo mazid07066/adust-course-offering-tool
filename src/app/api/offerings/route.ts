@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 type OfferingListItem = {
   id: number;
@@ -126,6 +127,7 @@ export async function POST(req: NextRequest) {
   const status = normalizeText(body.status) || "DRAFT";
 
   if (!programCode) {
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       { error: "programCode is required." },
       { status: 400 }
@@ -133,6 +135,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (!termName) {
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       { error: "termName is required." },
       { status: 400 }
@@ -146,6 +149,7 @@ export async function POST(req: NextRequest) {
   });
 
   if (!program) {
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       { error: `Program not found for code: ${programCode}` },
       { status: 404 }
@@ -159,6 +163,7 @@ export async function POST(req: NextRequest) {
   });
 
   if (!term) {
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       { error: `Academic term not found: ${termName}` },
       { status: 404 }
@@ -168,6 +173,7 @@ export async function POST(req: NextRequest) {
   const activeUser = await findActivePrivilegedUser();
 
   if (!activeUser) {
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         error:
@@ -192,6 +198,7 @@ export async function POST(req: NextRequest) {
   });
 
   if (existing) {
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       reused: true,
@@ -224,6 +231,7 @@ export async function POST(req: NextRequest) {
     },
   });
 
+  clearReportingCacheWithLog("offering/reporting data changed");
   return NextResponse.json({
     ok: true,
     created: true,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { resolveCanonicalProgram } from "@/lib/canonical-program";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 const ROUTE_VERSION = "manual-special-offering-with-real-cooffer-v2";
 
@@ -375,6 +376,7 @@ export async function POST(request: NextRequest) {
     const manualAliasCodes = parseManualAliasCodesText(body.manualAliasCodesText);
 
     if (!Number.isFinite(draftId) || draftId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -386,6 +388,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!primaryCourseCode) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -397,6 +400,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!primaryCourseTitle) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -408,6 +412,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!section) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -419,6 +424,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!Number.isFinite(credit) || credit <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -440,6 +446,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!draft) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -451,6 +458,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (draft.status !== "DRAFT") {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -752,6 +760,7 @@ export async function POST(request: NextRequest) {
       };
     });
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       routeVersion: ROUTE_VERSION,
@@ -771,6 +780,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("MANUAL SPECIAL OFFERING ERROR", error);
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,

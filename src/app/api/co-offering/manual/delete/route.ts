@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,6 +11,7 @@ export async function POST(req: NextRequest) {
     const manualCoofferId = Number(body.manualCoofferId);
 
     if (!Number.isFinite(manualCoofferId) || manualCoofferId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid manualCoofferId is required." },
         { status: 400 }
@@ -30,6 +32,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!existing) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Manual co-offered code entry not found." },
         { status: 404 }
@@ -37,6 +40,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!["DRAFT", "BUFFER_READY"].includes(String(existing.offered_courses.offerings.status || ""))) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Manual co-offered codes can only be edited before final publish." },
         { status: 400 }
@@ -49,6 +53,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       message: "Manual co-offered code removed successfully.",
@@ -57,6 +62,7 @@ export async function POST(req: NextRequest) {
     const message =
       error instanceof Error ? error.message : "Failed to remove manual co-offered code.";
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,

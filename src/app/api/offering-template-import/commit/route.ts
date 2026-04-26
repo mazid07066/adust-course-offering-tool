@@ -12,6 +12,7 @@ import {
 } from "@/lib/offering-template-normalize";
 import { resolveCanonicalProgram } from "@/lib/canonical-program";
 import { buildPendingManualCoofferNote } from "@/lib/offering-template-cooffer";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -310,6 +311,7 @@ export async function POST(req: NextRequest) {
     const rows = Array.isArray(body.rows) ? (body.rows as CommitRow[]) : [];
 
     if (!requestedProgramCode) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "programCode is required." },
         { status: 400 }
@@ -317,6 +319,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!termName) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "termName is required." },
         { status: 400 }
@@ -324,6 +327,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!rows.length) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "No preview rows were provided for commit." },
         { status: 400 }
@@ -333,6 +337,7 @@ export async function POST(req: NextRequest) {
     const usableRows = rows.filter((row) => row.status !== "BLOCKED");
 
     if (!usableRows.length) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "No usable rows found for commit." },
         { status: 400 }
@@ -575,6 +580,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       message: "Offering template committed into draft successfully.",
@@ -597,6 +603,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("Offering template commit error:", error);
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,

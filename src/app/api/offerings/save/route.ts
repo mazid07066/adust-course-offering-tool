@@ -8,6 +8,7 @@ import {
   normalizeCourseCode,
   normalizeTitle,
 } from "@/lib/offering-conflicts";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 function parseAcademicTerm(termName: string) {
   const match = termName.trim().toUpperCase().match(/^(SPRING|SUMMER|FALL)\s+(\d{4})$/);
@@ -179,6 +180,7 @@ export async function POST(request: NextRequest) {
     } = body;
 
     if (!program_id || !batch_id || !suggested_term_name || !Array.isArray(rows) || rows.length === 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "program_id, batch_id, suggested_term_name, and rows are required" },
         { status: 400 }
@@ -215,6 +217,7 @@ export async function POST(request: NextRequest) {
       const analysis = await analyzeOfferingConflicts(term.id, newRows);
 
       if (analysis.hasBlockingConflicts) {
+        clearReportingCacheWithLog("offering/reporting data changed");
         return NextResponse.json(
           {
             error: analysis.conflicts[0]?.message || "Blocking conflict found.",
@@ -240,6 +243,7 @@ export async function POST(request: NextRequest) {
         });
 
         if (!existingConfirmed) {
+          clearReportingCacheWithLog("offering/reporting data changed");
           return NextResponse.json(
             {
               error:
@@ -267,6 +271,7 @@ export async function POST(request: NextRequest) {
 
     for (const row of newRows) {
       if (!targetOfferingId) {
+        clearReportingCacheWithLog("offering/reporting data changed");
         return NextResponse.json(
           { error: "Target offering was not prepared for new rows." },
           { status: 500 }
@@ -338,6 +343,7 @@ export async function POST(request: NextRequest) {
       });
 
       if (!targetCourse) {
+        clearReportingCacheWithLog("offering/reporting data changed");
         return NextResponse.json(
           { error: "Reusable section not found in the selected term." },
           { status: 404 }
@@ -345,6 +351,7 @@ export async function POST(request: NextRequest) {
       }
 
       if (!row.batch_ids || row.batch_ids.length === 0) {
+        clearReportingCacheWithLog("offering/reporting data changed");
         return NextResponse.json(
           { error: "At least one batch is required for reusable co-offering rows." },
           { status: 400 }
@@ -357,6 +364,7 @@ export async function POST(request: NextRequest) {
 
       const duplicateBatches = row.batch_ids.filter((id) => alreadyAttachedBatchIds.has(id));
       if (duplicateBatches.length > 0) {
+        clearReportingCacheWithLog("offering/reporting data changed");
         return NextResponse.json(
           {
             error: `One or more selected batches are already attached to reusable section ${targetCourse.master_courses.course_code} section ${targetCourse.section}.`,
@@ -372,6 +380,7 @@ export async function POST(request: NextRequest) {
       );
 
       if (eligibilityErrors.length > 0) {
+        clearReportingCacheWithLog("offering/reporting data changed");
         return NextResponse.json(
           { error: eligibilityErrors[0], conflicts: eligibilityErrors.map((m) => ({ message: m })) },
           { status: 400 }
@@ -387,6 +396,7 @@ export async function POST(request: NextRequest) {
       );
 
       if (duplicateAssignmentErrors.length > 0) {
+        clearReportingCacheWithLog("offering/reporting data changed");
         return NextResponse.json(
           { error: duplicateAssignmentErrors[0], conflicts: duplicateAssignmentErrors.map((m) => ({ message: m })) },
           { status: 400 }
@@ -412,6 +422,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       success: true,
       message:
@@ -428,6 +439,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error(error);
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to save offering",

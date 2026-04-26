@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { OFFERING_STATUS } from "@/lib/offering-status";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,6 +49,7 @@ export async function POST(_req: NextRequest, context: RouteContext) {
     const offeringId = Number(params.id);
 
     if (!offeringId || Number.isNaN(offeringId)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid offering id is required." },
         { status: 400 }
@@ -72,6 +74,7 @@ export async function POST(_req: NextRequest, context: RouteContext) {
     });
 
     if (!offering) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Offering not found." },
         { status: 404 }
@@ -81,6 +84,7 @@ export async function POST(_req: NextRequest, context: RouteContext) {
     const currentStatus = normalizeText(offering.status);
 
     if (currentStatus === OFFERING_STATUS.FACULTY_CHOICE_BUFFER) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json({
         ok: true,
         message: "Offering is already open for faculty choice.",
@@ -97,6 +101,7 @@ export async function POST(_req: NextRequest, context: RouteContext) {
       currentStatus !== OFFERING_STATUS.DRAFT &&
       currentStatus !== OFFERING_STATUS.BUFFER_READY
     ) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -134,6 +139,7 @@ export async function POST(_req: NextRequest, context: RouteContext) {
     }
 
     if (blockers.length > 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -167,6 +173,7 @@ export async function POST(_req: NextRequest, context: RouteContext) {
       },
     });
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       message: "Offering is now open for faculty choice.",
@@ -180,6 +187,7 @@ export async function POST(_req: NextRequest, context: RouteContext) {
   } catch (error) {
     console.error("Publish draft offering error:", error);
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,

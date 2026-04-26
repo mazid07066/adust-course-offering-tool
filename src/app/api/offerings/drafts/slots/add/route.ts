@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { getSectionGroupBatchIds, getSectionGroupCourseIds } from "@/lib/offering-section-group";
 import { canModifySlots } from "@/lib/offering-status";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 const ALLOWED_DAYS = ["THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY", "MONDAY"];
 const ALLOWED_DURATIONS_MINUTES = [60, 90, 120, 180];
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
     const roomId = Number(body.roomId);
 
     if (!Number.isFinite(offeredCourseId) || offeredCourseId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid offeredCourseId is required." },
         { status: 400 }
@@ -48,6 +50,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!ALLOWED_DAYS.includes(dayOfWeek)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -58,6 +61,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!isValidTime(startTime) || !isValidTime(endTime)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -68,6 +72,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (startTime >= endTime) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -80,6 +85,7 @@ export async function POST(req: NextRequest) {
     const durationMinutes = timeToMinutes(endTime) - timeToMinutes(startTime);
 
     if (!ALLOWED_DURATIONS_MINUTES.includes(durationMinutes)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -90,6 +96,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!Number.isFinite(roomId) || roomId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid roomId is required." },
         { status: 400 }
@@ -113,6 +120,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!offeredCourse) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Offered course not found." },
         { status: 404 }
@@ -129,6 +137,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!offeringStatus || !canModifySlots(offeringStatus.status)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -139,6 +148,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (offeredCourse.primary_offered_course_id) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Slots can only be managed from the primary section row." },
         { status: 400 }
@@ -146,6 +156,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (offeredCourse.offered_course_slots.length >= 3) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -167,6 +178,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!room || !room.is_active) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Selected room is invalid or inactive." },
         { status: 400 }
@@ -227,6 +239,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (overlappingBatchSlot) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -263,6 +276,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (overlappingRoomSlot) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -285,6 +299,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (duplicateSameSlot) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -310,6 +325,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       slotId: slot.id,
@@ -319,6 +335,7 @@ export async function POST(req: NextRequest) {
     const message =
       error instanceof Error ? error.message : "Failed to add slot.";
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,

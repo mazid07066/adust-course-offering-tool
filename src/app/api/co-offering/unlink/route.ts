@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,6 +11,7 @@ export async function POST(req: NextRequest) {
     const secondaryOfferedCourseId = Number(body.secondaryOfferedCourseId);
 
     if (!Number.isFinite(secondaryOfferedCourseId) || secondaryOfferedCourseId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid secondaryOfferedCourseId is required." },
         { status: 400 }
@@ -27,6 +29,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!secondary) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Secondary section not found." },
         { status: 404 }
@@ -34,6 +37,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!secondary.primary_offered_course_id) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "This section is not currently linked under a primary section." },
         { status: 400 }
@@ -71,6 +75,7 @@ export async function POST(req: NextRequest) {
       }
     });
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       message: "Co-offering link removed successfully.",
@@ -79,6 +84,7 @@ export async function POST(req: NextRequest) {
     const message =
       error instanceof Error ? error.message : "Failed to remove co-offering link.";
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,

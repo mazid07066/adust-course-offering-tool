@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { createFacultyNotification } from "@/lib/faculty-notifications";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 const ALLOWED_OFFERING_STATUSES = [
   "FACULTY_CHOICE_BUFFER",
@@ -19,6 +20,7 @@ export async function POST(req: NextRequest) {
     const termName = String(body.termName || "").trim().toUpperCase();
 
     if (!teacherId || !termName) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "teacherId and termName are required." },
         { status: 400 }
@@ -46,6 +48,7 @@ export async function POST(req: NextRequest) {
     ]);
 
     if (!teacher || !teacher.is_active) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "Teacher not found or inactive." },
         { status: 404 }
@@ -53,6 +56,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!term) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "Academic term not found." },
         { status: 404 }
@@ -82,6 +86,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (finalSelections.length === 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "No FINAL faculty choices found to approve." },
         { status: 400 }
@@ -153,6 +158,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       success: true,
       message: `Approval completed. Assigned ${assignedCount}, skipped already assigned to same teacher ${skippedAlreadyAssignedToSameTeacher}, skipped assigned to another teacher ${skippedAssignedToAnotherTeacher}, skipped invalid status ${skippedInvalidStatus}.`,
@@ -163,6 +169,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error(error);
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       { error: "Failed to approve faculty final choices." },
       { status: 500 }

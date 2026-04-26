@@ -4,6 +4,7 @@ import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { getCatalogProgramByCode } from "@/lib/academic-catalog";
 import { resolveCanonicalProgram } from "@/lib/canonical-program";
 import { canEditStructure } from "@/lib/offering-status";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 type ProgramCandidate = {
   id: number;
@@ -163,6 +164,7 @@ export async function POST(req: NextRequest) {
     const batchCode = String(body.batchCode || "").trim();
 
     if (!Number.isFinite(offeredCourseId) || offeredCourseId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid offeredCourseId is required." },
         { status: 400 }
@@ -170,6 +172,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!programCode) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "programCode is required." },
         { status: 400 }
@@ -177,6 +180,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!batchCode) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "batchCode is required." },
         { status: 400 }
@@ -204,6 +208,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!offeredCourse) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Offered course not found." },
         { status: 404 }
@@ -211,6 +216,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!canEditStructure(offeredCourse.offerings.status)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -236,6 +242,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!targetBatch) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -250,6 +257,7 @@ export async function POST(req: NextRequest) {
     );
 
     if (alreadyAttached) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -290,6 +298,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (duplicateElsewhereInSameTerm) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -337,6 +346,7 @@ export async function POST(req: NextRequest) {
         );
 
         if (conflict) {
+          clearReportingCacheWithLog("offering/reporting data changed");
           return NextResponse.json(
             {
               ok: false,
@@ -357,6 +367,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       message: "Batch attached successfully.",
@@ -370,6 +381,7 @@ export async function POST(req: NextRequest) {
     const message =
       error instanceof Error ? error.message : "Failed to attach batch.";
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,

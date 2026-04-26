@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,6 +28,7 @@ export async function DELETE(_req: NextRequest, context: RouteContext) {
     const offeringId = Number(params.id);
 
     if (!offeringId || Number.isNaN(offeringId)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid offering id is required." },
         { status: 400 }
@@ -44,6 +46,7 @@ export async function DELETE(_req: NextRequest, context: RouteContext) {
     });
 
     if (!offering) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Draft offering not found." },
         { status: 404 }
@@ -53,6 +56,7 @@ export async function DELETE(_req: NextRequest, context: RouteContext) {
     const status = String(offering.status || "").trim().toUpperCase();
 
     if (!DELETABLE_STATUSES.has(status)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -150,6 +154,7 @@ export async function DELETE(_req: NextRequest, context: RouteContext) {
       };
     });
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       message: "Draft offering deleted successfully.",
@@ -158,6 +163,7 @@ export async function DELETE(_req: NextRequest, context: RouteContext) {
   } catch (error) {
     console.error("Delete draft offering error:", error);
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,

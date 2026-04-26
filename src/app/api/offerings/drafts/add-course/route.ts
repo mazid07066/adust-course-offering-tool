@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 export async function POST(req: NextRequest) {
   try {
@@ -16,6 +17,7 @@ export async function POST(req: NextRequest) {
       : [];
 
     if (!Number.isFinite(draftId) || draftId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid draftId is required." },
         { status: 400 }
@@ -23,6 +25,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!Number.isFinite(courseId) || courseId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid courseId is required." },
         { status: 400 }
@@ -30,6 +33,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!section) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "section is required." },
         { status: 400 }
@@ -37,6 +41,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (batchIds.length === 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "At least one batchId is required." },
         { status: 400 }
@@ -82,6 +87,7 @@ export async function POST(req: NextRequest) {
         ),
       ];
 
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -105,6 +111,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (duplicateSection) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -134,6 +141,7 @@ export async function POST(req: NextRequest) {
       })),
     });
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       offeredCourseId: offered.id,
@@ -142,6 +150,7 @@ export async function POST(req: NextRequest) {
     const message =
       error instanceof Error ? error.message : "Failed to add course to draft.";
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,

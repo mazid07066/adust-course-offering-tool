@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 type DuplicateRow = {
   id: number;
@@ -50,6 +51,7 @@ export async function POST() {
       deletedCount = result.count;
     }
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       success: true,
       message:
@@ -60,6 +62,7 @@ export async function POST() {
     });
   } catch (error) {
     console.error(error);
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       { error: "Failed to deduplicate offered course teacher rows." },
       { status: 500 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 const ALLOWED_OFFERING_STATUSES = [
   "DRAFT",
@@ -20,6 +21,7 @@ export async function POST(req: NextRequest) {
     const mode = String(body.mode || "FINAL_ONLY").trim().toUpperCase();
 
     if (!termName) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "termName is required." },
         { status: 400 }
@@ -27,6 +29,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!["FINAL_ONLY", "FINAL_THEN_BUFFER"].includes(mode)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "Invalid bulk assign mode." },
         { status: 400 }
@@ -39,6 +42,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!term) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "Academic term not found." },
         { status: 404 }
@@ -125,6 +129,7 @@ export async function POST(req: NextRequest) {
       assignedCount += 1;
     }
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       success: true,
       message: `Bulk assignment completed. Assigned ${assignedCount}, skipped already assigned ${skippedAlreadyAssigned}, skipped no faculty choice ${skippedNoFacultyChoice}.`,
@@ -134,6 +139,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error(error);
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       { error: "Failed to execute bulk assignment." },
       { status: 500 }

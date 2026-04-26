@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { createFacultyNotification } from "@/lib/faculty-notifications";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 function finalizedMarkerKey(termId: number, teacherId: number) {
   return `FACULTY_FINALIZED_TERM_${termId}_TEACHER_${teacherId}`;
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest) {
     const termName = String(body.termName || "").trim().toUpperCase();
 
     if (!teacherId || !termName) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "teacherId and termName are required." },
         { status: 400 }
@@ -43,6 +45,7 @@ export async function POST(req: NextRequest) {
     ]);
 
     if (!teacher) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "Faculty member not found." },
         { status: 404 }
@@ -50,6 +53,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!term) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "Academic term not found." },
         { status: 404 }
@@ -136,6 +140,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       success: true,
       message: `Reopened choices for ${teacher.teacher_code} - ${teacher.full_name}. Removed ${result.removedApprovedChoiceAssignments} approved-choice assignment row(s), reopened ${result.reopenedChoices} final choice row(s), and cleared final lock marker. Imported/preassigned assignments were kept unchanged.`,
@@ -144,6 +149,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("Reopen faculty choices error:", error);
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         error:

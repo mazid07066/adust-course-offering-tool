@@ -12,36 +12,37 @@ type AdminLayoutProps = {
 
 const navItems = [
   { href: "/admin", label: "Dashboard" },
+
+  // CORE SETUP
   { href: "/admin/academic-setup", label: "Academic Setup" },
   { href: "/admin/master-course-import", label: "Master Course Import" },
   { href: "/admin/imports", label: "Transcript & Registration Import" },
-  { href: "/admin/courses", label: "Courses" },
-  { href: "/admin/batch-curriculum-assignment", label: "Batch Curriculum Assignment" },
-  { href: "/admin/faculties", label: "Faculties" },
-  { href: "/admin/users", label: "User Accounts" },
-  { href: "/admin/rooms", label: "Rooms" },
-  { href: "/admin/academic-terms", label: "Academic Terms" },
-  { href: "/admin/semesters", label: "Academic Terms Management" },
-  { href: "/admin/batches", label: "Batches" },
+
+  // STRUCTURE
+  { href: "/admin/batches", label: "Batch Setup" },
   { href: "/admin/batch-status", label: "Batch Status" },
-  { href: "/admin/batch-status-cleanup", label: "Batch Status Cleanup" },
+  { href: "/admin/batch-curriculum-assignment", label: "Batch Curriculum" },
+
+  // OFFERING FLOW
   { href: "/admin/offering-context", label: "Offering Context" },
-  { href: "/admin/offering-template-import", label: "Offering Template Import" },
-  { href: "/admin/offerings", label: "Offerings" },
-  { href: "/admin/offering-drafts", label: "Draft Offerings" },
-  { href: "/admin/manual-special-offering", label: "Manual Special Offering" },
-  { href: "/admin/co-offering-setup", label: "Co-offering Setup" },
+  { href: "/admin/offerings", label: "Offering Template Import" },
+  { href: "/admin/offering-drafts", label: "Offering Drafts" },
+
+  // SCHEDULING & ASSIGNMENT
+  { href: "/admin/schedule", label: "Schedule Board" },
+  { href: "/admin/faculty-load", label: "Faculty Load Board" },
+
+  // FACULTY FLOW
   { href: "/admin/faculty-choice-control", label: "Faculty Choice Control" },
-  { href: "/admin/faculty-course-choices", label: "Faculty Course Choices" },
-  { href: "/admin/faculty-assignment", label: "Faculty Assignment" },
-  { href: "/admin/offering-reports", label: "Confirmed Offering Reports" },
-  { href: "/admin/offering-summary", label: "Offering Summary" },
-  { href: "/admin/offering-validation", label: "Offering Validation" },
-  { href: "/admin/faculty-load", label: "Faculty Load Report" },
-  { href: "/admin/confirmed-schedule", label: "Confirmed Schedule" },
-  { href: "/admin/batch-routine", label: "Batch Routine Report" },
-  { href: "/admin/room-schedule", label: "Room Schedule Report" },
-  { href: "/admin/schedule", label: "Schedule" },
+  { href: "/admin/faculties", label: "Faculty Management" },
+  { href: "/admin/users", label: "User Management" },
+
+  // REPORTING (NEW)
+  { href: "/admin/reports", label: "Reports Dashboard" },
+
+  // SYSTEM
+  { href: "/admin/rooms", label: "Room Management" },
+  { href: "/admin/academic-terms", label: "Academic Terms" },
   { href: "/admin/system-reset", label: "System Reset" },
 ];
 

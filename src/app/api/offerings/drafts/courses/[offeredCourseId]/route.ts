@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { deleteOfferedCourseCascade } from "@/lib/offering-section-group";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 export async function DELETE(
   _req: NextRequest,

@@ -11,6 +11,7 @@ import {
   parseOneCourseCodeAliases,
 } from "@/lib/offering-template-normalize";
 import { resolveCanonicalProgram } from "@/lib/canonical-program";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 export const runtime = "nodejs";
 
@@ -320,6 +321,7 @@ export async function POST(req: NextRequest) {
     const file = formData.get("file") as File | null;
 
     if (!requestedProgramCode) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "programCode is required." },
         { status: 400 }
@@ -327,6 +329,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!termName) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "termName is required." },
         { status: 400 }
@@ -334,6 +337,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!file) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Excel file is required." },
         { status: 400 }
@@ -506,6 +510,7 @@ export async function POST(req: NextRequest) {
     const blockedCount = previewRows.filter((x) => x.status === "BLOCKED").length;
     const detectedBatchCodes = uniqueStrings(previewRows.map((x) => x.batchCode));
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       fileName: file.name,
@@ -531,6 +536,7 @@ export async function POST(req: NextRequest) {
     const message =
       error instanceof Error ? error.message : "Failed to preview offering template.";
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,

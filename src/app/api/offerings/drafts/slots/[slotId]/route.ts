@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 type Context = {
   params: Promise<{
@@ -136,6 +137,7 @@ export async function PATCH(req: NextRequest, context: Context) {
   const parsedSlotId = Number(slotId);
 
   if (!Number.isFinite(parsedSlotId)) {
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({ error: "Invalid slot id." }, { status: 400 });
   }
 
@@ -156,6 +158,7 @@ export async function PATCH(req: NextRequest, context: Context) {
   });
 
   if (!existing) {
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({ error: "Slot not found." }, { status: 404 });
   }
 
@@ -176,6 +179,7 @@ export async function PATCH(req: NextRequest, context: Context) {
   });
 
   if (validationError) {
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({ error: validationError }, { status: 400 });
   }
 
@@ -193,6 +197,7 @@ export async function PATCH(req: NextRequest, context: Context) {
     },
   });
 
+  clearReportingCacheWithLog("offering/reporting data changed");
   return NextResponse.json({
     ok: true,
     slot: {
@@ -214,6 +219,7 @@ export async function DELETE(_req: NextRequest, context: Context) {
   const parsedSlotId = Number(slotId);
 
   if (!Number.isFinite(parsedSlotId)) {
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({ error: "Invalid slot id." }, { status: 400 });
   }
 
@@ -225,6 +231,7 @@ export async function DELETE(_req: NextRequest, context: Context) {
   });
 
   if (!existing) {
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({ error: "Slot not found." }, { status: 404 });
   }
 
@@ -239,6 +246,7 @@ export async function DELETE(_req: NextRequest, context: Context) {
     where: { id: parsedSlotId },
   });
 
+  clearReportingCacheWithLog("offering/reporting data changed");
   return NextResponse.json({
     ok: true,
     success: true,

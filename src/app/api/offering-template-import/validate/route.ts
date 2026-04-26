@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 type PreviewRow = {
   status?: string;
@@ -69,6 +70,7 @@ export async function POST(req: NextRequest) {
     const rows = Array.isArray(body.rows) ? (body.rows as PreviewRow[]) : [];
 
     if (!termName) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "termName is required." },
         { status: 400 }
@@ -81,6 +83,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!term) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "Academic term not found." },
         { status: 404 }
@@ -281,6 +284,7 @@ export async function POST(req: NextRequest) {
       blockedRows: validatedRows.filter((x) => x.validationStatus === "BLOCKED").length,
     };
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       success: true,
       termName: term.name,
@@ -289,6 +293,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error(error);
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       { error: "Failed to validate offering template rows." },
       { status: 500 }

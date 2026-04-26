@@ -3,11 +3,11 @@ type CacheEntry<T> = {
   expiry: number;
 };
 
-const cache = new Map<string, CacheEntry<any>>();
+const cache = new Map<string, CacheEntry<unknown>>();
 
-const DEFAULT_TTL_MS = 1000 * 60 * 2; // 2 minutes
+const DEFAULT_TTL_MS = 1000 * 60 * 2;
 
-export function getCacheKey(key: string, params: Record<string, any>) {
+export function getCacheKey(key: string, params: Record<string, unknown>) {
   return `${key}:${JSON.stringify(params)}`;
 }
 
@@ -37,4 +37,14 @@ export function setCache<T>(
 
 export function clearReportingCache() {
   cache.clear();
+}
+
+export function clearReportingCacheWithLog(reason?: string) {
+  cache.clear();
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log(
+      `[reporting-cache] cleared${reason ? `: ${reason}` : ""}`
+    );
+  }
 }

@@ -5,6 +5,7 @@ import {
   canTransitionOfferingStatus,
   OFFERING_STATUS,
 } from "@/lib/offering-status";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 function normalizeText(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim().toUpperCase();
@@ -51,6 +52,7 @@ export async function POST(request: NextRequest) {
     const targetStatus = normalizeText(body?.targetStatus);
 
     if (!offeringId) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid offeringId is required." },
         { status: 400 }
@@ -58,6 +60,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!targetStatus) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "targetStatus is required." },
         { status: 400 }
@@ -83,6 +86,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!offering) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Offering not found." },
         { status: 404 }
@@ -90,6 +94,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!canTransitionOfferingStatus(offering.status, targetStatus)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -174,6 +179,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (blockers.length > 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
@@ -193,12 +199,14 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       message: `Offering moved to ${updated.status}.`,
       offering: updated,
     });
   } catch (error) {
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,

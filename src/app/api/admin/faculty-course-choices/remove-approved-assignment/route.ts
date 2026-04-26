@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { createFacultyNotification } from "@/lib/faculty-notifications";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 export async function POST(req: NextRequest) {
   const guard = await requireCoordinatorOrAdminApi();
@@ -14,6 +15,7 @@ export async function POST(req: NextRequest) {
     const termName = String(body.termName || "").trim().toUpperCase();
 
     if (!teacherId || !termName) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "teacherId and termName are required." },
         { status: 400 }
@@ -39,6 +41,7 @@ export async function POST(req: NextRequest) {
     ]);
 
     if (!teacher) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "Faculty member not found." },
         { status: 404 }
@@ -46,6 +49,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!term) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "Academic term not found." },
         { status: 404 }
@@ -91,6 +95,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       success: true,
       message: `Removed ${deleted.count} approved faculty-choice assignment row(s) for ${teacher.teacher_code} - ${teacher.full_name}. Imported/preassigned assignments were kept unchanged.`,
@@ -99,6 +104,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("Remove approved faculty choice assignment error:", error);
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         error:

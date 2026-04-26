@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,6 +13,7 @@ export async function POST(req: NextRequest) {
     const secondaryOfferedCourseId = Number(body.secondaryOfferedCourseId);
 
     if (!Number.isFinite(primaryOfferedCourseId) || primaryOfferedCourseId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid primaryOfferedCourseId is required." },
         { status: 400 }
@@ -19,6 +21,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!Number.isFinite(secondaryOfferedCourseId) || secondaryOfferedCourseId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid secondaryOfferedCourseId is required." },
         { status: 400 }
@@ -26,6 +29,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (primaryOfferedCourseId === secondaryOfferedCourseId) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "A section cannot be linked to itself." },
         { status: 400 }
@@ -65,6 +69,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!primary) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Primary section not found." },
         { status: 404 }
@@ -72,6 +77,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!secondary) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Secondary section not found." },
         { status: 404 }
@@ -79,6 +85,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (primary.offerings.status !== "DRAFT" || secondary.offerings.status !== "DRAFT") {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Both sections must belong to DRAFT offerings." },
         { status: 400 }
@@ -86,6 +93,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (primary.offerings.academic_term_id !== secondary.offerings.academic_term_id) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Primary and secondary sections must be in the same academic term." },
         { status: 400 }
@@ -93,6 +101,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (primary.primary_offered_course_id) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "The selected primary section is already a linked secondary section." },
         { status: 400 }
@@ -100,6 +109,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (secondary.primary_offered_course_id) {
+      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "The selected secondary section is already linked under another primary." },
         { status: 400 }
@@ -127,6 +137,7 @@ export async function POST(req: NextRequest) {
       });
     });
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json({
       ok: true,
       message: "Co-offering link created successfully.",
@@ -135,6 +146,7 @@ export async function POST(req: NextRequest) {
     const message =
       error instanceof Error ? error.message : "Failed to create co-offering link.";
 
+    clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,
