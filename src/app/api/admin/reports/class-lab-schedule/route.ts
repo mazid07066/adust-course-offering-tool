@@ -11,8 +11,8 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
 
     const termName = String(searchParams.get("termName") || "").trim();
-    const batchCode = String(searchParams.get("batchCode") || "").trim();
     const programCode = String(searchParams.get("programCode") || "").trim();
+    const batchCode = String(searchParams.get("batchCode") || "").trim();
     const scheduleKind = String(searchParams.get("scheduleKind") || "ALL").trim();
 
     if (!termName) {
@@ -22,56 +22,50 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    const allowedKind =
+      scheduleKind === "CLASS" ||
+      scheduleKind === "LAB" ||
+      scheduleKind === "PROJECT"
+        ? scheduleKind
+        : "ALL";
+
     const rows = await getScheduleRowsForReporting({
       termName,
       programCode: programCode || undefined,
       batchCode: batchCode || undefined,
-      scheduleKind:
-        scheduleKind === "CLASS" ||
-        scheduleKind === "LAB" ||
-        scheduleKind === "PROJECT"
-          ? scheduleKind
-          : "ALL",
+      scheduleKind: allowedKind,
     });
 
-    const batchOptions = uniqueStrings(rows.flatMap((row) => row.batchCodes)).sort();
-
-    const filteredRows = batchCode
-      ? rows.filter((row) => row.batchCodes.includes(batchCode))
-      : rows;
+    const classRows = rows.filter((row) => row.scheduleKind === "CLASS");
+    const labRows = rows.filter((row) => row.scheduleKind === "LAB");
+    const projectRows = rows.filter((row) => row.scheduleKind === "PROJECT");
 
     return NextResponse.json({
       success: true,
-      batchOptions,
       summary: {
-        totalRows: filteredRows.length,
-        totalBatches: uniqueStrings(filteredRows.flatMap((row) => row.batchCodes)).length,
+        totalRows: rows.length,
+        classRows: classRows.length,
+        labRows: labRows.length,
+        projectRows: projectRows.length,
+        totalPrograms: uniqueStrings(rows.map((row) => row.programCode)).length,
+        totalBatches: uniqueStrings(rows.flatMap((row) => row.batchCodes)).length,
       },
-      rows: filteredRows.map((row) => ({
-        batchCode: row.batchCodes.join(", ") || "-",
-        programCode: row.programCode,
-        courseCode: row.courseCode,
-        courseTitle: row.courseTitle,
-        section: row.section,
-        facultyText: row.facultyText,
-        dayOfWeek: row.dayOfWeek,
-        startTime: row.startTime,
-        endTime: row.endTime,
-        roomCode: row.roomCode,
-        role: row.role,
-        scheduleKind: row.scheduleKind,
-        offeringStatus: row.offeringStatus,
-      })),
+      groups: {
+        classRows,
+        labRows,
+        projectRows,
+      },
+      rows,
     });
   } catch (error) {
-    console.error("Batch routine report failed:", error);
+    console.error("Class/lab schedule report failed:", error);
 
     return NextResponse.json(
       {
         error:
           error instanceof Error
             ? error.message
-            : "Failed to load batch routine report.",
+            : "Failed to load class/lab schedule report.",
       },
       { status: 500 }
     );

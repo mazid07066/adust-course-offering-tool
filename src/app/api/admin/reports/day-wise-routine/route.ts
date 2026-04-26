@@ -11,7 +11,6 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
 
     const termName = String(searchParams.get("termName") || "").trim();
-    const roomCode = String(searchParams.get("roomCode") || "").trim();
     const programCode = String(searchParams.get("programCode") || "").trim();
     const batchCode = String(searchParams.get("batchCode") || "").trim();
     const scheduleKind = String(searchParams.get("scheduleKind") || "ALL").trim();
@@ -27,7 +26,6 @@ export async function GET(req: NextRequest) {
       termName,
       programCode: programCode || undefined,
       batchCode: batchCode || undefined,
-      roomCode: roomCode || undefined,
       scheduleKind:
         scheduleKind === "CLASS" ||
         scheduleKind === "LAB" ||
@@ -36,46 +34,35 @@ export async function GET(req: NextRequest) {
           : "ALL",
     });
 
-    const roomOptions = uniqueStrings(
-      rows.map((row) => (row.roomCode && row.roomCode !== "-" ? row.roomCode : ""))
-    ).sort();
+    const days = uniqueStrings(rows.map((row) => row.dayOfWeek)).filter(
+      (day) => day !== "-"
+    );
 
     return NextResponse.json({
       success: true,
-      roomOptions,
+      dayOptions: days,
       summary: {
         totalRows: rows.length,
-        totalRooms: roomOptions.length,
+        totalDays: days.length,
         classRows: rows.filter((row) => row.scheduleKind === "CLASS").length,
         labRows: rows.filter((row) => row.scheduleKind === "LAB").length,
         projectRows: rows.filter((row) => row.scheduleKind === "PROJECT").length,
       },
-      rows: rows.map((row) => ({
-        roomCode: row.roomCode,
-        roomType: row.roomType,
-        dayOfWeek: row.dayOfWeek,
-        startTime: row.startTime,
-        endTime: row.endTime,
-        programCode: row.programCode,
-        batchCode: row.batchCodes.join(", ") || "-",
-        courseCode: row.courseCode,
-        courseTitle: row.courseTitle,
-        section: row.section,
-        facultyText: row.facultyText,
-        role: row.role,
-        scheduleKind: row.scheduleKind,
-        offeringStatus: row.offeringStatus,
+      groups: days.map((day) => ({
+        dayOfWeek: day,
+        rows: rows.filter((row) => row.dayOfWeek === day),
       })),
+      rows,
     });
   } catch (error) {
-    console.error("Room schedule report failed:", error);
+    console.error("Day-wise routine report failed:", error);
 
     return NextResponse.json(
       {
         error:
           error instanceof Error
             ? error.message
-            : "Failed to load room schedule report.",
+            : "Failed to load day-wise routine report.",
       },
       { status: 500 }
     );

@@ -11,9 +11,9 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
 
     const termName = String(searchParams.get("termName") || "").trim();
-    const roomCode = String(searchParams.get("roomCode") || "").trim();
     const programCode = String(searchParams.get("programCode") || "").trim();
     const batchCode = String(searchParams.get("batchCode") || "").trim();
+    const teacherCode = String(searchParams.get("teacherCode") || "").trim();
     const scheduleKind = String(searchParams.get("scheduleKind") || "ALL").trim();
 
     if (!termName) {
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
       termName,
       programCode: programCode || undefined,
       batchCode: batchCode || undefined,
-      roomCode: roomCode || undefined,
+      teacherCode: teacherCode || undefined,
       scheduleKind:
         scheduleKind === "CLASS" ||
         scheduleKind === "LAB" ||
@@ -36,46 +36,45 @@ export async function GET(req: NextRequest) {
           : "ALL",
     });
 
-    const roomOptions = uniqueStrings(
-      rows.map((row) => (row.roomCode && row.roomCode !== "-" ? row.roomCode : ""))
+    const facultyOptions = uniqueStrings(
+      rows.flatMap((row) =>
+        row.facultyCodes.map((code, index) => {
+          const name = row.facultyNames[index] || "";
+          return name ? `${code} - ${name}` : code;
+        })
+      )
     ).sort();
 
     return NextResponse.json({
       success: true,
-      roomOptions,
+      facultyOptions,
       summary: {
         totalRows: rows.length,
-        totalRooms: roomOptions.length,
+        totalFaculty: facultyOptions.length,
         classRows: rows.filter((row) => row.scheduleKind === "CLASS").length,
         labRows: rows.filter((row) => row.scheduleKind === "LAB").length,
         projectRows: rows.filter((row) => row.scheduleKind === "PROJECT").length,
       },
-      rows: rows.map((row) => ({
-        roomCode: row.roomCode,
-        roomType: row.roomType,
-        dayOfWeek: row.dayOfWeek,
-        startTime: row.startTime,
-        endTime: row.endTime,
-        programCode: row.programCode,
-        batchCode: row.batchCodes.join(", ") || "-",
-        courseCode: row.courseCode,
-        courseTitle: row.courseTitle,
-        section: row.section,
-        facultyText: row.facultyText,
-        role: row.role,
-        scheduleKind: row.scheduleKind,
-        offeringStatus: row.offeringStatus,
-      })),
+      groups: facultyOptions.map((faculty) => {
+        const code = faculty.split(" - ")[0];
+
+        return {
+          faculty,
+          teacherCode: code,
+          rows: rows.filter((row) => row.facultyCodes.includes(code)),
+        };
+      }),
+      rows,
     });
   } catch (error) {
-    console.error("Room schedule report failed:", error);
+    console.error("Faculty-wise routine report failed:", error);
 
     return NextResponse.json(
       {
         error:
           error instanceof Error
             ? error.message
-            : "Failed to load room schedule report.",
+            : "Failed to load faculty-wise routine report.",
       },
       { status: 500 }
     );
