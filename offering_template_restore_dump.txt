@@ -1,0 +1,2826 @@
+﻿
+
+===== FILE: src/components/admin-layout.tsx =====
+
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import type { ReactNode } from "react";
+import Footer from "@/components/Footer";
+
+type AdminLayoutProps = {
+  title?: string;
+  children: ReactNode;
+};
+
+const navItems = [
+  { href: "/admin", label: "Dashboard" },
+
+  // CORE SETUP
+  { href: "/admin/academic-setup", label: "Academic Setup" },
+  { href: "/admin/master-course-import", label: "Master Course Import" },
+  { href: "/admin/imports", label: "Transcript & Registration Import" },
+
+  // STRUCTURE
+  { href: "/admin/batches", label: "Batch Setup" },
+  { href: "/admin/batch-status", label: "Batch Status" },
+  { href: "/admin/batch-curriculum-assignment", label: "Batch Curriculum" },
+
+  // OFFERING FLOW
+  { href: "/admin/offering-context", label: "Offering Context" },
+  { href: "/admin/offerings", label: "Offering Template Import" },
+  { href: "/admin/offering-drafts", label: "Offering Drafts" },
+  { href: "/admin/manual-offering", label: "Manual Course Addition" },
+  // SCHEDULING & ASSIGNMENT
+  { href: "/admin/schedule", label: "Schedule Board" },
+  { href: "/admin/faculty-load", label: "Faculty Load Board" },
+  { href: "/admin/faculty-course-choices", label: "Faculty Choice Approval" },
+  // FACULTY FLOW
+  { href: "/admin/faculty-choice-control", label: "Faculty Choice Control" },
+  { href: "/admin/faculties", label: "Faculty Management" },
+  { href: "/admin/users", label: "User Management" },
+
+  // REPORTING (NEW)
+  { href: "/admin/reports", label: "Reports Dashboard" },
+
+  // SYSTEM
+  { href: "/admin/rooms", label: "Room Management" },
+  { href: "/admin/academic-terms", label: "Academic Terms" },
+  { href: "/admin/system-reset", label: "System Reset" },
+];
+
+function isActive(pathname: string, href: string) {
+  if (href === "/admin") return pathname === "/admin";
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+export default function AdminLayout({
+  title = "UniFlow Academic Planner",
+  children,
+}: AdminLayoutProps) {
+  const pathname = usePathname();
+
+  async function handleLogout() {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+      });
+    } finally {
+      window.location.href = "/auth/login";
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-100 text-slate-900">
+      <div className="mx-auto flex min-h-screen max-w-[1600px]">
+        <aside className="hidden w-72 shrink-0 border-r border-slate-800 bg-slate-950 text-white lg:block">
+          <div className="sticky top-0 h-screen overflow-y-auto px-5 py-6">
+            <Link href="/admin" className="block">
+              <div className="text-2xl font-bold tracking-tight">
+                ADUST Course Tool
+              </div>
+              <p className="mt-2 text-sm leading-5 text-slate-300">
+                Professional academic offering and scheduling workspace
+              </p>
+            </Link>
+
+            <nav className="mt-8 space-y-1">
+              {navItems.map((item) => {
+                const active = isActive(pathname, item.href);
+
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`block rounded-xl px-4 py-3 text-sm font-medium transition ${
+                      active
+                        ? "bg-blue-600 text-white shadow"
+                        : "text-slate-200 hover:bg-slate-800 hover:text-white"
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
+        </aside>
+
+        <main className="min-w-0 flex-1">
+          <header className="border-b border-slate-200 bg-white">
+            <div className="px-4 py-5 sm:px-6 lg:px-8">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">
+                    ADUST Course Offering Tool
+                  </p>
+                  <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
+                    {title}
+                  </h1>
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                  <Link
+                    href="/"
+                    className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Public Home
+                  </Link>
+
+                  <Link
+                    href="/admin/academic-setup"
+                    className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                  >
+                    Open Academic Setup
+                  </Link>
+
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+                  >
+                    Logout
+                  </button>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <section className="px-4 py-6 sm:px-6 lg:px-8">{children}</section>
+
+          <Footer />
+        </main>
+      </div>
+    </div>
+  );
+}
+
+
+===== FILE: src/app/admin/offerings/page.tsx =====
+
+import { requireCoordinatorOrAdmin } from "@/lib/auth-guard";
+import OfferingsPageClient from "./page-client";
+
+export default async function OfferingsPage() {
+  await requireCoordinatorOrAdmin();
+  return <OfferingsPageClient />;
+}
+
+
+===== FILE: src/app/admin/offerings/page-client.tsx =====
+
+"use client";
+
+import { useMemo, useState } from "react";
+import AdminLayout from "@/components/admin-layout";
+import ProgramBatchSelector from "@/components/program-batch-selector";
+import { useAcademicCatalogPrograms } from "@/hooks/use-academic-catalog-programs";
+import { useProgramBatches } from "@/hooks/use-program-batches";
+
+type OfferingContextCourse = {
+  id: number;
+  courseCode: string;
+  courseTitle: string;
+  normalizedTitle: string | null;
+  credit: number | null;
+  courseType: string | null;
+  levelTerm: string | null;
+  groupName: string | null;
+  status: "COMPLETED" | "ONGOING" | "REMAINING";
+};
+
+type ContextData = {
+  ok?: boolean;
+  success?: boolean;
+  error?: string;
+
+  programId: number;
+  programCode: string;
+  programLabel: string;
+
+  resolvedBatchProgramId: number;
+  resolvedBatchProgramShortName: string;
+  resolvedBatchProgramName: string;
+
+  batchId: number;
+  batchCode: string;
+  batchAdmissionTerm: string | null;
+
+  currentTermName: string | null;
+  latestCompletedAcademicTerm: string | null;
+  suggestedOfferingAcademicTerm: string | null;
+
+  latestCompletedLevelTerm: string | null;
+  latestOngoingLevelTerm: string | null;
+  suggestedNextLevelTerm: string | null;
+
+  completedCount: number;
+  ongoingCount: number;
+  remainingCount: number;
+  totalCourses: number;
+
+  completedCredits: number;
+  ongoingCredits: number;
+  combinedCredits: number;
+
+  completedCourses: OfferingContextCourse[];
+  ongoingCourses: OfferingContextCourse[];
+  remainingCourses: OfferingContextCourse[];
+  candidateCoursesForNextOffering: OfferingContextCourse[];
+
+  academicProgress: {
+    latestCompletedTerm: string | null;
+    currentRegistrationTerm: string | null;
+    suggestedOfferingTerm: string | null;
+  };
+
+  summary: {
+    totalCourses: number;
+    completedCourses: number;
+    ongoingCourses: number;
+    remainingCourses: number;
+    completedCredits: number;
+    ongoingCredits: number;
+    combinedCredits: number;
+  };
+};
+
+type DraftContextResponse = {
+  ok?: boolean;
+  error?: string;
+  draftId: number | null;
+  hiddenCourseIds: number[];
+  totalDraftCredits: number;
+  draftStatus?: string | null;
+};
+
+function CourseTable({
+  title,
+  subtitle,
+  badgeText,
+  badgeClassName,
+  courses,
+  emptyText,
+  showAddAction = false,
+  canAdd = false,
+  onAddCourse,
+  addingCourseId,
+}: {
+  title: string;
+  subtitle: string;
+  badgeText: string;
+  badgeClassName: string;
+  courses: OfferingContextCourse[];
+  emptyText: string;
+  showAddAction?: boolean;
+  canAdd?: boolean;
+  onAddCourse?: (course: OfferingContextCourse) => Promise<void>;
+  addingCourseId?: number | null;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h4 className="text-base font-semibold text-slate-900">{title}</h4>
+          <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+        </div>
+
+        <div className={`rounded-full px-3 py-1 text-xs font-medium ${badgeClassName}`}>
+          {badgeText}
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Code</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Title</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Credit</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Type</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Level-Term</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Group</th>
+              {showAddAction && (
+                <th className="border-b border-slate-200 px-3 py-3 text-left">Action</th>
+              )}
+            </tr>
+          </thead>
+          <tbody className="bg-white">
+            {courses.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={showAddAction ? 7 : 6}
+                  className="px-4 py-8 text-center text-slate-500"
+                >
+                  {emptyText}
+                </td>
+              </tr>
+            ) : (
+              courses.map((course) => (
+                <tr key={course.id} className="hover:bg-slate-50">
+                  <td className="border-b border-slate-100 px-3 py-2 font-medium text-slate-900">
+                    {course.courseCode}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.courseTitle}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.credit ?? "-"}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.courseType || "-"}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.levelTerm || "-"}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.groupName || "-"}
+                  </td>
+                  {showAddAction && (
+                    <td className="border-b border-slate-100 px-3 py-2">
+                      <button
+                        type="button"
+                        disabled={!canAdd || addingCourseId === course.id}
+                        onClick={() => onAddCourse?.(course)}
+                        className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {addingCourseId === course.id ? "Adding..." : "Add"}
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+export default function OfferingsPageClient() {
+  const {
+    programs,
+    programCode,
+    setProgramCode,
+    selectedProgram,
+    loadingPrograms,
+    programError,
+  } = useAcademicCatalogPrograms();
+
+  const {
+    batches,
+    batchCode,
+    setBatchCode,
+    loadingBatches,
+    batchError,
+  } = useProgramBatches(programCode);
+
+  const [loadingContext, setLoadingContext] = useState(false);
+  const [loadingDraftContext, setLoadingDraftContext] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [contextData, setContextData] = useState<ContextData | null>(null);
+
+  const [draftId, setDraftId] = useState<number | null>(null);
+  const [draftStatus, setDraftStatus] = useState<string | null>(null);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [addingCourseId, setAddingCourseId] = useState<number | null>(null);
+
+  const [hiddenCourseIds, setHiddenCourseIds] = useState<number[]>([]);
+  const [totalDraftCredits, setTotalDraftCredits] = useState(0);
+  const [maxAllowedCredits, setMaxAllowedCredits] = useState("18");
+
+  async function loadDraftContext(
+    selectedProgramCode: string,
+    selectedBatchCode: string,
+    selectedTermName: string,
+    fallbackDraftId?: number | null
+  ) {
+    setLoadingDraftContext(true);
+
+    try {
+      const params = new URLSearchParams({
+        programCode: selectedProgramCode,
+        batchCode: selectedBatchCode,
+        termName: selectedTermName,
+      });
+
+      const res = await fetch(`/api/offerings/drafts/context?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const json: DraftContextResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load draft context.");
+      }
+
+      setDraftId(json.draftId ?? fallbackDraftId ?? null);
+      setDraftStatus(json.draftStatus || null);
+      setHiddenCourseIds(json.hiddenCourseIds || []);
+      setTotalDraftCredits(Number(json.totalDraftCredits || 0));
+    } catch (err) {
+      setDraftId(fallbackDraftId ?? null);
+      setDraftStatus(null);
+      setHiddenCourseIds([]);
+      setTotalDraftCredits(0);
+      throw err;
+    } finally {
+      setLoadingDraftContext(false);
+    }
+  }
+
+  async function loadContext(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!programCode || !batchCode) {
+      setError("Please select both academic identity and batch.");
+      setMessage("");
+      setContextData(null);
+      setDraftId(null);
+      setDraftStatus(null);
+      setHiddenCourseIds([]);
+      setTotalDraftCredits(0);
+      return;
+    }
+
+    setLoadingContext(true);
+    setError("");
+    setMessage("");
+    setContextData(null);
+    setDraftId(null);
+    setDraftStatus(null);
+    setHiddenCourseIds([]);
+    setTotalDraftCredits(0);
+
+    try {
+      const params = new URLSearchParams({
+        programCode,
+        batchCode,
+      });
+
+      const res = await fetch(`/api/offering-context?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const json: ContextData = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load offering context.");
+      }
+
+      setContextData(json);
+
+      if (json.suggestedOfferingAcademicTerm) {
+        await loadDraftContext(
+          json.programCode,
+          json.batchCode,
+          json.suggestedOfferingAcademicTerm
+        );
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load offering context."
+      );
+    } finally {
+      setLoadingContext(false);
+    }
+  }
+
+  async function createDraftOffering() {
+    if (!contextData) {
+      setError("Load workspace first.");
+      setMessage("");
+      return;
+    }
+
+    if (!contextData.programCode || !contextData.suggestedOfferingAcademicTerm) {
+      setError("Program code or suggested offering term is missing.");
+      setMessage("");
+      return;
+    }
+
+    setCreatingDraft(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/offerings/drafts/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          programCode: contextData.programCode,
+          termName: contextData.suggestedOfferingAcademicTerm,
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to create draft offering.");
+      }
+
+      const createdDraftId = Number(json.draftId);
+      setDraftId(createdDraftId);
+
+      await loadDraftContext(
+        contextData.programCode,
+        contextData.batchCode,
+        contextData.suggestedOfferingAcademicTerm,
+        createdDraftId
+      );
+
+      setMessage(
+        json.reused
+          ? `Existing draft loaded successfully. Draft ID: ${json.draftId}`
+          : `Draft offering created successfully. Draft ID: ${json.draftId}`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to create draft offering."
+      );
+    } finally {
+      setCreatingDraft(false);
+    }
+  }
+
+  async function handleAddCourse(course: OfferingContextCourse) {
+    if (!contextData) {
+      setError("Load workspace first.");
+      setMessage("");
+      return;
+    }
+
+    if (!draftId) {
+      setError("Create draft offering first.");
+      setMessage("");
+      return;
+    }
+
+    const sectionInput = window.prompt("Enter section number (example: 1, 2, 11)");
+    if (!sectionInput) return;
+
+    const section = sectionInput.trim();
+    if (!section) return;
+
+    setAddingCourseId(course.id);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/offerings/drafts/add-course", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          draftId,
+          courseId: course.id,
+          section,
+          batchIds: [contextData.batchId],
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to add course to draft.");
+      }
+
+      await loadDraftContext(
+        contextData.programCode,
+        contextData.batchCode,
+        contextData.suggestedOfferingAcademicTerm || "",
+        draftId
+      );
+
+      setMessage(
+        `Course added to draft successfully. ${course.courseCode} | Section ${section}`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to add course to draft."
+      );
+    } finally {
+      setAddingCourseId(null);
+    }
+  }
+
+  const visibleCandidateCourses = useMemo(() => {
+    return (contextData?.candidateCoursesForNextOffering || []).filter(
+      (course) => !hiddenCourseIds.includes(course.id)
+    );
+  }, [contextData?.candidateCoursesForNextOffering, hiddenCourseIds]);
+
+  const visibleRemainingCourses = useMemo(() => {
+    return (contextData?.remainingCourses || []).filter(
+      (course) => !hiddenCourseIds.includes(course.id)
+    );
+  }, [contextData?.remainingCourses, hiddenCourseIds]);
+
+  const maxCreditsNumber = Number(maxAllowedCredits || 0);
+  const exceedsMaxCredits =
+    Number.isFinite(maxCreditsNumber) &&
+    maxCreditsNumber > 0 &&
+    totalDraftCredits > maxCreditsNumber;
+
+  const combinedError = error || programError || batchError;
+
+  return (
+    <AdminLayout title="Offerings Workspace">
+      <div className="space-y-6">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-900">
+            Offerings Workspace
+          </h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Load a batch context first, then use the recommended course pool as the
+            working starting point for open-credit offering preparation.
+          </p>
+        </div>
+
+        <form onSubmit={loadContext} className="space-y-4">
+          <ProgramBatchSelector
+            programs={programs}
+            programCode={programCode}
+            setProgramCode={setProgramCode}
+            loadingPrograms={loadingPrograms}
+            batches={batches}
+            batchCode={batchCode}
+            setBatchCode={setBatchCode}
+            loadingBatches={loadingBatches}
+            showBatch={true}
+          />
+
+          <button
+            type="submit"
+            disabled={loadingContext || !programCode || !batchCode}
+            className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+          >
+            {loadingContext ? "Loading..." : "Load Workspace"}
+          </button>
+        </form>
+
+        {combinedError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {combinedError}
+          </div>
+        )}
+
+        {message && (
+          <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {message}
+          </div>
+        )}
+
+        {selectedProgram && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Selected Academic Identity</p>
+            <p className="mt-2 text-base font-semibold text-slate-900">
+              {selectedProgram.displayLabel}
+            </p>
+          </div>
+        )}
+
+        {contextData && (
+          <>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={createDraftOffering}
+                disabled={creatingDraft || !contextData.suggestedOfferingAcademicTerm}
+                className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {creatingDraft ? "Creating..." : "Create Draft Offering"}
+              </button>
+
+              {loadingDraftContext && (
+                <div className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700">
+                  Loading draft context...
+                </div>
+              )}
+
+              {draftId && (
+                <div className="rounded-full bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700">
+                  Active Draft ID: {draftId}
+                </div>
+              )}
+
+              {draftStatus && (
+                <div className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700">
+                  Draft Status: {draftStatus}
+                </div>
+              )}
+
+              {contextData.suggestedOfferingAcademicTerm && (
+                <div className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700">
+                  Draft Term: {contextData.suggestedOfferingAcademicTerm}
+                </div>
+              )}
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Latest Completed Semester</p>
+                <p className="mt-2 text-xl font-semibold text-slate-900">
+                  {contextData.academicProgress.latestCompletedTerm || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <p className="text-sm text-amber-700">Current Registration Semester</p>
+                <p className="mt-2 text-xl font-semibold text-amber-900">
+                  {contextData.academicProgress.currentRegistrationTerm || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+                <p className="text-sm text-green-700">Suggested Offering Semester</p>
+                <p className="mt-2 text-xl font-semibold text-green-900">
+                  {contextData.academicProgress.suggestedOfferingTerm || "-"}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Latest Completed Level-Term</p>
+                <p className="mt-2 text-xl font-semibold text-slate-900">
+                  {contextData.latestCompletedLevelTerm || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <p className="text-sm text-amber-700">Latest Ongoing Level-Term</p>
+                <p className="mt-2 text-xl font-semibold text-amber-900">
+                  {contextData.latestOngoingLevelTerm || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+                <p className="text-sm text-green-700">Suggested Next Level-Term</p>
+                <p className="mt-2 text-xl font-semibold text-green-900">
+                  {contextData.suggestedNextLevelTerm || "-"}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Total Courses</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {contextData.summary.totalCourses}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+                <p className="text-sm text-green-700">Completed</p>
+                <p className="mt-2 text-2xl font-semibold text-green-800">
+                  {contextData.summary.completedCourses}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <p className="text-sm text-amber-700">Ongoing</p>
+                <p className="mt-2 text-2xl font-semibold text-amber-800">
+                  {contextData.summary.ongoingCourses}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm">
+                <p className="text-sm text-red-700">Remaining</p>
+                <p className="mt-2 text-2xl font-semibold text-red-800">
+                  {visibleRemainingCourses.length}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+                <p className="text-sm text-green-700">Total Completed Credits</p>
+                <p className="mt-2 text-2xl font-semibold text-green-900">
+                  {contextData.completedCredits}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <p className="text-sm text-amber-700">Total Ongoing Credits</p>
+                <p className="mt-2 text-2xl font-semibold text-amber-900">
+                  {contextData.ongoingCredits}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
+                <p className="text-sm text-blue-700">Completed + Ongoing Credits</p>
+                <p className="mt-2 text-2xl font-semibold text-blue-900">
+                  {contextData.combinedCredits}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Current Draft Credits</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {totalDraftCredits}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <label className="text-sm text-slate-500">Maximum Allowed Credits</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={maxAllowedCredits}
+                  onChange={(e) => setMaxAllowedCredits(e.target.value)}
+                  className="mt-2 w-full rounded-xl border px-4 py-3"
+                />
+              </div>
+
+              <div
+                className={`rounded-2xl border p-5 shadow-sm ${
+                  exceedsMaxCredits
+                    ? "border-red-200 bg-red-50"
+                    : "border-green-200 bg-green-50"
+                }`}
+              >
+                <p
+                  className={`text-sm ${
+                    exceedsMaxCredits ? "text-red-700" : "text-green-700"
+                  }`}
+                >
+                  Draft Credit Status
+                </p>
+                <p
+                  className={`mt-2 text-sm font-semibold ${
+                    exceedsMaxCredits ? "text-red-800" : "text-green-800"
+                  }`}
+                >
+                  {exceedsMaxCredits
+                    ? `Warning: current draft credit (${totalDraftCredits}) exceeds maximum allowed credit (${maxCreditsNumber}).`
+                    : "Within the current maximum credit limit."}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Requested Academic Identity</p>
+                <p className="mt-2 text-base font-semibold text-slate-900">
+                  {contextData.programCode}
+                </p>
+                <p className="mt-1 text-sm text-slate-600">{contextData.programLabel}</p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Resolved Batch Owner Program</p>
+                <p className="mt-2 text-base font-semibold text-slate-900">
+                  {contextData.resolvedBatchProgramShortName}
+                </p>
+                <p className="mt-1 text-sm text-slate-600">
+                  {contextData.resolvedBatchProgramName}
+                </p>
+              </div>
+            </div>
+
+            <CourseTable
+              title="Candidate Courses for Next Offering"
+              subtitle="Recommended starting pool from the saved academic progression. Courses already assigned in the current draft for this batch are hidden."
+              badgeText={`${visibleCandidateCourses.length} course(s)`}
+              badgeClassName="bg-slate-100 text-slate-700"
+              courses={visibleCandidateCourses}
+              emptyText="No candidate course found."
+              showAddAction={true}
+              canAdd={Boolean(draftId)}
+              onAddCourse={handleAddCourse}
+              addingCourseId={addingCourseId}
+            />
+
+            <CourseTable
+              title="All Remaining Courses"
+              subtitle="Full remaining course pool for this batch. Courses already assigned in the current draft for this batch are hidden."
+              badgeText={`${visibleRemainingCourses.length} remaining`}
+              badgeClassName="bg-red-50 text-red-700"
+              courses={visibleRemainingCourses}
+              emptyText="No remaining course loaded yet."
+            />
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h4 className="text-base font-semibold text-slate-900">
+                Next development note
+              </h4>
+              <p className="mt-2 text-sm text-slate-600">
+                This workspace now shows total completed credits, total ongoing credits,
+                and the combined completed-plus-ongoing credits for the selected batch,
+                while keeping the existing draft offering preparation flow intact.
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+    </AdminLayout>
+  );
+}
+
+
+===== FILE: src/app/admin/offering-template-import/page.tsx =====
+
+import { requireCoordinatorOrAdmin } from "@/lib/auth-guard";
+import OfferingTemplateImportPageClient from "./page-client";
+
+export default async function OfferingTemplateImportPage() {
+  await requireCoordinatorOrAdmin();
+  return <OfferingTemplateImportPageClient />;
+}
+
+
+===== FILE: src/app/admin/offering-template-import/page-client.tsx =====
+
+"use client";
+
+import { useMemo, useState } from "react";
+import AdminLayout from "@/components/admin-layout";
+import ProgramTermSelector from "@/components/program-term-selector";
+import { useAcademicCatalogPrograms } from "@/hooks/use-academic-catalog-programs";
+import { useAcademicTerms } from "@/hooks/use-academic-terms";
+
+type PreviewRow = {
+  rowKey: string;
+  sourceSheetName: string;
+  sourceRowNumber: number;
+  batchHeaderText: string;
+  batchCode: string;
+  serialNo: string;
+  courseTitle: string;
+  courseCode: string;
+  coofferedCourseCode: string;
+  facultyInitial: string;
+  section: string;
+  credits: number;
+  day: string;
+  rawTime: string;
+  startTime: string;
+  endTime: string;
+  timeParseOk: boolean;
+  timeParseReason: string;
+  tentativeEnrollment: string;
+  room: string;
+  courseType: string;
+  status: "READY" | "WARNING" | "BLOCKED";
+  issues: string[];
+};
+
+type PreviewResponse = {
+  ok?: boolean;
+  error?: string;
+  fileName?: string;
+  programCode?: string;
+  termName?: string;
+  sheetName?: string;
+  summary?: {
+    totalRows: number;
+    totalBatchBlocks: number;
+    detectedBatchCodes: string[];
+    readyCount: number;
+    warningCount: number;
+    blockedCount: number;
+  };
+  previewRows?: PreviewRow[];
+};
+
+type CommitResponse = {
+  ok?: boolean;
+  error?: string;
+  message?: string;
+  draftId?: number;
+  summary?: {
+    importedRowCount: number;
+    createdCourseCount: number;
+    reusedCourseCount: number;
+    attachedBatchCount: number;
+    addedTeacherCount: number;
+    addedSlotCount: number;
+    addedManualCoofferCount: number;
+    skippedCount: number;
+  };
+  skippedRows?: string[];
+};
+
+export default function OfferingTemplateImportPageClient() {
+  const {
+    programs,
+    programCode,
+    setProgramCode,
+    loadingPrograms,
+    programError,
+  } = useAcademicCatalogPrograms();
+
+  const {
+    terms,
+    termName,
+    setTermName,
+    loadingTerms,
+    termError,
+  } = useAcademicTerms();
+
+  const [file, setFile] = useState<File | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [commitLoading, setCommitLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
+  const [previewSummary, setPreviewSummary] = useState<PreviewResponse["summary"] | null>(null);
+  const [sheetName, setSheetName] = useState("");
+
+  const combinedError = error || programError || termError;
+
+  const readyRows = useMemo(
+    () => previewRows.filter((row) => row.status === "READY"),
+    [previewRows]
+  );
+
+  const warningRows = useMemo(
+    () => previewRows.filter((row) => row.status === "WARNING"),
+    [previewRows]
+  );
+
+  const blockedRows = useMemo(
+    () => previewRows.filter((row) => row.status === "BLOCKED"),
+    [previewRows]
+  );
+
+  async function previewTemplate(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!programCode || !termName) {
+      setError("Please select academic identity and term.");
+      setMessage("");
+      return;
+    }
+
+    if (!file) {
+      setError("Please choose an Excel file.");
+      setMessage("");
+      return;
+    }
+
+    setPreviewLoading(true);
+    setError("");
+    setMessage("");
+    setPreviewRows([]);
+    setPreviewSummary(null);
+    setSheetName("");
+
+    try {
+      const formData = new FormData();
+      formData.append("programCode", programCode);
+      formData.append("termName", termName);
+      formData.append("file", file);
+
+      const res = await fetch("/api/offering-template-import/preview", {
+        method: "POST",
+        body: formData,
+      });
+
+      const json: PreviewResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to preview offering template.");
+      }
+
+      setPreviewRows(json.previewRows || []);
+      setPreviewSummary(json.summary || null);
+      setSheetName(json.sheetName || "");
+      setMessage("Template preview loaded successfully.");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to preview offering template."
+      );
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function commitImport() {
+    if (!programCode || !termName) {
+      setError("Please select academic identity and term.");
+      setMessage("");
+      return;
+    }
+
+    if (previewRows.length === 0) {
+      setError("Preview the file first.");
+      setMessage("");
+      return;
+    }
+
+    const ok = window.confirm(
+      "Import all READY and WARNING rows into the selected draft offering?"
+    );
+    if (!ok) return;
+
+    setCommitLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/offering-template-import/commit", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          programCode,
+          termName,
+          rows: previewRows,
+        }),
+      });
+
+      const json: CommitResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to import template into draft.");
+      }
+
+      setMessage(
+        `${json.message || "Import complete."} Draft ID: ${json.draftId ?? "-"}`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to import template into draft."
+      );
+    } finally {
+      setCommitLoading(false);
+    }
+  }
+
+  return (
+    <AdminLayout title="Offering Template Import">
+      <div className="space-y-6">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-900">
+            Offering Template Import
+          </h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Upload a prepared Excel offering file for a selected academic identity.
+            The system will preview batch-wise rows, detect issues, and then import
+            the usable rows into a draft offering.
+          </p>
+        </div>
+
+        <form onSubmit={previewTemplate} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <ProgramTermSelector
+            programs={programs}
+            programCode={programCode}
+            setProgramCode={setProgramCode}
+            loadingPrograms={loadingPrograms}
+            terms={terms}
+            termName={termName}
+            setTermName={setTermName}
+            loadingTerms={loadingTerms}
+          />
+
+          <div className="max-w-xl">
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              Excel Template File
+            </label>
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              className="block w-full rounded-xl border px-4 py-3 text-sm"
+            />
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="submit"
+              disabled={previewLoading || !programCode || !termName || !file}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+            >
+              {previewLoading ? "Previewing..." : "Preview Template"}
+            </button>
+
+            <button
+              type="button"
+              onClick={commitImport}
+              disabled={commitLoading || previewRows.length === 0}
+              className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {commitLoading ? "Importing..." : "Import Into Draft"}
+            </button>
+          </div>
+        </form>
+
+        {combinedError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {combinedError}
+          </div>
+        )}
+
+        {message && (
+          <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {message}
+          </div>
+        )}
+
+        {previewSummary && (
+          <div className="grid gap-4 md:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Sheet
+              </div>
+              <div className="mt-2 text-lg font-bold text-slate-900">{sheetName || "-"}</div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Batch Blocks
+              </div>
+              <div className="mt-2 text-lg font-bold text-slate-900">
+                {previewSummary.totalBatchBlocks}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Ready / Warning
+              </div>
+              <div className="mt-2 text-lg font-bold text-slate-900">
+                {previewSummary.readyCount} / {previewSummary.warningCount}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Blocked
+              </div>
+              <div className="mt-2 text-lg font-bold text-red-700">
+                {previewSummary.blockedCount}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {previewRows.length > 0 && (
+          <>
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h4 className="text-base font-semibold text-slate-900">
+                Preview Summary
+              </h4>
+              <div className="mt-3 text-sm text-slate-600">
+                Detected batches: {previewSummary?.detectedBatchCodes.join(", ") || "-"}
+              </div>
+              <div className="mt-2 text-sm text-slate-600">
+                Rows to import now: {readyRows.length + warningRows.length}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h4 className="text-base font-semibold text-slate-900">Preview Rows</h4>
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="bg-slate-50">
+                      <th className="border-b px-3 py-3 text-left">Status</th>
+                      <th className="border-b px-3 py-3 text-left">Batch</th>
+                      <th className="border-b px-3 py-3 text-left">Course</th>
+                      <th className="border-b px-3 py-3 text-left">Co-offered</th>
+                      <th className="border-b px-3 py-3 text-left">Faculty</th>
+                      <th className="border-b px-3 py-3 text-left">Section</th>
+                      <th className="border-b px-3 py-3 text-left">Day</th>
+                      <th className="border-b px-3 py-3 text-left">Time</th>
+                      <th className="border-b px-3 py-3 text-left">Room</th>
+                      <th className="border-b px-3 py-3 text-left">Issues</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewRows.map((row) => (
+                      <tr key={row.rowKey}>
+                        <td className="border-b px-3 py-2">
+                          <span
+                            className={`rounded-full px-2 py-1 text-xs font-semibold ${
+                              row.status === "READY"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : row.status === "WARNING"
+                                ? "bg-amber-100 text-amber-700"
+                                : "bg-red-100 text-red-700"
+                            }`}
+                          >
+                            {row.status}
+                          </span>
+                        </td>
+                        <td className="border-b px-3 py-2">{row.batchCode}</td>
+                        <td className="border-b px-3 py-2">
+                          <div className="font-medium text-slate-900">{row.courseCode}</div>
+                          <div className="text-slate-500">{row.courseTitle}</div>
+                        </td>
+                        <td className="border-b px-3 py-2">{row.coofferedCourseCode || "-"}</td>
+                        <td className="border-b px-3 py-2">{row.facultyInitial || "-"}</td>
+                        <td className="border-b px-3 py-2">{row.section}</td>
+                        <td className="border-b px-3 py-2">{row.day || "-"}</td>
+                        <td className="border-b px-3 py-2">{row.rawTime || "-"}</td>
+                        <td className="border-b px-3 py-2">{row.room || "-"}</td>
+                        <td className="border-b px-3 py-2">
+                          {row.issues.length > 0 ? row.issues.join(" | ") : "-"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </AdminLayout>
+  );
+}
+
+
+===== FILE: src/app/api/offering-template-import/preview/route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { parseOfferingTemplateWorkbook } from "@/lib/offering-template-parser";
+import {
+  isBlankLikeFaculty,
+  isSlotOptionalCourseType,
+  normalizeCourseCode,
+  normalizeCourseTitle,
+  normalizeTeacherCode,
+  parseOneCourseCodeAliases,
+} from "@/lib/offering-template-normalize";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
+
+export const runtime = "nodejs";
+
+type PreviewRowStatus = "READY" | "WARNING" | "BLOCKED";
+
+type ProgramCandidate = {
+  id: number;
+  short_name: string;
+  name: string;
+};
+
+type ParsedSlot = {
+  day: string;
+  rawTime: string;
+  startTime: string;
+  endTime: string;
+  timeParseOk: boolean;
+  timeParseReason: string;
+};
+
+type PreviewRow = {
+  rowKey: string;
+  batchCode: string;
+  courseTitle: string;
+  courseCode: string;
+  coofferedCourseCode: string;
+  facultyInitial: string;
+  section: string;
+  credits: number;
+  day: string;
+  rawTime: string;
+  startTime: string;
+  endTime: string;
+  timeParseOk: boolean;
+  room: string;
+  courseType: string;
+  parsedSlots: ParsedSlot[];
+  status: PreviewRowStatus;
+  issues: string[];
+  resolvedCourseId: number | null;
+  resolvedCourseTitle: string | null;
+  resolvedCourseCode: string | null;
+  resolvedCourseMatchedBy: string | null;
+  resolvedCourseMatchedValue: string | null;
+  resolvedBatchId: number | null;
+  resolvedBatchProgramCode: string | null;
+  resolvedTeacherId: number | null;
+  resolvedTeacherCode: string | null;
+  resolvedRoomId: number | null;
+  resolvedRoomCode: string | null;
+  slotOptional: boolean;
+};
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function uniqueById<T extends { id: number }>(rows: T[]) {
+  const seen = new Set<number>();
+  const out: T[] = [];
+
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+
+  return out;
+}
+
+function normalizeUpper(value: unknown) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function digitsOnly(value: unknown) {
+  return String(value ?? "").replace(/\D+/g, "").trim();
+}
+
+function safeRoomNumber(room: any) {
+  const raw = room?.room_number;
+  if (raw === null || raw === undefined) return "";
+  return String(raw).trim().toUpperCase();
+}
+
+function resolveRoom(inputRoom: string, rooms: any[]) {
+  const raw = String(inputRoom || "").trim();
+  if (!raw) return null;
+
+  const normalizedInput = normalizeUpper(raw);
+  const inputDigits = digitsOnly(raw);
+
+  for (const room of rooms) {
+    const roomCode = normalizeUpper(room.room_code);
+    const roomNumber = safeRoomNumber(room);
+    const roomCodeDigits = digitsOnly(room.room_code);
+    const roomNumberDigits = digitsOnly(room.room_number);
+
+    if (
+      normalizedInput === roomCode ||
+      normalizedInput === roomNumber ||
+      (inputDigits && inputDigits === roomCodeDigits) ||
+      (inputDigits && inputDigits === roomNumberDigits)
+    ) {
+      return room;
+    }
+  }
+
+  for (const room of rooms) {
+    const roomCode = normalizeUpper(room.room_code);
+    const roomNumber = safeRoomNumber(room);
+    const roomType = normalizeUpper(room.room_type);
+    const building = normalizeUpper(room.building);
+
+    const candidates = [
+      roomCode,
+      roomNumber,
+      `${roomCode}-${roomNumber}`,
+      `${roomType}-${roomNumber}`,
+      `${building}-${roomNumber}`,
+      `${roomType} (${roomNumber})`,
+      `${roomCode} (${roomNumber})`,
+    ].filter(Boolean);
+
+    if (candidates.includes(normalizedInput)) {
+      return room;
+    }
+  }
+
+  return null;
+}
+
+function resolveTeacher(inputTeacherCode: string, teachers: any[]) {
+  const normalized = normalizeTeacherCode(inputTeacherCode);
+  if (!normalized) return null;
+
+  return (
+    teachers.find(
+      (teacher) => normalizeTeacherCode(teacher.teacher_code) === normalized
+    ) || null
+  );
+}
+
+function resolveBatch(inputBatchCode: string, batches: any[]) {
+  const normalized = normalizeUpper(inputBatchCode);
+  if (!normalized) return null;
+
+  return (
+    batches.find((batch) => normalizeUpper(batch.batch_code) === normalized) || null
+  );
+}
+
+function resolveCourseByCodeOrTitle(
+  row: {
+    courseCode: string;
+    coofferedCourseCode: string;
+    courseTitle: string;
+  },
+  masterCourses: any[]
+) {
+  const directCodes = uniqueStrings([
+    normalizeCourseCode(row.courseCode),
+    normalizeCourseCode(row.coofferedCourseCode),
+    ...parseOneCourseCodeAliases(row.courseCode),
+    ...parseOneCourseCodeAliases(row.coofferedCourseCode),
+  ]);
+
+  for (const code of directCodes) {
+    if (!code) continue;
+
+    const matched = masterCourses.find(
+      (course) => normalizeCourseCode(course.course_code) === code
+    );
+
+    if (matched) {
+      return {
+        course: matched,
+        matchedBy: "COURSE_CODE",
+        matchedValue: code,
+      };
+    }
+  }
+
+  const normalizedTitle = normalizeCourseTitle(row.courseTitle);
+  if (normalizedTitle) {
+    const matched = masterCourses.find((course) => {
+      const courseTitle = normalizeCourseTitle(course.course_title);
+      const normalizedStored = normalizeUpper(course.normalized_title || "");
+      return courseTitle === normalizedTitle || normalizedStored === normalizedTitle;
+    });
+
+    if (matched) {
+      return {
+        course: matched,
+        matchedBy: "COURSE_TITLE",
+        matchedValue: normalizedTitle,
+      };
+    }
+  }
+
+  return {
+    course: null,
+    matchedBy: null,
+    matchedValue: null,
+  };
+}
+
+async function resolveTargetProgram(requestedProgramCode: string) {
+  const catalogEntry = await prisma.academic_catalog_entries.findFirst({
+    where: {
+      program_code: requestedProgramCode,
+      is_active: true,
+    },
+    select: {
+      department_code: true,
+      department_name: true,
+      program_code: true,
+      program_title: true,
+      study_shift: true,
+      display_label: true,
+      curriculum_key: true,
+    },
+  });
+
+  if (!catalogEntry) {
+    throw new Error("Selected academic identity was not found in Academic Setup.");
+  }
+
+  const candidates: ProgramCandidate[] = [];
+
+  const exactProgram = await prisma.programs.findFirst({
+    where: {
+      short_name: requestedProgramCode,
+    },
+    select: {
+      id: true,
+      short_name: true,
+      name: true,
+    },
+  });
+
+  if (exactProgram) {
+    candidates.push(exactProgram);
+  }
+
+  const canonicalProgram = await resolveCanonicalProgram({
+    department_code: catalogEntry.department_code,
+    department_name: catalogEntry.department_name,
+    program_code: catalogEntry.program_code,
+    program_title: catalogEntry.program_title,
+    study_shift: catalogEntry.study_shift,
+  });
+
+  candidates.push({
+    id: canonicalProgram.id,
+    short_name: canonicalProgram.short_name,
+    name: canonicalProgram.name,
+  });
+
+  if (catalogEntry.curriculum_key) {
+    const curriculumPrograms = await prisma.programs.findMany({
+      where: {
+        master_courses: {
+          some: {
+            curriculum_key: catalogEntry.curriculum_key,
+          },
+        },
+      },
+      select: {
+        id: true,
+        short_name: true,
+        name: true,
+      },
+    });
+
+    candidates.push(...curriculumPrograms);
+  }
+
+  const finalCandidates = uniqueById(candidates);
+  const primaryProgram = exactProgram || canonicalProgram;
+
+  return {
+    requestedProgramCode,
+    program: primaryProgram,
+    candidateProgramIds: finalCandidates.map((item) => item.id),
+    matchedProgramCodes: uniqueStrings([
+      requestedProgramCode,
+      ...finalCandidates.map((item) => item.short_name),
+    ]),
+    displayLabel: catalogEntry.display_label,
+    curriculumKey: catalogEntry.curriculum_key,
+  };
+}
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const formData = await req.formData();
+
+    const requestedProgramCode = String(formData.get("programCode") || "")
+      .trim()
+      .toUpperCase();
+    const termName = String(formData.get("termName") || "")
+      .trim()
+      .toUpperCase();
+    const file = formData.get("file") as File | null;
+
+    if (!requestedProgramCode) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "programCode is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!termName) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!file) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "Excel file is required." },
+        { status: 400 }
+      );
+    }
+
+    const resolvedProgramInfo = await resolveTargetProgram(requestedProgramCode);
+    const program = resolvedProgramInfo.program;
+    const candidateProgramIds = resolvedProgramInfo.candidateProgramIds;
+
+    const fileBuffer = Buffer.from(await file.arrayBuffer());
+    const parsed = parseOfferingTemplateWorkbook(fileBuffer);
+
+    const [masterCourses, teachers, rooms, batches] = await Promise.all([
+      prisma.master_courses.findMany({
+        where: {
+          OR: [
+            {
+              program_id: {
+                in: candidateProgramIds,
+              },
+            },
+            ...(resolvedProgramInfo.curriculumKey
+              ? [
+                  {
+                    curriculum_key: resolvedProgramInfo.curriculumKey,
+                  },
+                ]
+              : []),
+          ],
+        },
+        orderBy: [{ course_code: "asc" }],
+      }),
+      prisma.teachers.findMany({
+        where: {
+          is_active: true,
+        },
+        orderBy: [{ teacher_code: "asc" }],
+      }),
+      prisma.rooms.findMany({
+        where: {
+          is_active: true,
+        },
+        orderBy: [{ room_code: "asc" }],
+      }),
+      prisma.batches.findMany({
+        where: {
+          program_id: {
+            in: candidateProgramIds,
+          },
+          is_active: true,
+        },
+        include: {
+          programs: true,
+        },
+        orderBy: [{ batch_code: "asc" }],
+      }),
+    ]);
+
+    const previewRows: PreviewRow[] = parsed.rows.map((row) => {
+      const issues: string[] = [];
+      let status: PreviewRowStatus = "READY";
+
+      const courseResolution = resolveCourseByCodeOrTitle(row, masterCourses);
+      const resolvedCourse = courseResolution.course;
+
+      if (!resolvedCourse) {
+        issues.push(
+          `Course could not be matched from ${
+            row.courseCode || row.coofferedCourseCode || row.courseTitle
+          }.`
+        );
+        status = "BLOCKED";
+      }
+
+      const resolvedBatch = resolveBatch(row.batchCode, batches);
+      if (!resolvedBatch) {
+        issues.push(
+          `Batch ${row.batchCode} was not found under any matched program: ${resolvedProgramInfo.matchedProgramCodes.join(
+            ", "
+          )}.`
+        );
+        status = "BLOCKED";
+      }
+
+      const resolvedTeacher = isBlankLikeFaculty(row.facultyInitial)
+        ? null
+        : resolveTeacher(row.facultyInitial, teachers);
+
+      const resolvedRoom = row.room ? resolveRoom(row.room, rooms) : null;
+      const slotOptional = isSlotOptionalCourseType(row.courseType, row.courseTitle);
+
+      if (!slotOptional) {
+        if (!row.parsedSlots.length) {
+          issues.push("No valid slot parsed from Slot 1 / Slot 2 + Time.");
+          status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+        }
+
+        const invalidSlot = row.parsedSlots.find((slot) => !slot.timeParseOk);
+        if (invalidSlot) {
+          issues.push(
+            `Time parse issue: ${invalidSlot.timeParseReason || "invalid time format"}.`
+          );
+          status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+        }
+
+        if (!row.room) {
+          issues.push("Room is missing.");
+          status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+        }
+
+        if (row.room && !resolvedRoom) {
+          issues.push(
+            `Room ${row.room} was not matched to an active room entry. Slot import will be skipped unless room mapping is fixed.`
+          );
+          status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+        }
+      }
+
+      if (!isBlankLikeFaculty(row.facultyInitial) && row.facultyInitial && !resolvedTeacher) {
+        issues.push(
+          `Faculty initial ${row.facultyInitial} was not matched to an active faculty.`
+        );
+        status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+      }
+
+      if (slotOptional) {
+        issues.push(
+          "Slot/room is optional for this course type and will not be required during import."
+        );
+        status = status === "BLOCKED" ? "BLOCKED" : "WARNING";
+      }
+
+      return {
+        rowKey: row.rowKey,
+        batchCode: row.batchCode,
+        courseTitle: row.courseTitle,
+        courseCode: row.courseCode,
+        coofferedCourseCode: row.coofferedCourseCode,
+        facultyInitial: row.facultyInitial,
+        section: row.section,
+        credits: row.credits,
+        day: row.day,
+        rawTime: row.rawTime,
+        startTime: row.startTime,
+        endTime: row.endTime,
+        timeParseOk: row.timeParseOk,
+        room: row.room,
+        courseType: row.courseType,
+        parsedSlots: row.parsedSlots,
+        status,
+        issues,
+        resolvedCourseId: resolvedCourse?.id ?? null,
+        resolvedCourseTitle: resolvedCourse?.course_title ?? null,
+        resolvedCourseCode: resolvedCourse?.course_code ?? null,
+        resolvedCourseMatchedBy: courseResolution.matchedBy || null,
+        resolvedCourseMatchedValue: courseResolution.matchedValue || null,
+        resolvedBatchId: resolvedBatch?.id ?? null,
+        resolvedBatchProgramCode: resolvedBatch?.programs?.short_name ?? null,
+        resolvedTeacherId: resolvedTeacher?.id ?? null,
+        resolvedTeacherCode: resolvedTeacher?.teacher_code ?? null,
+        resolvedRoomId: resolvedRoom?.id ?? null,
+        resolvedRoomCode: resolvedRoom?.room_code ?? null,
+        slotOptional,
+      };
+    });
+
+    const readyCount = previewRows.filter((x) => x.status === "READY").length;
+    const warningCount = previewRows.filter((x) => x.status === "WARNING").length;
+    const blockedCount = previewRows.filter((x) => x.status === "BLOCKED").length;
+    const detectedBatchCodes = uniqueStrings(previewRows.map((x) => x.batchCode));
+
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json({
+      ok: true,
+      fileName: file.name,
+      requestedProgramCode: resolvedProgramInfo.requestedProgramCode,
+      resolvedProgramCode: program.short_name,
+      resolvedProgramName: program.name,
+      matchedProgramCodes: resolvedProgramInfo.matchedProgramCodes,
+      termName,
+      sheetName: parsed.sheetName,
+      summary: {
+        totalRows: previewRows.length,
+        totalBatchBlocks: parsed.summary.totalBatchBlocks,
+        detectedBatchCodes,
+        readyCount,
+        warningCount,
+        blockedCount,
+      },
+      previewRows,
+    });
+  } catch (error) {
+    console.error(error);
+
+    const message =
+      error instanceof Error ? error.message : "Failed to preview offering template.";
+
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json(
+      {
+        ok: false,
+        error: message,
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src/app/api/offering-template-import/commit/route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { parseAcademicTerm } from "@/lib/semester-utils";
+import {
+  isBlankLikeFaculty,
+  isSlotOptionalCourseType,
+  normalizeCourseCode,
+  normalizeCourseTitle,
+  normalizeTeacherCode,
+  parseOneCourseCodeAliases,
+} from "@/lib/offering-template-normalize";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
+import { buildPendingManualCoofferNote } from "@/lib/offering-template-cooffer";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
+type ProgramCandidate = {
+  id: number;
+  short_name: string;
+  name: string;
+};
+
+type CommitRow = {
+  rowKey: string;
+  batchCode: string;
+  courseTitle: string;
+  courseCode: string;
+  coofferedCourseCode: string;
+  facultyInitial: string;
+  section: string;
+  credits: number;
+  day: string;
+  rawTime: string;
+  startTime: string;
+  endTime: string;
+  timeParseOk: boolean;
+  room: string;
+  courseType: string;
+  parsedSlots?: Array<{
+    day: string;
+    rawTime: string;
+    startTime: string;
+    endTime: string;
+    timeParseOk: boolean;
+    timeParseReason: string;
+  }>;
+  status: "READY" | "WARNING" | "BLOCKED";
+};
+
+function uniqueById<T extends { id: number }>(rows: T[]) {
+  const seen = new Set<number>();
+  const out: T[] = [];
+
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+
+  return out;
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function normalizeUpper(value: unknown) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function digitsOnly(value: unknown) {
+  return String(value ?? "").replace(/\D+/g, "").trim();
+}
+
+function safeRoomNumber(room: any) {
+  const raw = room?.room_number;
+  if (raw === null || raw === undefined) return "";
+  return String(raw).trim().toUpperCase();
+}
+
+function resolveRoom(inputRoom: string, rooms: any[]) {
+  const raw = String(inputRoom || "").trim();
+  if (!raw) return null;
+
+  const normalizedInput = normalizeUpper(raw);
+  const inputDigits = digitsOnly(raw);
+
+  for (const room of rooms) {
+    const roomCode = normalizeUpper(room.room_code);
+    const roomNumber = safeRoomNumber(room);
+    const roomCodeDigits = digitsOnly(room.room_code);
+    const roomNumberDigits = digitsOnly(room.room_number);
+
+    if (
+      normalizedInput === roomCode ||
+      normalizedInput === roomNumber ||
+      (inputDigits && inputDigits === roomCodeDigits) ||
+      (inputDigits && inputDigits === roomNumberDigits)
+    ) {
+      return room;
+    }
+  }
+
+  for (const room of rooms) {
+    const roomCode = normalizeUpper(room.room_code);
+    const roomNumber = safeRoomNumber(room);
+    const roomType = normalizeUpper(room.room_type);
+    const building = normalizeUpper(room.building);
+
+    const candidates = [
+      roomCode,
+      roomNumber,
+      `${roomCode}-${roomNumber}`,
+      `${roomType}-${roomNumber}`,
+      `${building}-${roomNumber}`,
+      `${roomType} (${roomNumber})`,
+      `${roomCode} (${roomNumber})`,
+    ].filter(Boolean);
+
+    if (candidates.includes(normalizedInput)) return room;
+  }
+
+  return null;
+}
+
+function resolveTeacher(inputTeacherCode: string, teachers: any[]) {
+  const normalized = normalizeTeacherCode(inputTeacherCode);
+  if (!normalized) return null;
+
+  return (
+    teachers.find(
+      (teacher) => normalizeTeacherCode(teacher.teacher_code) === normalized
+    ) || null
+  );
+}
+
+function resolveBatch(inputBatchCode: string, batches: any[]) {
+  const normalized = normalizeUpper(inputBatchCode);
+  if (!normalized) return null;
+
+  return (
+    batches.find((batch) => normalizeUpper(batch.batch_code) === normalized) ||
+    null
+  );
+}
+
+function resolveCourseByCodeOrTitle(
+  row: {
+    courseCode: string;
+    coofferedCourseCode: string;
+    courseTitle: string;
+  },
+  masterCourses: any[]
+) {
+  const directCodes = Array.from(
+    new Set(
+      [
+        normalizeCourseCode(row.courseCode),
+        normalizeCourseCode(row.coofferedCourseCode),
+        ...parseOneCourseCodeAliases(row.courseCode),
+        ...parseOneCourseCodeAliases(row.coofferedCourseCode),
+      ].filter(Boolean)
+    )
+  );
+
+  for (const code of directCodes) {
+    const matched = masterCourses.find(
+      (course) => normalizeCourseCode(course.course_code) === code
+    );
+    if (matched) return matched;
+  }
+
+  const normalizedTitle = normalizeCourseTitle(row.courseTitle);
+  if (normalizedTitle) {
+    const matched = masterCourses.find((course) => {
+      const courseTitle = normalizeCourseTitle(course.course_title);
+      const normalizedStored = normalizeUpper(course.normalized_title || "");
+      return courseTitle === normalizedTitle || normalizedStored === normalizedTitle;
+    });
+
+    if (matched) return matched;
+  }
+
+  return null;
+}
+
+async function resolveTargetProgram(requestedProgramCode: string) {
+  const catalogEntry = await prisma.academic_catalog_entries.findFirst({
+    where: {
+      program_code: requestedProgramCode,
+      is_active: true,
+    },
+    select: {
+      department_code: true,
+      department_name: true,
+      program_code: true,
+      program_title: true,
+      study_shift: true,
+      display_label: true,
+      curriculum_key: true,
+    },
+  });
+
+  if (!catalogEntry) {
+    throw new Error("Selected academic identity was not found in Academic Setup.");
+  }
+
+  const candidates: ProgramCandidate[] = [];
+
+  const exactProgram = await prisma.programs.findFirst({
+    where: { short_name: requestedProgramCode },
+    select: { id: true, short_name: true, name: true },
+  });
+
+  if (exactProgram) candidates.push(exactProgram);
+
+  const canonicalProgram = await resolveCanonicalProgram({
+    department_code: catalogEntry.department_code,
+    department_name: catalogEntry.department_name,
+    program_code: catalogEntry.program_code,
+    program_title: catalogEntry.program_title,
+    study_shift: catalogEntry.study_shift,
+  });
+
+  candidates.push({
+    id: canonicalProgram.id,
+    short_name: canonicalProgram.short_name,
+    name: canonicalProgram.name,
+  });
+
+  if (catalogEntry.curriculum_key) {
+    const curriculumPrograms = await prisma.programs.findMany({
+      where: {
+        master_courses: {
+          some: { curriculum_key: catalogEntry.curriculum_key },
+        },
+      },
+      select: { id: true, short_name: true, name: true },
+    });
+
+    candidates.push(...curriculumPrograms);
+  }
+
+  const finalCandidates = uniqueById(candidates);
+  const primaryProgram = exactProgram || canonicalProgram;
+
+  return {
+    requestedProgramCode,
+    program: primaryProgram,
+    candidateProgramIds: finalCandidates.map((item) => item.id),
+    matchedProgramCodes: uniqueStrings([
+      requestedProgramCode,
+      ...finalCandidates.map((item) => item.short_name),
+    ]),
+    displayLabel: catalogEntry.display_label,
+    curriculumKey: catalogEntry.curriculum_key,
+  };
+}
+
+async function ensureAcademicTerm(termName: string) {
+  const existing = await prisma.academic_terms.findFirst({
+    where: { name: termName },
+  });
+
+  if (existing) return existing;
+
+  const parsed = parseAcademicTerm(termName);
+
+  return prisma.academic_terms.create({
+    data: {
+      name: termName,
+      year: parsed.year,
+      term_type: parsed.season,
+      is_active: true,
+    },
+  });
+}
+
+async function resolvePreparedByUserId() {
+  const user = await prisma.users.findFirst({
+    where: {
+      is_active: true,
+      role: { in: ["SUPER_ADMIN", "COORDINATOR"] },
+    },
+    orderBy: { id: "asc" },
+    select: { id: true },
+  });
+
+  if (!user) {
+    throw new Error("No active SUPER_ADMIN or COORDINATOR user found.");
+  }
+
+  return user.id;
+}
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await req.json();
+
+    const requestedProgramCode = String(body.programCode || "")
+      .trim()
+      .toUpperCase();
+    const termName = String(body.termName || "").trim().toUpperCase();
+    const rows = Array.isArray(body.rows) ? (body.rows as CommitRow[]) : [];
+
+    if (!requestedProgramCode) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "programCode is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!termName) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!rows.length) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "No preview rows were provided for commit." },
+        { status: 400 }
+      );
+    }
+
+    const usableRows = rows.filter((row) => row.status !== "BLOCKED");
+
+    if (!usableRows.length) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "No usable rows found for commit." },
+        { status: 400 }
+      );
+    }
+
+    const resolvedProgramInfo = await resolveTargetProgram(requestedProgramCode);
+    const program = resolvedProgramInfo.program;
+    const candidateProgramIds = resolvedProgramInfo.candidateProgramIds;
+    const academicTerm = await ensureAcademicTerm(termName);
+    const preparedByUserId = await resolvePreparedByUserId();
+
+    const [masterCourses, teachers, rooms, batches] = await Promise.all([
+      prisma.master_courses.findMany({
+        where: {
+          OR: [
+            { program_id: { in: candidateProgramIds } },
+            ...(resolvedProgramInfo.curriculumKey
+              ? [{ curriculum_key: resolvedProgramInfo.curriculumKey }]
+              : []),
+          ],
+        },
+      }),
+      prisma.teachers.findMany({
+        where: { is_active: true },
+      }),
+      prisma.rooms.findMany({
+        where: { is_active: true },
+      }),
+      prisma.batches.findMany({
+        where: {
+          program_id: { in: candidateProgramIds },
+          is_active: true,
+        },
+        include: { programs: true },
+      }),
+    ]);
+
+    let offering = await prisma.offerings.findFirst({
+      where: {
+        academic_term_id: academicTerm.id,
+        program_id: program.id,
+      },
+      select: { id: true },
+    });
+
+    if (!offering) {
+      offering = await prisma.offerings.create({
+        data: {
+          academic_term_id: academicTerm.id,
+          program_id: program.id,
+          prepared_by_user_id: preparedByUserId,
+          status: "DRAFT",
+        },
+        select: { id: true },
+      });
+    }
+
+    const existingCourses = await prisma.offered_courses.findMany({
+      where: { offering_id: offering.id },
+      select: {
+        id: true,
+        master_course_id: true,
+        section: true,
+      },
+    });
+
+    const offeredCourseMap = new Map<string, number>();
+    for (const course of existingCourses) {
+      offeredCourseMap.set(
+        `${course.master_course_id}__${course.section}`,
+        course.id
+      );
+    }
+
+    let createdCourseCount = 0;
+    let reusedCourseCount = 0;
+    let attachedBatchCount = 0;
+    let attachedTeacherCount = 0;
+    let addedSlotCount = 0;
+    let addedManualCoofferCount = 0;
+    let skippedRowCount = 0;
+
+    for (const row of usableRows) {
+      const resolvedCourse = resolveCourseByCodeOrTitle(row, masterCourses);
+      const resolvedBatch = resolveBatch(row.batchCode, batches);
+
+      if (!resolvedCourse || !resolvedBatch) {
+        skippedRowCount += 1;
+        continue;
+      }
+
+      const courseKey = `${resolvedCourse.id}__${row.section}`;
+      let offeredCourseId = offeredCourseMap.get(courseKey);
+
+      if (!offeredCourseId) {
+        const created = await prisma.offered_courses.create({
+          data: {
+            offering_id: offering.id,
+            master_course_id: resolvedCourse.id,
+            section: row.section,
+            is_cooffered: false,
+            notes: null,
+          },
+          select: { id: true },
+        });
+
+        offeredCourseId = created.id;
+        offeredCourseMap.set(courseKey, offeredCourseId);
+        createdCourseCount += 1;
+      } else {
+        reusedCourseCount += 1;
+      }
+
+      const existingBatch = await prisma.offered_course_batches.findFirst({
+        where: {
+          offered_course_id: offeredCourseId,
+          batch_id: resolvedBatch.id,
+        },
+        select: { id: true },
+      });
+
+      if (!existingBatch) {
+        await prisma.offered_course_batches.create({
+          data: {
+            offered_course_id: offeredCourseId,
+            batch_id: resolvedBatch.id,
+          },
+        });
+        attachedBatchCount += 1;
+      }
+
+      const resolvedTeacher = isBlankLikeFaculty(row.facultyInitial)
+        ? null
+        : resolveTeacher(row.facultyInitial, teachers);
+
+      if (resolvedTeacher) {
+        const existingTeacher = await prisma.offered_course_teachers.findFirst({
+          where: {
+            offered_course_id: offeredCourseId,
+            teacher_id: resolvedTeacher.id,
+          },
+          select: { id: true },
+        });
+
+        if (!existingTeacher) {
+          await prisma.offered_course_teachers.create({
+            data: {
+              offered_course_id: offeredCourseId,
+              teacher_id: resolvedTeacher.id,
+              assigned_credit: Number(resolvedCourse.credit || row.credits || 0),
+              load_type: "IMPORTED",
+            },
+          });
+          attachedTeacherCount += 1;
+        }
+      }
+
+      if (row.coofferedCourseCode) {
+        const normalizedManualCode = normalizeCourseCode(row.coofferedCourseCode);
+
+        const existingManual = await prisma.offered_course_manual_cooffers.findFirst({
+          where: {
+            offered_course_id: offeredCourseId,
+            manual_course_code: normalizedManualCode,
+          },
+          select: { id: true },
+        });
+
+        if (!existingManual) {
+          await prisma.offered_course_manual_cooffers.create({
+            data: {
+              offered_course_id: offeredCourseId,
+              target_program_code: requestedProgramCode,
+              manual_course_code: normalizedManualCode,
+              note: buildPendingManualCoofferNote({
+                sourceProgramCode: requestedProgramCode,
+                section: row.section,
+                batchCode: row.batchCode,
+                importedFrom: "prepared-offering-template",
+              }),
+            },
+          });
+          addedManualCoofferCount += 1;
+        }
+      }
+
+      const slotOptional = isSlotOptionalCourseType(row.courseType, row.courseTitle);
+
+      if (!slotOptional && row.room) {
+        const room = resolveRoom(row.room, rooms);
+
+        if (room) {
+          const slotsToCreate =
+            Array.isArray(row.parsedSlots) && row.parsedSlots.length > 0
+              ? row.parsedSlots.filter(
+                  (slot) =>
+                    slot.day &&
+                    slot.timeParseOk &&
+                    slot.startTime &&
+                    slot.endTime
+                )
+              : row.day && row.timeParseOk && row.startTime && row.endTime
+                ? [
+                    {
+                      day: row.day,
+                      startTime: row.startTime,
+                      endTime: row.endTime,
+                    },
+                  ]
+                : [];
+
+          for (const slot of slotsToCreate) {
+            const existingSlot = await prisma.offered_course_slots.findFirst({
+              where: {
+                offered_course_id: offeredCourseId,
+                day_of_week: slot.day,
+                start_time: slot.startTime,
+                end_time: slot.endTime,
+                room_id: room.id,
+              },
+              select: { id: true },
+            });
+
+            if (!existingSlot) {
+              await prisma.offered_course_slots.create({
+                data: {
+                  offered_course_id: offeredCourseId,
+                  day_of_week: slot.day,
+                  start_time: slot.startTime,
+                  end_time: slot.endTime,
+                  room_id: room.id,
+                  slot_type: "CLASS",
+                },
+              });
+              addedSlotCount += 1;
+            }
+          }
+        }
+      }
+    }
+
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json({
+      ok: true,
+      message: "Offering template committed into draft successfully.",
+      draftId: offering.id,
+      offeringId: offering.id,
+      summary: {
+        createdCourseCount,
+        reusedCourseCount,
+        attachedBatchCount,
+        attachedTeacherCount,
+        addedSlotCount,
+        addedManualCoofferCount,
+        skippedRowCount,
+      },
+      requestedProgramCode,
+      resolvedProgramCode: program.short_name,
+      matchedProgramCodes: resolvedProgramInfo.matchedProgramCodes,
+      termName,
+    });
+  } catch (error) {
+    console.error("Offering template commit error:", error);
+
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to commit offering template.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src/app/api/offering-template-import/validate/route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
+
+type PreviewRow = {
+  status?: string;
+  batchCode?: string;
+  courseCode?: string;
+  courseTitle?: string;
+  coofferedCourseCode?: string;
+  facultyInitial?: string;
+  section?: string;
+  credit?: number;
+  day?: string;
+  time?: string;
+  room?: string;
+  issues?: string[];
+};
+
+function normalize(value: unknown) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function extractTimeParts(input: string) {
+  const text = String(input || "").replace(/\s+/g, " ").trim().toUpperCase();
+
+  const regex =
+    /(\d{1,2}:\d{2}\s*(?:AM|PM)?)[\s-]+(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i;
+
+  const match = text.match(regex);
+  if (!match) return null;
+
+  return {
+    start: match[1].replace(/\s+/g, ""),
+    end: match[2].replace(/\s+/g, ""),
+  };
+}
+
+function toMinutes(value: string) {
+  const raw = normalize(value).replace(/\s+/g, "");
+  const matched = raw.match(/^(\d{1,2}):(\d{2})(AM|PM)?$/);
+
+  if (!matched) return null;
+
+  let hour = Number(matched[1]);
+  const minute = Number(matched[2]);
+  const meridiem = matched[3] || null;
+
+  if (meridiem === "AM") {
+    if (hour === 12) hour = 0;
+  } else if (meridiem === "PM") {
+    if (hour !== 12) hour += 12;
+  }
+
+  return hour * 60 + minute;
+}
+
+function overlaps(startA: number, endA: number, startB: number, endB: number) {
+  return startA < endB && startB < endA;
+}
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await req.json();
+    const termName = normalize(body.termName);
+    const rows = Array.isArray(body.rows) ? (body.rows as PreviewRow[]) : [];
+
+    if (!termName) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: { name: termName },
+      select: { id: true, name: true },
+    });
+
+    if (!term) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const existing = await prisma.offered_courses.findMany({
+      where: {
+        offerings: {
+          academic_term_id: term.id,
+        },
+      },
+      include: {
+        offered_course_batches: {
+          include: {
+            batches: true,
+          },
+        },
+        offered_course_slots: {
+          include: {
+            rooms: true,
+          },
+        },
+        offered_course_teachers: {
+          include: {
+            teachers: true,
+          },
+        },
+        primary_offered_course: {
+          include: {
+            offered_course_slots: {
+              include: {
+                rooms: true,
+              },
+            },
+            offered_course_teachers: {
+              include: {
+                teachers: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const existingEvents = existing.flatMap((course) => {
+      const slots =
+        course.primary_offered_course?.offered_course_slots.length
+          ? course.primary_offered_course.offered_course_slots
+          : course.offered_course_slots;
+
+      const teachers =
+        course.primary_offered_course?.offered_course_teachers.length
+          ? course.primary_offered_course.offered_course_teachers
+          : course.offered_course_teachers;
+
+      const batchCodes = course.offered_course_batches.map((x) => normalize(x.batches.batch_code));
+
+      return slots
+        .map((slot) => {
+          const start = toMinutes(slot.start_time);
+          const end = toMinutes(slot.end_time);
+          if (start == null || end == null) return null;
+
+          return {
+            day: normalize(slot.day_of_week),
+            room: normalize(slot.rooms?.room_code || "-"),
+            teacherInitials: teachers.map((x) => normalize(x.teachers.teacher_code)),
+            batchCodes,
+            start,
+            end,
+          };
+        })
+        .filter(Boolean) as Array<{
+        day: string;
+        room: string;
+        teacherInitials: string[];
+        batchCodes: string[];
+        start: number;
+        end: number;
+      }>;
+    });
+
+    const uploadEvents: Array<{
+      index: number;
+      day: string;
+      room: string;
+      facultyInitial: string;
+      batchCode: string;
+      start: number;
+      end: number;
+    }> = [];
+
+    const validatedRows = rows.map((row, index) => {
+      const issues = [...(row.issues || [])];
+      const conflictTypes: string[] = [];
+
+      if (normalize(row.status) === "BLOCKED") {
+        return {
+          ...row,
+          validationStatus: "BLOCKED",
+          conflictTypes,
+          issues,
+        };
+      }
+
+      const timeParts = extractTimeParts(String(row.time || ""));
+      const start = timeParts ? toMinutes(timeParts.start) : null;
+      const end = timeParts ? toMinutes(timeParts.end) : null;
+      const day = normalize(row.day);
+      const room = normalize(row.room);
+      const facultyInitial = normalize(row.facultyInitial);
+      const batchCode = normalize(row.batchCode);
+
+      if (day && start != null && end != null) {
+        uploadEvents.push({
+          index,
+          day,
+          room,
+          facultyInitial,
+          batchCode,
+          start,
+          end,
+        });
+      }
+
+      return {
+        ...row,
+        validationStatus: "OK",
+        conflictTypes,
+        issues,
+      };
+    });
+
+    for (const event of uploadEvents) {
+      const row = validatedRows[event.index];
+
+      for (const other of uploadEvents) {
+        if (other.index === event.index) continue;
+        if (other.day !== event.day) continue;
+        if (!overlaps(event.start, event.end, other.start, other.end)) continue;
+
+        if (event.room && other.room && event.room === other.room) {
+          row.conflictTypes.push("UPLOAD_ROOM_CONFLICT");
+        }
+
+        if (
+          event.facultyInitial &&
+          other.facultyInitial &&
+          event.facultyInitial === other.facultyInitial
+        ) {
+          row.conflictTypes.push("UPLOAD_FACULTY_CONFLICT");
+        }
+
+        if (event.batchCode && other.batchCode && event.batchCode === other.batchCode) {
+          row.conflictTypes.push("UPLOAD_BATCH_CONFLICT");
+        }
+      }
+
+      for (const existingEvent of existingEvents) {
+        if (existingEvent.day !== event.day) continue;
+        if (!overlaps(event.start, event.end, existingEvent.start, existingEvent.end)) continue;
+
+        if (event.room && existingEvent.room && event.room === existingEvent.room) {
+          row.conflictTypes.push("EXISTING_ROOM_CONFLICT");
+        }
+
+        if (
+          event.facultyInitial &&
+          existingEvent.teacherInitials.includes(event.facultyInitial)
+        ) {
+          row.conflictTypes.push("EXISTING_FACULTY_CONFLICT");
+        }
+
+        if (
+          event.batchCode &&
+          existingEvent.batchCodes.includes(event.batchCode)
+        ) {
+          row.conflictTypes.push("EXISTING_BATCH_CONFLICT");
+        }
+      }
+
+      row.conflictTypes = Array.from(new Set(row.conflictTypes));
+
+      if (row.conflictTypes.length > 0) {
+        row.validationStatus = "CONFLICT";
+        row.issues = [
+          ...row.issues,
+          ...row.conflictTypes.map((x) => x.replaceAll("_", " ")),
+        ];
+      }
+    }
+
+    const summary = {
+      totalRows: validatedRows.length,
+      okRows: validatedRows.filter((x) => x.validationStatus === "OK").length,
+      conflictRows: validatedRows.filter((x) => x.validationStatus === "CONFLICT").length,
+      blockedRows: validatedRows.filter((x) => x.validationStatus === "BLOCKED").length,
+    };
+
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json({
+      success: true,
+      termName: term.name,
+      summary,
+      rows: validatedRows,
+    });
+  } catch (error) {
+    console.error(error);
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json(
+      { error: "Failed to validate offering template rows." },
+      { status: 500 }
+    );
+  }
+}

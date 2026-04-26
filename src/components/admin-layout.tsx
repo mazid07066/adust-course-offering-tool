@@ -25,8 +25,10 @@ const navItems = [
 
   // OFFERING FLOW
   { href: "/admin/offering-context", label: "Offering Context" },
-  { href: "/admin/offerings", label: "Offering Template Import" },
+  { href: "/admin/offering-template-import", label: "Offering Template Import" },
+  { href: "/admin/offerings", label: "Offering Workspace" },
   { href: "/admin/offering-drafts", label: "Offering Drafts" },
+  { href: "/admin/manual-offering", label: "Manual Course Addition" },
 
   // SCHEDULING & ASSIGNMENT
   { href: "/admin/schedule", label: "Schedule Board" },
@@ -34,10 +36,11 @@ const navItems = [
 
   // FACULTY FLOW
   { href: "/admin/faculty-choice-control", label: "Faculty Choice Control" },
+  { href: "/admin/faculty-course-choices", label: "Faculty Choice Approval" },
   { href: "/admin/faculties", label: "Faculty Management" },
   { href: "/admin/users", label: "User Management" },
 
-  // REPORTING (NEW)
+  // REPORTING
   { href: "/admin/reports", label: "Reports Dashboard" },
 
   // SYSTEM
