@@ -4,7 +4,7 @@ import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { getSectionGroupBatchIds, getSectionGroupCourseIds } from "@/lib/offering-section-group";
 import { canModifySlots } from "@/lib/offering-status";
 import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
-
+import { SCHEDULE_CONFLICT_STATUSES } from "@/lib/course-schedule-policy";
 const ALLOWED_DAYS = ["THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY", "MONDAY"];
 const ALLOWED_DURATIONS_MINUTES = [60, 90, 120, 180];
 
@@ -221,7 +221,7 @@ export async function POST(req: NextRequest) {
         offered_courses: {
           offerings: {
             status: {
-              in: ["DRAFT", "CONFIRMED"],
+              in: SCHEDULE_CONFLICT_STATUSES,
             },
           },
           offered_course_batches: {

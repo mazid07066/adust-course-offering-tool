@@ -7,7 +7,6 @@ import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 const ALLOWED_OFFERING_STATUSES = [
   "FACULTY_CHOICE_BUFFER",
   "FACULTY_CHOICE_FINALIZED",
-  "CONFIRMED",
 ];
 
 export async function POST(req: NextRequest) {

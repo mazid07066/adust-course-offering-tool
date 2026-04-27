@@ -12,7 +12,6 @@ const ALLOWED_OFFERING_STATUSES = [
   "BUFFER_READY",
   "FACULTY_CHOICE_BUFFER",
   "FACULTY_CHOICE_FINALIZED",
-  "CONFIRMED",
 ];
 
 export async function POST(req: NextRequest) {
@@ -27,7 +26,6 @@ export async function POST(req: NextRequest) {
     const teacherId = Number(body.teacherId);
 
     if (!termName || !offeredCourseId || !teacherId) {
-      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "termName, offeredCourseId, and teacherId are required." },
         { status: 400 }
@@ -40,7 +38,6 @@ export async function POST(req: NextRequest) {
     });
 
     if (!term) {
-      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "Academic term not found." },
         { status: 404 }
@@ -59,7 +56,6 @@ export async function POST(req: NextRequest) {
     });
 
     if (!teacher || !teacher.is_active) {
-      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { error: "Selected faculty is not active or does not exist." },
         { status: 404 }
@@ -79,13 +75,16 @@ export async function POST(req: NextRequest) {
       },
       include: {
         master_courses: true,
+        offerings: true,
       },
     });
 
     if (!course) {
-      clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
-        { error: "Offered section not found for the selected term." },
+        {
+          error:
+            "Offered section not found, or the offering is already CONFIRMED and locked.",
+        },
         { status: 404 }
       );
     }
@@ -129,7 +128,8 @@ export async function POST(req: NextRequest) {
     const loadLevel = getFacultyLoadLevel(totalAssignedCredits);
     const loadMessage = getFacultyLoadMessage(totalAssignedCredits);
 
-    clearReportingCacheWithLog("offering/reporting data changed");
+    clearReportingCacheWithLog("faculty assignment changed");
+
     return NextResponse.json({
       success: true,
       message: `Assigned ${teacher.teacher_code} - ${teacher.full_name} to ${course.master_courses.course_code} section ${course.section}.`,
@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error(error);
-    clearReportingCacheWithLog("offering/reporting data changed");
+
     return NextResponse.json(
       { error: "Failed to assign faculty." },
       { status: 500 }
