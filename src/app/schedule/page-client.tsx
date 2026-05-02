@@ -1,18 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+type FacultyDetail = {
+  id: number;
+  teacherCode: string;
+  fullName: string;
+  designation: string;
+  phone: string;
+  email: string;
+};
 
 type ScheduleRow = {
-  dayOfWeek: string;
-  startTime: string;
-  endTime: string;
-  roomCode: string;
+  batchCode: string;
   programCode: string;
+  programName: string;
   courseCode: string;
   courseTitle: string;
   section: string;
   facultyText: string;
-  batchCodes: string[];
+  facultyDetails: FacultyDetail[];
+  dayOfWeek: string;
+  startTime: string;
+  endTime: string;
+  roomCode: string;
+  scheduleKind: string;
+  offeringStatus: string;
 };
 
 type ApiResponse = {
@@ -27,42 +40,123 @@ type ApiResponse = {
   rows?: ScheduleRow[];
 };
 
+const PROGRAM_LABELS: Record<string, string> = {
+  "BSC-EEE-EVE-NEW": "B.Sc. in EEE (Evening/Diploma Holders)",
+  "BSC-EEE-REG-NEW": "B.Sc. in EEE (Regular)",
+  "BSC-RAE-REG-NEW": "B.Sc. in RAE",
+};
+
+const DAY_ORDER: Record<string, number> = {
+  SATURDAY: 1,
+  SUNDAY: 2,
+  MONDAY: 3,
+  TUESDAY: 4,
+  WEDNESDAY: 5,
+  THURSDAY: 6,
+  FRIDAY: 7,
+  "-": 99,
+};
+
+function getProgramLabel(programCode: string) {
+  return PROGRAM_LABELS[programCode] || "Academic Program";
+}
+
+function groupKey(row: ScheduleRow) {
+  return `${row.programCode}__${row.batchCode}`;
+}
+
+function sortRows(a: ScheduleRow, b: ScheduleRow) {
+  const dayA = DAY_ORDER[String(a.dayOfWeek || "").toUpperCase()] ?? 98;
+  const dayB = DAY_ORDER[String(b.dayOfWeek || "").toUpperCase()] ?? 98;
+
+  if (dayA !== dayB) return dayA - dayB;
+  if (a.startTime !== b.startTime) return a.startTime.localeCompare(b.startTime);
+  return a.courseCode.localeCompare(b.courseCode);
+}
+
+function uniqueFaculty(rows: ScheduleRow[]) {
+  const map = new Map<number, FacultyDetail>();
+
+  for (const row of rows) {
+    for (const faculty of row.facultyDetails || []) {
+      if (!map.has(faculty.id)) {
+        map.set(faculty.id, faculty);
+      }
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) =>
+    a.teacherCode.localeCompare(b.teacherCode)
+  );
+}
+
 export default function PublicSchedulePageClient() {
   const [terms, setTerms] = useState<string[]>([]);
   const [termName, setTermName] = useState("");
   const [programCode, setProgramCode] = useState("");
   const [batchCode, setBatchCode] = useState("");
   const [dayOfWeek, setDayOfWeek] = useState("");
-  const [filters, setFilters] = useState<{ programs: string[]; batches: string[]; days: string[] }>({
+
+  const [filters, setFilters] = useState<{
+    programs: string[];
+    batches: string[];
+    days: string[];
+  }>({
     programs: [],
     batches: [],
     days: [],
   });
+
   const [rows, setRows] = useState<ScheduleRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loadingTerms, setLoadingTerms] = useState(true);
+  const [loadingRows, setLoadingRows] = useState(false);
   const [error, setError] = useState("");
 
   async function loadTerms() {
-    const res = await fetch("/api/public/schedule", { cache: "no-store" });
-    const json: ApiResponse = await res.json();
-    setTerms(json.terms || []);
+    setLoadingTerms(true);
+    setError("");
+
+    try {
+      const res = await fetch("/api/public/schedule", { cache: "no-store" });
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load academic terms.");
+      }
+
+      setTerms(json.terms || []);
+      setFilters(json.filters || { programs: [], batches: [], days: [] });
+
+      if (!termName && json.terms?.length) {
+        setTermName(json.terms[0]);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load academic terms."
+      );
+    } finally {
+      setLoadingTerms(false);
+    }
   }
 
-  async function loadRows(nextTerm?: string) {
-    const activeTerm = nextTerm || termName;
-    if (!activeTerm) return;
+  async function loadRows() {
+    if (!termName) return;
 
-    setLoading(true);
+    setLoadingRows(true);
     setError("");
 
     try {
       const qs = new URLSearchParams();
-      qs.set("termName", activeTerm);
+      qs.set("termName", termName);
+
       if (programCode) qs.set("programCode", programCode);
       if (batchCode) qs.set("batchCode", batchCode);
       if (dayOfWeek) qs.set("dayOfWeek", dayOfWeek);
 
-      const res = await fetch(`/api/public/schedule?${qs.toString()}`, { cache: "no-store" });
+      const res = await fetch(`/api/public/schedule?${qs.toString()}`, {
+        cache: "no-store",
+      });
+
       const json: ApiResponse = await res.json();
 
       if (!res.ok) {
@@ -75,40 +169,149 @@ export default function PublicSchedulePageClient() {
       setError(err instanceof Error ? err.message : "Failed to load schedule.");
       setRows([]);
     } finally {
-      setLoading(false);
+      setLoadingRows(false);
     }
   }
 
   useEffect(() => {
     loadTerms();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (termName) {
       loadRows();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [termName, programCode, batchCode, dayOfWeek]);
+
+  const groupedRoutines = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        programCode: string;
+        programName: string;
+        batchCode: string;
+        rows: ScheduleRow[];
+        faculty: FacultyDetail[];
+      }
+    >();
+
+    for (const row of rows) {
+      const key = groupKey(row);
+
+      if (!map.has(key)) {
+        map.set(key, {
+          programCode: row.programCode,
+          programName: row.programName,
+          batchCode: row.batchCode,
+          rows: [],
+          faculty: [],
+        });
+      }
+
+      map.get(key)?.rows.push(row);
+    }
+
+    return Array.from(map.values())
+      .map((group) => ({
+        ...group,
+        rows: group.rows.sort(sortRows),
+        faculty: uniqueFaculty(group.rows),
+      }))
+      .sort((a, b) => {
+        if (a.programCode !== b.programCode) {
+          return a.programCode.localeCompare(b.programCode);
+        }
+
+        return a.batchCode.localeCompare(b.batchCode);
+      });
+  }, [rows]);
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-900">
       <div className="mx-auto max-w-7xl space-y-6">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h1 className="text-2xl font-bold">ADUST Public Schedule</h1>
-          <p className="mt-2 text-sm text-slate-600">
-            Confirmed class and lab schedule for students.
-          </p>
-        </div>
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">
+                UniFlow Academic Planner
+              </p>
+              <h1 className="mt-2 text-3xl font-bold tracking-tight">
+                Public Batch-wise Routine
+              </h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                Students can view the finalized batch-wise class and lab routine
+                by academic term, academic program, batch, and day. This page is
+                only for viewing the routine.
+              </p>
+            </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+              Public routine source
+              <br />
+              <span className="font-semibold">
+                {termName || "Select an academic term"}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-bold text-slate-900">
+            Program Identification
+          </h2>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-bold text-slate-900">
+                BSC-EEE-EVE-NEW
+              </div>
+              <div className="mt-1 text-sm text-slate-600">
+                B.Sc. in EEE (Evening/Diploma Holders)
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-bold text-slate-900">
+                BSC-EEE-REG-NEW
+              </div>
+              <div className="mt-1 text-sm text-slate-600">
+                B.Sc. in EEE (Regular)
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-bold text-slate-900">
+                BSC-RAE-REG-NEW
+              </div>
+              <div className="mt-1 text-sm text-slate-600">
+                B.Sc. in RAE
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div>
-              <label className="mb-2 block text-sm font-medium">Academic Term</label>
+              <label className="mb-2 block text-sm font-medium">
+                Academic Term
+              </label>
               <select
                 value={termName}
-                onChange={(e) => setTermName(e.target.value)}
+                onChange={(e) => {
+                  setTermName(e.target.value);
+                  setProgramCode("");
+                  setBatchCode("");
+                  setDayOfWeek("");
+                }}
                 className="w-full rounded-xl border px-4 py-3"
+                disabled={loadingTerms}
               >
-                <option value="">Select Term</option>
+                <option value="">
+                  {loadingTerms ? "Loading terms..." : "Select Term"}
+                </option>
                 {terms.map((term) => (
                   <option key={term} value={term}>
                     {term}
@@ -121,8 +324,13 @@ export default function PublicSchedulePageClient() {
               <label className="mb-2 block text-sm font-medium">Program</label>
               <select
                 value={programCode}
-                onChange={(e) => setProgramCode(e.target.value)}
+                onChange={(e) => {
+                  setProgramCode(e.target.value);
+                  setBatchCode("");
+                  setDayOfWeek("");
+                }}
                 className="w-full rounded-xl border px-4 py-3"
+                disabled={!termName}
               >
                 <option value="">All Programs</option>
                 {filters.programs.map((program) => (
@@ -131,16 +339,25 @@ export default function PublicSchedulePageClient() {
                   </option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-slate-500">
+                Select a program first to load that program&apos;s batches.
+              </p>
             </div>
 
             <div>
               <label className="mb-2 block text-sm font-medium">Batch</label>
               <select
                 value={batchCode}
-                onChange={(e) => setBatchCode(e.target.value)}
+                onChange={(e) => {
+                  setBatchCode(e.target.value);
+                  setDayOfWeek("");
+                }}
                 className="w-full rounded-xl border px-4 py-3"
+                disabled={!termName || !programCode}
               >
-                <option value="">All Batches</option>
+                <option value="">
+                  {programCode ? "Select Batch / All Batches" : "Select Program First"}
+                </option>
                 {filters.batches.map((batch) => (
                   <option key={batch} value={batch}>
                     {batch}
@@ -155,6 +372,7 @@ export default function PublicSchedulePageClient() {
                 value={dayOfWeek}
                 onChange={(e) => setDayOfWeek(e.target.value)}
                 className="w-full rounded-xl border px-4 py-3"
+                disabled={!termName}
               >
                 <option value="">All Days</option>
                 {filters.days.map((day) => (
@@ -165,58 +383,166 @@ export default function PublicSchedulePageClient() {
               </select>
             </div>
           </div>
-        </div>
+        </section>
 
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {error ? (
+          <section className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
+          </section>
+        ) : null}
+
+        {loadingRows ? (
+          <section className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-slate-600 shadow-sm">
+            Loading routine...
+          </section>
+        ) : null}
+
+        {!loadingRows && groupedRoutines.length === 0 ? (
+          <section className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-slate-600 shadow-sm">
+            No finalized routine found for the selected filters.
+          </section>
+        ) : null}
+
+        {!loadingRows &&
+          groupedRoutines.map((group) => (
+            <section
+              key={`${group.programCode}-${group.batchCode}`}
+              className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"
+            >
+              <div className="border-b border-slate-200 bg-slate-900 px-6 py-5 text-white">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold">
+                      {group.programCode} — {getProgramLabel(group.programCode)}
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-300">
+                      Batch: {group.batchCode}
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-white/10 px-4 py-2 text-sm">
+                    Total routine rows: {group.rows.length}
+                  </div>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="border-b px-3 py-3 text-left">Day</th>
+                      <th className="border-b px-3 py-3 text-left">Time</th>
+                      <th className="border-b px-3 py-3 text-left">Room</th>
+                      <th className="border-b px-3 py-3 text-left">Course</th>
+                      <th className="border-b px-3 py-3 text-left">Section</th>
+                      <th className="border-b px-3 py-3 text-left">Type</th>
+                      <th className="border-b px-3 py-3 text-left">Faculty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.rows.map((row, index) => (
+                      <tr
+                        key={`${row.programCode}-${row.batchCode}-${row.courseCode}-${row.section}-${row.dayOfWeek}-${row.startTime}-${index}`}
+                        className="hover:bg-slate-50"
+                      >
+                        <td className="border-b px-3 py-2 font-medium">
+                          {row.dayOfWeek}
+                        </td>
+                        <td className="border-b px-3 py-2">
+                          {row.startTime} - {row.endTime}
+                        </td>
+                        <td className="border-b px-3 py-2">{row.roomCode}</td>
+                        <td className="border-b px-3 py-2">
+                          <div className="font-semibold">{row.courseCode}</div>
+                          <div className="text-xs text-slate-500">
+                            {row.courseTitle}
+                          </div>
+                        </td>
+                        <td className="border-b px-3 py-2">{row.section}</td>
+                        <td className="border-b px-3 py-2">
+                          <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+                            {row.scheduleKind}
+                          </span>
+                        </td>
+                        <td className="border-b px-3 py-2">
+                          {row.facultyText}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="border-t border-slate-200 bg-slate-50 px-6 py-5">
+                <h3 className="text-lg font-bold text-slate-900">
+                  Faculty Members for Batch {group.batchCode}
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Contact information of faculty members assigned to this
+                  batch-wise routine.
+                </p>
+
+                {group.faculty.length === 0 ? (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    No faculty details found for this batch routine.
+                  </div>
+                ) : (
+                  <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {group.faculty.map((faculty) => (
+                      <div
+                        key={faculty.id}
+                        className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+                      >
+                        <div className="text-sm font-semibold text-blue-700">
+                          {faculty.teacherCode}
+                        </div>
+                        <div className="mt-1 text-base font-bold text-slate-900">
+                          {faculty.fullName}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-600">
+                          {faculty.designation}
+                        </div>
+                        <div className="mt-3 space-y-1 text-sm text-slate-700">
+                          <div>
+                            <span className="font-semibold">Phone:</span>{" "}
+                            {faculty.phone}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Email:</span>{" "}
+                            {faculty.email}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          ))}
+
+        <footer className="rounded-3xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-600 shadow-sm">
+          <div className="space-y-2">
+            <div className="font-semibold text-slate-900">
+              UniFlow Academic Planner
+            </div>
+            <div>
+              Course Offering, Faculty Assignment, Scheduling and Reporting
+              System
+            </div>
+            <div>
+              Built with Next.js, React, TypeScript, Prisma ORM, PostgreSQL
+              Supabase and Vercel Deployment.
+            </div>
+            <div className="font-semibold text-slate-900">
+              Designed and Developed by Mazid Ishtique Ahmed
+            </div>
+            <div>
+              Assistant Professor, EEE and Chairman, Dept. of Robotics and
+              Automation Engineering, Atish Dipankar University of Science &
+              Technology (ADUST)
+            </div>
           </div>
-        )}
-
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="border-b px-3 py-3 text-left">Day</th>
-                <th className="border-b px-3 py-3 text-left">Time</th>
-                <th className="border-b px-3 py-3 text-left">Room</th>
-                <th className="border-b px-3 py-3 text-left">Program</th>
-                <th className="border-b px-3 py-3 text-left">Course</th>
-                <th className="border-b px-3 py-3 text-left">Section</th>
-                <th className="border-b px-3 py-3 text-left">Batch</th>
-                <th className="border-b px-3 py-3 text-left">Teacher</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, index) => (
-                <tr
-                  key={`${row.programCode}-${row.courseCode}-${row.section}-${row.dayOfWeek}-${row.startTime}-${index}`}
-                >
-                  <td className="border-b px-3 py-2">{row.dayOfWeek}</td>
-                  <td className="border-b px-3 py-2">
-                    {row.startTime} - {row.endTime}
-                  </td>
-                  <td className="border-b px-3 py-2">{row.roomCode}</td>
-                  <td className="border-b px-3 py-2">{row.programCode}</td>
-                  <td className="border-b px-3 py-2">
-                    {row.courseCode} — {row.courseTitle}
-                  </td>
-                  <td className="border-b px-3 py-2">{row.section}</td>
-                  <td className="border-b px-3 py-2">{row.batchCodes.join(", ")}</td>
-                  <td className="border-b px-3 py-2">{row.facultyText}</td>
-                </tr>
-              ))}
-
-              {rows.length === 0 && !loading && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
-                    No confirmed schedule rows found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        </footer>
       </div>
     </main>
   );

@@ -1,0 +1,1122 @@
+
+
+===== FILE: src\app\schedule\page.tsx =====
+
+import PublicSchedulePageClient from "./page-client";
+
+export default function PublicSchedulePage() {
+  return <PublicSchedulePageClient />;
+}
+
+
+===== FILE: src\app\schedule\page-client.tsx =====
+
+"use client";
+
+import { useEffect, useState } from "react";
+
+type ScheduleRow = {
+  dayOfWeek: string;
+  startTime: string;
+  endTime: string;
+  roomCode: string;
+  programCode: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  facultyText: string;
+  batchCodes: string[];
+};
+
+type ApiResponse = {
+  success?: boolean;
+  error?: string;
+  terms?: string[];
+  filters?: {
+    programs: string[];
+    batches: string[];
+    days: string[];
+  };
+  rows?: ScheduleRow[];
+};
+
+export default function PublicSchedulePageClient() {
+  const [terms, setTerms] = useState<string[]>([]);
+  const [termName, setTermName] = useState("");
+  const [programCode, setProgramCode] = useState("");
+  const [batchCode, setBatchCode] = useState("");
+  const [dayOfWeek, setDayOfWeek] = useState("");
+  const [filters, setFilters] = useState<{ programs: string[]; batches: string[]; days: string[] }>({
+    programs: [],
+    batches: [],
+    days: [],
+  });
+  const [rows, setRows] = useState<ScheduleRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function loadTerms() {
+    const res = await fetch("/api/public/schedule", { cache: "no-store" });
+    const json: ApiResponse = await res.json();
+    setTerms(json.terms || []);
+  }
+
+  async function loadRows(nextTerm?: string) {
+    const activeTerm = nextTerm || termName;
+    if (!activeTerm) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const qs = new URLSearchParams();
+      qs.set("termName", activeTerm);
+      if (programCode) qs.set("programCode", programCode);
+      if (batchCode) qs.set("batchCode", batchCode);
+      if (dayOfWeek) qs.set("dayOfWeek", dayOfWeek);
+
+      const res = await fetch(`/api/public/schedule?${qs.toString()}`, { cache: "no-store" });
+      const json: ApiResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load schedule.");
+      }
+
+      setFilters(json.filters || { programs: [], batches: [], days: [] });
+      setRows(json.rows || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load schedule.");
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadTerms();
+  }, []);
+
+  useEffect(() => {
+    if (termName) {
+      loadRows();
+    }
+  }, [termName, programCode, batchCode, dayOfWeek]);
+
+  return (
+    <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-900">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h1 className="text-2xl font-bold">ADUST Public Schedule</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            Confirmed class and lab schedule for students.
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div>
+              <label className="mb-2 block text-sm font-medium">Academic Term</label>
+              <select
+                value={termName}
+                onChange={(e) => setTermName(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+              >
+                <option value="">Select Term</option>
+                {terms.map((term) => (
+                  <option key={term} value={term}>
+                    {term}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium">Program</label>
+              <select
+                value={programCode}
+                onChange={(e) => setProgramCode(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+              >
+                <option value="">All Programs</option>
+                {filters.programs.map((program) => (
+                  <option key={program} value={program}>
+                    {program}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium">Batch</label>
+              <select
+                value={batchCode}
+                onChange={(e) => setBatchCode(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+              >
+                <option value="">All Batches</option>
+                {filters.batches.map((batch) => (
+                  <option key={batch} value={batch}>
+                    {batch}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium">Day</label>
+              <select
+                value={dayOfWeek}
+                onChange={(e) => setDayOfWeek(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+              >
+                <option value="">All Days</option>
+                {filters.days.map((day) => (
+                  <option key={day} value={day}>
+                    {day}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="border-b px-3 py-3 text-left">Day</th>
+                <th className="border-b px-3 py-3 text-left">Time</th>
+                <th className="border-b px-3 py-3 text-left">Room</th>
+                <th className="border-b px-3 py-3 text-left">Program</th>
+                <th className="border-b px-3 py-3 text-left">Course</th>
+                <th className="border-b px-3 py-3 text-left">Section</th>
+                <th className="border-b px-3 py-3 text-left">Batch</th>
+                <th className="border-b px-3 py-3 text-left">Teacher</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => (
+                <tr
+                  key={`${row.programCode}-${row.courseCode}-${row.section}-${row.dayOfWeek}-${row.startTime}-${index}`}
+                >
+                  <td className="border-b px-3 py-2">{row.dayOfWeek}</td>
+                  <td className="border-b px-3 py-2">
+                    {row.startTime} - {row.endTime}
+                  </td>
+                  <td className="border-b px-3 py-2">{row.roomCode}</td>
+                  <td className="border-b px-3 py-2">{row.programCode}</td>
+                  <td className="border-b px-3 py-2">
+                    {row.courseCode} — {row.courseTitle}
+                  </td>
+                  <td className="border-b px-3 py-2">{row.section}</td>
+                  <td className="border-b px-3 py-2">{row.batchCodes.join(", ")}</td>
+                  <td className="border-b px-3 py-2">{row.facultyText}</td>
+                </tr>
+              ))}
+
+              {rows.length === 0 && !loading && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
+                    No confirmed schedule rows found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+
+===== FILE: src\app\api\public\schedule\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const termName = String(searchParams.get("termName") || "").trim().toUpperCase();
+    const programCode = String(searchParams.get("programCode") || "").trim().toUpperCase();
+    const batchCode = String(searchParams.get("batchCode") || "").trim().toUpperCase();
+    const dayOfWeek = String(searchParams.get("dayOfWeek") || "").trim().toUpperCase();
+
+    if (!termName) {
+      const confirmedTerms = await prisma.offerings.findMany({
+        where: {
+          status: "CONFIRMED",
+        },
+        select: {
+          academic_terms: {
+            select: {
+              name: true,
+            },
+          },
+        },
+        distinct: ["academic_term_id"],
+      });
+
+      return NextResponse.json({
+        success: true,
+        terms: uniqueStrings(confirmedTerms.map((x) => x.academic_terms.name)).sort(),
+      });
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: { name: termName },
+      select: { id: true, name: true },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const courses = await prisma.offered_courses.findMany({
+      where: {
+        offerings: {
+          academic_term_id: term.id,
+          status: "CONFIRMED",
+        },
+        master_courses: programCode
+          ? {
+              program: {
+                short_name: programCode,
+              },
+            }
+          : undefined,
+        offered_course_batches: batchCode
+          ? {
+              some: {
+                batches: {
+                  batch_code: batchCode,
+                },
+              },
+            }
+          : undefined,
+      },
+      include: {
+        master_courses: {
+          include: {
+            program: true,
+          },
+        },
+        offered_course_batches: {
+          include: {
+            batches: true,
+          },
+        },
+        offered_course_slots: {
+          include: {
+            rooms: true,
+          },
+          orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+        },
+        offered_course_teachers: {
+          include: {
+            teachers: true,
+          },
+        },
+        primary_offered_course: {
+          include: {
+            offered_course_slots: {
+              include: {
+                rooms: true,
+              },
+              orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+            },
+            offered_course_teachers: {
+              include: {
+                teachers: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ id: "asc" }],
+    });
+
+    const rows: Array<{
+      dayOfWeek: string;
+      startTime: string;
+      endTime: string;
+      roomCode: string;
+      programCode: string;
+      courseCode: string;
+      courseTitle: string;
+      section: string;
+      facultyText: string;
+      batchCodes: string[];
+    }> = [];
+
+    for (const course of courses) {
+      const effectiveSlots =
+        course.primary_offered_course?.offered_course_slots.length
+          ? course.primary_offered_course.offered_course_slots
+          : course.offered_course_slots;
+
+      const effectiveTeachers =
+        course.primary_offered_course?.offered_course_teachers.length
+          ? course.primary_offered_course.offered_course_teachers
+          : course.offered_course_teachers;
+
+      const facultyText =
+        effectiveTeachers.length > 0
+          ? uniqueStrings(
+              effectiveTeachers.map(
+                (x) => `${x.teachers.teacher_code} - ${x.teachers.full_name}`
+              )
+            ).join(", ")
+          : "-";
+
+      const batchCodes = uniqueStrings(
+        course.offered_course_batches.map((x) => x.batches.batch_code)
+      );
+
+      for (const slot of effectiveSlots) {
+        if (dayOfWeek && slot.day_of_week.toUpperCase() !== dayOfWeek) continue;
+
+        rows.push({
+          dayOfWeek: slot.day_of_week,
+          startTime: slot.start_time,
+          endTime: slot.end_time,
+          roomCode: slot.rooms?.room_code || "-",
+          programCode: course.master_courses.program.short_name,
+          courseCode: course.master_courses.course_code,
+          courseTitle: course.master_courses.course_title,
+          section: course.section,
+          facultyText,
+          batchCodes,
+        });
+      }
+    }
+
+    rows.sort((a, b) => {
+      if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek.localeCompare(b.dayOfWeek);
+      if (a.startTime !== b.startTime) return a.startTime.localeCompare(b.startTime);
+      if (a.programCode !== b.programCode) return a.programCode.localeCompare(b.programCode);
+      return a.courseCode.localeCompare(b.courseCode);
+    });
+
+    return NextResponse.json({
+      success: true,
+      termName: term.name,
+      filters: {
+        programs: uniqueStrings(rows.map((x) => x.programCode)).sort(),
+        batches: uniqueStrings(rows.flatMap((x) => x.batchCodes)).sort(),
+        days: uniqueStrings(rows.map((x) => x.dayOfWeek)).sort(),
+      },
+      rows,
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      { error: "Failed to load public schedule." },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\public\batch-routine\route.ts =====
+
+NOT PRESENT
+
+
+===== FILE: src\app\api\admin\reports\batch-routine\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { getScheduleRowsForReporting } from "@/lib/reporting-data";
+import { uniqueStrings } from "@/lib/report-visible-statuses";
+
+export async function GET(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const { searchParams } = new URL(req.url);
+
+    const termName = String(searchParams.get("termName") || "").trim();
+    const batchCode = String(searchParams.get("batchCode") || "").trim();
+    const programCode = String(searchParams.get("programCode") || "").trim();
+    const scheduleKind = String(searchParams.get("scheduleKind") || "ALL").trim();
+
+    if (!termName) {
+      return NextResponse.json(
+        { error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    const rows = await getScheduleRowsForReporting({
+      termName,
+      programCode: programCode || undefined,
+      batchCode: batchCode || undefined,
+      scheduleKind:
+        scheduleKind === "CLASS" ||
+        scheduleKind === "LAB" ||
+        scheduleKind === "PROJECT"
+          ? scheduleKind
+          : "ALL",
+    });
+
+    const batchOptions = uniqueStrings(rows.flatMap((row) => row.batchCodes)).sort();
+
+    const filteredRows = batchCode
+      ? rows.filter((row) => row.batchCodes.includes(batchCode))
+      : rows;
+
+    return NextResponse.json({
+      success: true,
+      batchOptions,
+      summary: {
+        totalRows: filteredRows.length,
+        totalBatches: uniqueStrings(filteredRows.flatMap((row) => row.batchCodes)).length,
+      },
+      rows: filteredRows.map((row) => ({
+        batchCode: row.batchCodes.join(", ") || "-",
+        programCode: row.programCode,
+        courseCode: row.courseCode,
+        courseTitle: row.courseTitle,
+        section: row.section,
+        facultyText: row.facultyText,
+        dayOfWeek: row.dayOfWeek,
+        startTime: row.startTime,
+        endTime: row.endTime,
+        roomCode: row.roomCode,
+        role: row.role,
+        scheduleKind: row.scheduleKind,
+        offeringStatus: row.offeringStatus,
+      })),
+    });
+  } catch (error) {
+    console.error("Batch routine report failed:", error);
+
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load batch routine report.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\admin\reports\confirmed-schedule\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { getScheduleRowsForReporting } from "@/lib/reporting-data";
+
+export async function GET(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const { searchParams } = new URL(req.url);
+
+    const termName = String(searchParams.get("termName") || "").trim();
+    const programCode = String(searchParams.get("programCode") || "").trim();
+    const batchCode = String(searchParams.get("batchCode") || "").trim();
+    const scheduleKind = String(searchParams.get("scheduleKind") || "ALL").trim();
+
+    if (!termName) {
+      return NextResponse.json(
+        { error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    const rows = await getScheduleRowsForReporting({
+      termName,
+      programCode: programCode || undefined,
+      batchCode: batchCode || undefined,
+      scheduleKind:
+        scheduleKind === "CLASS" ||
+        scheduleKind === "LAB" ||
+        scheduleKind === "PROJECT"
+          ? scheduleKind
+          : "ALL",
+    });
+
+    return NextResponse.json({
+      success: true,
+      summary: {
+        totalRows: rows.length,
+        rowsWithRoom: rows.filter((row) => row.roomCode && row.roomCode !== "-")
+          .length,
+        rowsWithoutRoom: rows.filter(
+          (row) => !row.roomCode || row.roomCode === "-"
+        ).length,
+        rowsWithFaculty: rows.filter(
+          (row) => row.facultyText && row.facultyText !== "-"
+        ).length,
+        rowsWithoutFaculty: rows.filter(
+          (row) => !row.facultyText || row.facultyText === "-"
+        ).length,
+      },
+      rows,
+    });
+  } catch (error) {
+    console.error("Confirmed schedule report failed:", error);
+
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load confirmed schedule report.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\lib\prisma.ts =====
+
+import { PrismaClient } from "@prisma/client";
+
+declare global {
+  // eslint-disable-next-line no-var
+  var prismaGlobal: PrismaClient | undefined;
+}
+
+export const prisma =
+  global.prismaGlobal ??
+  new PrismaClient({
+    log: ["error", "warn"],
+  });
+
+if (process.env.NODE_ENV !== "production") {
+  global.prismaGlobal = prisma;
+}
+
+
+===== FILE: src\lib\report-visible-statuses.ts =====
+
+export const REPORT_VISIBLE_OFFERING_STATUSES: string[] = [
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export const FINAL_REPORT_OFFERING_STATUSES: string[] = [
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export function normalizeReportParam(value: string | null | undefined) {
+  return String(value || "").trim().toUpperCase();
+}
+
+export function isReportVisibleOfferingStatus(status: string | null | undefined) {
+  return REPORT_VISIBLE_OFFERING_STATUSES.includes(normalizeReportParam(status));
+}
+
+export function csvEscape(value: string | number | null | undefined) {
+  const text = String(value ?? "");
+
+  if (text.includes(",") || text.includes('"') || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  return text;
+}
+
+export function uniqueStrings(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+export const DAY_ORDER: Record<string, number> = {
+  SATURDAY: 1,
+  SUNDAY: 2,
+  MONDAY: 3,
+  TUESDAY: 4,
+  WEDNESDAY: 5,
+  THURSDAY: 6,
+  FRIDAY: 7,
+  "-": 99,
+};
+
+export function compareDayTime(
+  a: { dayOfWeek: string; startTime: string; courseCode?: string; roomCode?: string },
+  b: { dayOfWeek: string; startTime: string; courseCode?: string; roomCode?: string }
+) {
+  const dayA = DAY_ORDER[normalizeReportParam(a.dayOfWeek)] ?? 98;
+  const dayB = DAY_ORDER[normalizeReportParam(b.dayOfWeek)] ?? 98;
+
+  if (dayA !== dayB) return dayA - dayB;
+  if (a.startTime !== b.startTime) return a.startTime.localeCompare(b.startTime);
+
+  const roomCompare = String(a.roomCode || "").localeCompare(String(b.roomCode || ""));
+  if (roomCompare !== 0) return roomCompare;
+
+  return String(a.courseCode || "").localeCompare(String(b.courseCode || ""));
+}
+
+export function isLabLikeText(value: string | null | undefined) {
+  const text = normalizeReportParam(value);
+
+  return (
+    text.includes("LAB") ||
+    text.includes("SESSIONAL") ||
+    text.includes("PRACTICAL") ||
+    text.includes("WORKSHOP")
+  );
+}
+
+export function isProjectLikeCourse(course: {
+  courseCode?: string | null;
+  courseTitle?: string | null;
+  courseType?: string | null;
+}) {
+  const code = normalizeReportParam(course.courseCode).replace(/\s+/g, "");
+  const title = normalizeReportParam(course.courseTitle);
+  const type = normalizeReportParam(course.courseType);
+
+  return (
+    ["EEE4139", "EEE4239", "EEE4339"].includes(code) ||
+    title.includes("PROJECT") ||
+    title.includes("FYDP") ||
+    title.includes("THESIS") ||
+    title.includes("INTERNSHIP") ||
+    title.includes("VIVA") ||
+    type.includes("PROJECT") ||
+    type.includes("THESIS") ||
+    type.includes("INTERNSHIP") ||
+    type.includes("VIVA")
+  );
+}
+
+
+===== FILE: src\lib\course-schedule-policy.ts =====
+
+export const SLOT_OPTIONAL_COURSE_CODES = ["EEE4139", "EEE4239", "EEE4339"];
+
+export const SCHEDULE_CONFLICT_STATUSES = [
+  "DRAFT",
+  "BUFFER_READY",
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export const REPORT_VISIBLE_OFFERING_STATUSES = [
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export const FINALIZED_REPORT_STATUSES = [
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export function normalizeCourseCode(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, "").trim().toUpperCase();
+}
+
+export function normalizePolicyText(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().toUpperCase();
+}
+
+export function isSlotOptionalCourse(course: {
+  course_code?: string | null;
+  course_title?: string | null;
+  course_type?: string | null;
+}) {
+  const code = normalizeCourseCode(course.course_code);
+  const title = normalizePolicyText(course.course_title);
+  const type = normalizePolicyText(course.course_type);
+
+  if (SLOT_OPTIONAL_COURSE_CODES.includes(code)) return true;
+
+  return (
+    type.includes("PROJECT") ||
+    type.includes("INTERNSHIP") ||
+    type.includes("THESIS") ||
+    type.includes("VIVA") ||
+    title.includes("FINAL YEAR DESIGN PROJECT") ||
+    title.includes("FYDP") ||
+    title.includes("PROJECT") ||
+    title.includes("INTERNSHIP") ||
+    title.includes("THESIS") ||
+    title.includes("VIVA")
+  );
+}
+
+
+===== FILE: prisma\schema.prisma =====
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model academic_terms {
+  id                          Int                           @id @default(autoincrement())
+  name                        String                        @unique @db.VarChar(100)
+  year                        Int
+  term_type                   String                        @db.VarChar(30)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  faculty_course_selections   faculty_course_selections[]
+  offerings                   offerings[]
+}
+
+model batch_completed_courses {
+  id                Int             @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int?
+  course_code       String          @db.VarChar(100)
+  course_title      String          @db.VarChar(300)
+  normalized_title  String          @db.VarChar(300)
+  credit            Float
+  grade             String?         @db.VarChar(20)
+  source_student_id String?         @db.VarChar(100)
+  source_file_name  String?         @db.VarChar(300)
+  academic_terms    academic_terms? @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batch_current_registrations {
+  id                Int            @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int
+  course_code       String         @db.VarChar(100)
+  course_title      String         @db.VarChar(300)
+  normalized_title  String         @db.VarChar(300)
+  credit            Float
+  source_student_id String?        @db.VarChar(100)
+  source_file_name  String?        @db.VarChar(300)
+  academic_terms    academic_terms @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches        @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batches {
+  id                          Int                           @id @default(autoincrement())
+  program_id                  Int
+  batch_code                  String                        @db.VarChar(100)
+  admission_term              String?                       @db.VarChar(100)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  programs                    programs                      @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_course_batches      offered_course_batches[]
+
+  @@unique([program_id, batch_code], map: "uq_program_batch")
+}
+
+model departments {
+  id         Int        @id @default(autoincrement())
+  name       String     @unique @db.VarChar(200)
+  short_name String     @unique @db.VarChar(50)
+  programs   programs[]
+  teachers   teachers[]
+}
+
+model master_courses {
+  id               Int               @id @default(autoincrement())
+  program_id       Int
+  course_code      String
+  course_title     String
+  normalized_title String
+  credit           Float
+  course_type      String
+  level_term       String?
+  group_name       String?
+  is_active        Boolean           @default(true)
+  created_at       DateTime          @default(now())
+  curriculum_key   String?
+  updated_at       DateTime          @default(now()) @updatedAt
+  program          programs          @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  offered_courses  offered_courses[]
+
+  @@unique([program_id, course_code])
+  @@unique([curriculum_key, course_code])
+  @@index([curriculum_key])
+}
+
+model offered_course_batches {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  batch_id          Int
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_slots {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  day_of_week       String          @db.VarChar(20)
+  start_time        String          @db.VarChar(10)
+  end_time          String          @db.VarChar(10)
+  room_id           Int
+  slot_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rooms             rooms           @relation(fields: [room_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_teachers {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  assigned_credit   Float
+  load_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_courses {
+  id                        Int                         @id @default(autoincrement())
+  offering_id               Int
+  master_course_id          Int
+  section                   String                      @db.VarChar(20)
+  is_cooffered              Boolean?                    @default(false)
+  primary_offered_course_id Int?
+  notes                     String?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_batches    offered_course_batches[]
+  offered_course_slots      offered_course_slots[]
+  offered_course_teachers   offered_course_teachers[]
+  master_courses            master_courses              @relation(fields: [master_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offerings                 offerings                   @relation(fields: [offering_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+    offered_course_manual_cooffers offered_course_manual_cooffers[]
+  primary_offered_course    offered_courses?            @relation("offered_course_cooffer_links", fields: [primary_offered_course_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  secondary_offered_courses offered_courses[]           @relation("offered_course_cooffer_links")
+
+  @@index([offering_id, section], map: "ix_offered_courses_offering_section")
+  @@index([primary_offered_course_id], map: "ix_offered_courses_primary_offered_course_id")
+}
+
+model offerings {
+  id                  Int               @id @default(autoincrement())
+  academic_term_id    Int
+  program_id          Int
+  prepared_by_user_id Int
+  status              String            @db.VarChar(30)
+  created_at          DateTime?         @default(now()) @db.Timestamptz(6)
+  offered_courses     offered_courses[]
+  academic_terms      academic_terms    @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users               users             @relation(fields: [prepared_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  programs            programs          @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_course_selections {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  academic_term_id  Int
+  priority_order    Int?
+  status            String          @db.VarChar(30)
+  selected_at       DateTime?       @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?       @default(now()) @updatedAt @db.Timestamptz(6)
+  confirmed_at      DateTime?       @db.Timestamptz(6)
+  academic_terms    academic_terms  @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([offered_course_id, teacher_id], map: "uq_faculty_course_selection")
+  @@index([teacher_id], map: "ix_faculty_course_selections_teacher_id")
+  @@index([academic_term_id], map: "ix_faculty_course_selections_term_id")
+  @@index([status], map: "ix_faculty_course_selections_status")
+  @@index([teacher_id, academic_term_id], map: "ix_faculty_course_selections_teacher_term")
+}
+
+model programs {
+  id             Int              @id @default(autoincrement())
+  department_id  Int
+  name           String           @db.VarChar(200)
+  short_name     String           @db.VarChar(50)
+  batches        batches[]
+  master_courses master_courses[]
+  offerings      offerings[]
+  departments    departments      @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([department_id, name], map: "uq_program_department_name")
+}
+
+model rooms {
+  id                   Int                    @id @default(autoincrement())
+  room_code            String                 @unique @db.VarChar(100)
+  room_type            String                 @db.VarChar(50)
+  capacity             Int?
+  is_active            Boolean?
+  offered_course_slots offered_course_slots[]
+}
+
+model student_report_logs {
+  id                        Int       @id @default(autoincrement())
+  student_id                String    @db.VarChar(100)
+  student_name              String?   @db.VarChar(200)
+  uploaded_by_user_id       Int
+  transcript_filename       String?   @db.VarChar(300)
+  registration_filename     String?   @db.VarChar(300)
+  latest_completed_semester String?   @db.VarChar(100)
+  registration_semester     String?   @db.VarChar(100)
+  total_earned_credits      Float?
+  gpa                       Float?
+  generated_excel_path      String?   @db.VarChar(500)
+  created_at                DateTime? @default(now()) @db.Timestamptz(6)
+  users                     users     @relation(fields: [uploaded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([id], map: "ix_student_report_logs_id")
+  @@index([student_id], map: "ix_student_report_logs_student_id")
+}
+
+model teachers {
+  id                        Int                         @id @default(autoincrement())
+  department_id             Int
+  teacher_code              String                      @unique @db.VarChar(100)
+  full_name                 String                      @db.VarChar(200)
+  designation               String?                     @db.VarChar(150)
+  email                     String?                     @db.VarChar(200)
+  phone                     String?                     @db.VarChar(50)
+  seniority_level           Int?
+  is_active                 Boolean?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_teachers   offered_course_teachers[]
+  departments               departments                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                     users[]
+
+  @@index([department_id], map: "ix_teachers_department_id")
+  @@index([seniority_level], map: "ix_teachers_seniority_level")
+}
+
+model users {
+  id                  Int                   @id @default(autoincrement())
+  username            String                @unique(map: "ix_users_username") @db.VarChar(100)
+  full_name           String                @db.VarChar(200)
+  password_hash       String
+  role                String                @db.VarChar(50)
+  is_active           Boolean?
+  teacher_id          Int?
+  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  offerings           offerings[]
+  student_report_logs student_report_logs[]
+  teachers            teachers?             @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  // ✅ ADD THIS LINE ONLY
+  faculty_login_sessions FacultyLoginSession[]
+
+  @@index([id], map: "ix_users_id")
+}
+
+model academic_catalog_entries {
+  id                 Int      @id @default(autoincrement())
+  department_code    String
+  department_name    String
+  program_code       String   @unique
+  program_title      String
+  program_type       String
+  study_shift        String
+  curriculum_version String
+  student_id_suffix  String?  @unique
+  display_label      String
+  is_active          Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @default(now()) @updatedAt
+  curriculum_key     String?
+
+  @@index([department_code])
+  @@index([program_type])
+  @@index([study_shift])
+  @@index([curriculum_version])
+  @@index([curriculum_key])
+}
+model SystemSetting {
+  id               Int      @id @default(autoincrement())
+  settingKey       String   @unique
+  settingValue     String
+  updatedByUserId  Int?
+  updatedAt        DateTime @updatedAt
+}
+
+model FacultyLoginSession {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  sessionToken  String   @unique
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+
+  user          users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model offered_course_manual_cooffers {
+  id                  Int             @id @default(autoincrement())
+  offered_course_id   Int
+  target_program_code String?         @db.VarChar(100)
+  manual_course_code  String          @db.VarChar(100)
+  note                String?         @db.VarChar(300)
+  created_at          DateTime        @default(now())
+  offered_courses     offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([offered_course_id], map: "ix_offered_course_manual_cooffers_offered_course_id")
+  @@index([target_program_code], map: "ix_offered_course_manual_cooffers_target_program_code")
+}
+model faculty_login_sessions {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  teacher_id    Int?
+  session_token String   @unique @db.VarChar(191)
+  created_at    DateTime @default(now())
+  expires_at    DateTime
+  warned_at     DateTime?
+  revoked_at    DateTime?
+
+  @@index([user_id], map: "ix_faculty_login_sessions_user_id")
+  @@index([teacher_id], map: "ix_faculty_login_sessions_teacher_id")
+  @@index([expires_at], map: "ix_faculty_login_sessions_expires_at")
+}
+
+model notifications {
+  id                Int      @id @default(autoincrement())
+  recipient_user_id Int?
+  recipient_teacher_id Int?
+  event_type        String   @db.VarChar(100)
+  title             String   @db.VarChar(200)
+  message           String   @db.Text
+  is_read           Boolean  @default(false)
+  created_by_user_id Int?
+  created_at        DateTime @default(now())
+  read_at           DateTime?
+
+  @@index([recipient_user_id], map: "ix_notifications_recipient_user_id")
+  @@index([recipient_teacher_id], map: "ix_notifications_recipient_teacher_id")
+  @@index([event_type], map: "ix_notifications_event_type")
+  @@index([is_read], map: "ix_notifications_is_read")
+}

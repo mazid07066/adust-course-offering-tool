@@ -1,0 +1,1516 @@
+{
+  "summary": [
+    {
+      "offeringId": 21,
+      "termName": "SUMMER 2026",
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "courseCount": 17,
+      "batchCount": 8,
+      "batches": [
+        "232",
+        "241",
+        "242",
+        "251",
+        "252",
+        "253",
+        "261",
+        "262"
+      ],
+      "slotCount": 26,
+      "teacherAssignmentCount": 17
+    },
+    {
+      "offeringId": 18,
+      "termName": "SUMMER 2026",
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "courseCount": 51,
+      "batchCount": 10,
+      "batches": [
+        "232",
+        "233",
+        "241",
+        "242",
+        "243",
+        "251",
+        "252",
+        "253",
+        "261",
+        "262"
+      ],
+      "slotCount": 48,
+      "teacherAssignmentCount": 51
+    },
+    {
+      "offeringId": 20,
+      "termName": "SUMMER 2026",
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "DRAFT",
+      "courseCount": 1,
+      "batchCount": 1,
+      "batches": [
+        "252"
+      ],
+      "slotCount": 0,
+      "teacherAssignmentCount": 0
+    },
+    {
+      "offeringId": 19,
+      "termName": "SUMMER 2026",
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "courseCount": 14,
+      "batchCount": 7,
+      "batches": [
+        "231",
+        "233",
+        "242",
+        "243",
+        "252",
+        "261",
+        "262"
+      ],
+      "slotCount": 24,
+      "teacherAssignmentCount": 14
+    }
+  ],
+  "details": [
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-RAE-REG-NEW",
+      "courseCode": "PHY1103",
+      "courseTitle": "Physics I General Physics",
+      "section": "1",
+      "batches": [
+        "261",
+        "262"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "DAKB - Prof. Dr. Ashis Kumar Bhattacharjee"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-RAE-REG-NEW",
+      "courseCode": "PHY1113",
+      "courseTitle": "Physics Lab",
+      "section": "1",
+      "batches": [
+        "261",
+        "262"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "DAKB - Prof. Dr. Ashis Kumar Bhattacharjee"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-RAE-REG-NEW",
+      "courseCode": "MAT1204",
+      "courseTitle": "Differential and Integral Calculus",
+      "section": "11",
+      "batches": [
+        "253",
+        "261",
+        "262"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "NM - Md. Niaz Mostakim"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-RAE-REG-NEW",
+      "courseCode": "CHE1104",
+      "courseTitle": "Chemistry",
+      "section": "1",
+      "batches": [
+        "261",
+        "262"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "DSS - Dr. Sabiha Sultana"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-RAE-REG-NEW",
+      "courseCode": "CHE1114",
+      "courseTitle": "Chemistry Lab",
+      "section": "1",
+      "batches": [
+        "261",
+        "262"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "DSS - Dr. Sabiha Sultana"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-RAE-REG-NEW",
+      "courseCode": "RAE1101",
+      "courseTitle": "Fundamentals of Mechanical Engineering",
+      "section": "11",
+      "batches": [
+        "253"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "RMS - Ruhan Mahmud Shams"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "CANON-RAE-REG-BSCRAE",
+      "courseCode": "RAE2201",
+      "courseTitle": "Introduction to Robotics",
+      "section": "11",
+      "batches": [
+        "251",
+        "252",
+        "253"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "SAD - Dr. Shamim Ahmed Deowan"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-RAE-REG-NEW",
+      "courseCode": "MAT2104",
+      "courseTitle": "Multivariate and Vector Calculus",
+      "section": "11",
+      "batches": [
+        "251",
+        "252"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "RRR - Rafrafin Islam"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "CANON-RAE-REG-BSCRAE",
+      "courseCode": "RAE1201",
+      "courseTitle": "Fundamentals of Mechatronics Engineering",
+      "section": "11",
+      "batches": [
+        "251",
+        "252"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "HN - Hasan Newaz"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-RAE-REG-NEW",
+      "courseCode": "RAE1211",
+      "courseTitle": "Fundamentals of Mechatronics Engineering Lab",
+      "section": "11",
+      "batches": [
+        "251",
+        "252"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "HN - Hasan Newaz"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "CANON-RAE-REG-BSCRAE",
+      "courseCode": "RAE4221",
+      "courseTitle": "Introduction to Machine Learning",
+      "section": "11",
+      "batches": [
+        "232",
+        "241",
+        "242"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "MI - Mazid Ishtique Ahmed"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "CANON-RAE-REG-BSCRAE",
+      "courseCode": "RAE4231",
+      "courseTitle": "Introduction to Machine Learning Lab",
+      "section": "11",
+      "batches": [
+        "232",
+        "241",
+        "242"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "MI - Mazid Ishtique Ahmed"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "CANON-RAE-REG-BSCRAE",
+      "courseCode": "RAE4103",
+      "courseTitle": "Digital Signal Processing",
+      "section": "11",
+      "batches": [
+        "242"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "AI - Ariful Islam"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "CANON-RAE-REG-BSCRAE",
+      "courseCode": "RAE4113",
+      "courseTitle": "Digital Signal Processing Lab",
+      "section": "11",
+      "batches": [
+        "242"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AI - Ariful Islam"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "CANON-RAE-REG-BSCRAE",
+      "courseCode": "RAE3201",
+      "courseTitle": "Intelligent Systems and Robotics",
+      "section": "11",
+      "batches": [
+        "232",
+        "241"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "MI - Mazid Ishtique Ahmed"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "CANON-RAE-REG-BSCRAE",
+      "courseCode": "RAE3211",
+      "courseTitle": "Intelligent Systems and Robotics Lab",
+      "section": "11",
+      "batches": [
+        "232",
+        "241"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "MI - Mazid Ishtique Ahmed"
+      ]
+    },
+    {
+      "offeringId": 21,
+      "offeringProgramCode": "BSC-RAE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "CANON-RAE-REG-BSCRAE",
+      "courseCode": "RAE3112",
+      "courseTitle": "Industrial Automation Lab",
+      "section": "11",
+      "batches": [
+        "232"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "RRR - Rafrafin Islam"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "PHY1113",
+      "courseTitle": "Physics I",
+      "section": "10",
+      "batches": [
+        "262"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AUZ - Md. Atik-Uz-Zaman Atik"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "MAT1115",
+      "courseTitle": "Integral and Differential Calculus",
+      "section": "10",
+      "batches": [
+        "262"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AI - Ariful Islam"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE1237",
+      "courseTitle": "Electrical Circuit-I",
+      "section": "10",
+      "batches": [
+        "262"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "NM - Md. Niaz Mostakim"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE1238",
+      "courseTitle": "Electrical Circuit-I Lab",
+      "section": "10",
+      "batches": [
+        "262"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "NM - Md. Niaz Mostakim"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "PHY1213",
+      "courseTitle": "Physics II",
+      "section": "10",
+      "batches": [
+        "261"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "DAKB - Prof. Dr. Ashis Kumar Bhattacharjee"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "PHY1214",
+      "courseTitle": "Physics Lab",
+      "section": "10",
+      "batches": [
+        "261"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "DAKB - Prof. Dr. Ashis Kumar Bhattacharjee"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE1335",
+      "courseTitle": "Electrical Circuit-II",
+      "section": "10",
+      "batches": [
+        "261"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AI - Ariful Islam"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE1336",
+      "courseTitle": "Electrical Circuit-II Lab",
+      "section": "10",
+      "batches": [
+        "261"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AI - Ariful Islam"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "MAT1117",
+      "courseTitle": "Statistics and Probability",
+      "section": "10",
+      "batches": [
+        "261"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AI - Ariful Islam"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "MAT1215",
+      "courseTitle": "Linear Algebra and Differential Equations",
+      "section": "10",
+      "batches": [
+        "253"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AA - Alea Afrin"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "MEE1324",
+      "courseTitle": "Engineering Drawing Lab",
+      "section": "10",
+      "batches": [
+        "253"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "RRR - Rafrafin Islam"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "MEE2223",
+      "courseTitle": "Basic Mechanical Engineering",
+      "section": "10",
+      "batches": [
+        "253"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AUZ - Md. Atik-Uz-Zaman Atik"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE2137",
+      "courseTitle": "Electronics-I",
+      "section": "10",
+      "batches": [
+        "253"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "SMM - Prof. Dr. S. M. Mostafa Al Mamun"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "MAT1313",
+      "courseTitle": "Complex Numbers, Laplace and Fourier Transforms",
+      "section": "10",
+      "batches": [
+        "252"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "RRR - Rafrafin Islam"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE2235",
+      "courseTitle": "Electronics-II",
+      "section": "10",
+      "batches": [
+        "252"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AA - Alea Afrin"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE2236",
+      "courseTitle": "Electronic Circuit Design Lab",
+      "section": "10",
+      "batches": [
+        "252"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AA - Alea Afrin"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE2237",
+      "courseTitle": "Semiconductor Theory and Devices",
+      "section": "10",
+      "batches": [
+        "252"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "DAKB - Prof. Dr. Ashis Kumar Bhattacharjee"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "PEV3201",
+      "courseTitle": "Professional Ethics and Environmental Protection",
+      "section": "10",
+      "batches": [
+        "251"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "NM - Md. Niaz Mostakim"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "MAT2113",
+      "courseTitle": "Coordinate Geometry and Vector Analysis",
+      "section": "10",
+      "batches": [
+        "251"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AUZ - Md. Atik-Uz-Zaman Atik"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE2331",
+      "courseTitle": "Energy Conversion-I",
+      "section": "10",
+      "batches": [
+        "251"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "RMS - Ruhan Mahmud Shams"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE2333",
+      "courseTitle": "Digital Electronics",
+      "section": "10",
+      "batches": [
+        "251"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AAM - Dr. Md. Abdullah Al Mamun"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE2334",
+      "courseTitle": "Digital Electronics Lab",
+      "section": "10",
+      "batches": [
+        "251"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "ABS - Ayesha Suhi"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "ENG1201",
+      "courseTitle": "English Comprehension and Speaking",
+      "section": "10",
+      "batches": [
+        "243"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "HN - Hasan Newaz"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE3133",
+      "courseTitle": "Energy Conversion-II",
+      "section": "10",
+      "batches": [
+        "243"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "RMS - Ruhan Mahmud Shams"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE3134",
+      "courseTitle": "Energy Conversion Lab",
+      "section": "10",
+      "batches": [
+        "243"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "RMS - Ruhan Mahmud Shams"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE3135",
+      "courseTitle": "Electromagnetic Fields and Waves",
+      "section": "10",
+      "batches": [
+        "243"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "RMS - Ruhan Mahmud Shams"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE3138",
+      "courseTitle": "Numerical Techniques Lab",
+      "section": "10",
+      "batches": [
+        "243"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "ABS - Ayesha Suhi"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE2335",
+      "courseTitle": "Communication Theory",
+      "section": "10",
+      "batches": [
+        "243"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "MI - Mazid Ishtique Ahmed"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE2336",
+      "courseTitle": "Communication Theory Lab",
+      "section": "10",
+      "batches": [
+        "243"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "HN - Hasan Newaz"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE3237",
+      "courseTitle": "Electrical Power Transmission and Distribution",
+      "section": "10",
+      "batches": [
+        "242"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AA - Alea Afrin"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE3235",
+      "courseTitle": "Microprocessor and Embedded Systems",
+      "section": "10",
+      "batches": [
+        "242"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "RRR - Rafrafin Islam"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE3236",
+      "courseTitle": "Microprocessor and Embedded Systems Lab",
+      "section": "10",
+      "batches": [
+        "242"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "RRR - Rafrafin Islam"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE3333",
+      "courseTitle": "Power System Analysis",
+      "section": "10",
+      "batches": [
+        "242"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AUZ - Md. Atik-Uz-Zaman Atik"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE3334",
+      "courseTitle": "Power System Analysis Lab",
+      "section": "10",
+      "batches": [
+        "242"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AUZ - Md. Atik-Uz-Zaman Atik"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4131",
+      "courseTitle": "Industrial and Power Electronics",
+      "section": "10",
+      "batches": [
+        "241"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "RMS - Ruhan Mahmud Shams"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4132",
+      "courseTitle": "Industrial and Power Electronics Lab",
+      "section": "10",
+      "batches": [
+        "241"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "HN - Hasan Newaz"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4331",
+      "courseTitle": "Control Systems",
+      "section": "10",
+      "batches": [
+        "241"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "MI - Mazid Ishtique Ahmed"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4332",
+      "courseTitle": "Control Systems Lab",
+      "section": "10",
+      "batches": [
+        "241"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "MI - Mazid Ishtique Ahmed"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4403",
+      "courseTitle": "Biomedical Electronics",
+      "section": "10",
+      "batches": [
+        "241"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "ABS - Ayesha Suhi"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4139",
+      "courseTitle": "Final Year Design Project (FYDP) – Part 1",
+      "section": "10",
+      "batches": [
+        "241"
+      ],
+      "slotCount": 0,
+      "teacherCount": 1,
+      "teachers": [
+        "BLOCKED - BLOCKED"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4607",
+      "courseTitle": "Renewable Energy Systems",
+      "section": "10",
+      "batches": [
+        "233"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AAM - Dr. Md. Abdullah Al Mamun"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4608",
+      "courseTitle": "Renewable Energy Systems Lab",
+      "section": "10",
+      "batches": [
+        "233"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AA - Alea Afrin"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4231",
+      "courseTitle": "Digital Signal Processing",
+      "section": "10",
+      "batches": [
+        "233"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "RRR - Rafrafin Islam"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4232",
+      "courseTitle": "Digital Signal Processing Lab",
+      "section": "10",
+      "batches": [
+        "233"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "RRR - Rafrafin Islam"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4239",
+      "courseTitle": "Final Year Design Project (FYDP) – Part 2",
+      "section": "10",
+      "batches": [
+        "233"
+      ],
+      "slotCount": 0,
+      "teacherCount": 1,
+      "teachers": [
+        "BLOCKED - BLOCKED"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4339",
+      "courseTitle": "Final Year Design Project (FYDP) – Part 3",
+      "section": "10",
+      "batches": [
+        "233"
+      ],
+      "slotCount": 0,
+      "teacherCount": 1,
+      "teachers": [
+        "BLOCKED - BLOCKED"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4405",
+      "courseTitle": "VLSI circuit",
+      "section": "10",
+      "batches": [
+        "232"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "ABS - Ayesha Suhi"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4406",
+      "courseTitle": "VLSI circuit Lab",
+      "section": "10",
+      "batches": [
+        "232"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "ABS - Ayesha Suhi"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "EEE4709",
+      "courseTitle": "Robotics & Automation",
+      "section": "10",
+      "batches": [
+        "232"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "HN - Hasan Newaz"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "CSE2125",
+      "courseTitle": "Computer Programming",
+      "section": "10",
+      "batches": [
+        "252"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "HN - Hasan Newaz"
+      ]
+    },
+    {
+      "offeringId": 18,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "FACULTY_CHOICE_FINALIZED",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "CSE2126",
+      "courseTitle": "Computer Programming Lab",
+      "section": "10",
+      "batches": [
+        "252"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "HN - Hasan Newaz"
+      ]
+    },
+    {
+      "offeringId": 20,
+      "offeringProgramCode": "BSC-EEE-EVE-NEW",
+      "status": "DRAFT",
+      "masterCourseProgramCode": "BSC-EEE-EVE-NEW",
+      "courseCode": "CSE2126",
+      "courseTitle": "Computer Programming Lab",
+      "section": "10",
+      "batches": [
+        "252"
+      ],
+      "slotCount": 0,
+      "teacherCount": 0,
+      "teachers": []
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "PHY1213",
+      "courseTitle": "Physics II",
+      "section": "1",
+      "batches": [
+        "261",
+        "262"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "DAKB - Prof. Dr. Ashis Kumar Bhattacharjee"
+      ]
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "PHY1214",
+      "courseTitle": "Physics Lab",
+      "section": "1",
+      "batches": [
+        "261",
+        "262"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "DAKB - Prof. Dr. Ashis Kumar Bhattacharjee"
+      ]
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "MAT1115",
+      "courseTitle": "Integral and Differential Calculus",
+      "section": "11",
+      "batches": [
+        "262"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "NM - Md. Niaz Mostakim"
+      ]
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "CHE1311",
+      "courseTitle": "Chemistry",
+      "section": "1",
+      "batches": [
+        "262"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "DSS - Dr. Sabiha Sultana"
+      ]
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "CHE1312",
+      "courseTitle": "Chemistry Lab",
+      "section": "1",
+      "batches": [
+        "262"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "DSS - Dr. Sabiha Sultana"
+      ]
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "EEE1335",
+      "courseTitle": "Electrical Circuit-II",
+      "section": "11",
+      "batches": [
+        "252",
+        "261"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "AA - Alea Afrin"
+      ]
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "EEE1336",
+      "courseTitle": "Electrical Circuit-II Lab",
+      "section": "11",
+      "batches": [
+        "252",
+        "261"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AA - Alea Afrin"
+      ]
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "MEE2223",
+      "courseTitle": "Basic Mechanical Engineering",
+      "section": "11",
+      "batches": [
+        "261"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "RMS - Ruhan Mahmud Shams"
+      ]
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "MAT1215",
+      "courseTitle": "Linear Algebra and Differential Equations",
+      "section": "11",
+      "batches": [
+        "252"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "ABS - Ayesha Suhi"
+      ]
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "EEE2237",
+      "courseTitle": "Semiconductor Theory and Devices",
+      "section": "11",
+      "batches": [
+        "231",
+        "242",
+        "243"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "ABS - Ayesha Suhi"
+      ]
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "EEE3237",
+      "courseTitle": "Electrical Power Transmission and Distribution",
+      "section": "11",
+      "batches": [
+        "231",
+        "242",
+        "243"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "AUZ - Md. Atik-Uz-Zaman Atik"
+      ]
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "EEE3335",
+      "courseTitle": "Machine Learning",
+      "section": "11",
+      "batches": [
+        "233",
+        "242",
+        "243"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "MI - Mazid Ishtique Ahmed"
+      ]
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "EEE4231",
+      "courseTitle": "Digital Signal Processing",
+      "section": "11",
+      "batches": [
+        "233"
+      ],
+      "slotCount": 2,
+      "teacherCount": 1,
+      "teachers": [
+        "AI - Ariful Islam"
+      ]
+    },
+    {
+      "offeringId": 19,
+      "offeringProgramCode": "BSC-EEE-REG-NEW",
+      "status": "FACULTY_CHOICE_BUFFER",
+      "masterCourseProgramCode": "BSC-EEE-REG-NEW",
+      "courseCode": "EEE4232",
+      "courseTitle": "Digital Signal Processing Lab",
+      "section": "11",
+      "batches": [
+        "233"
+      ],
+      "slotCount": 1,
+      "teacherCount": 1,
+      "teachers": [
+        "AI - Ariful Islam"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,302 @@
+<mxfile host="app.diagrams.net" modified="2026-04-27T00:00:00.000Z" agent="ChatGPT" version="24.7.17">
+  <diagram id="architecture" name="System Architecture">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="title1" value="UniFlow Academic Planner — System Architecture" style="text;html=1;strokeColor=none;fillColor=none;fontSize=24;fontStyle=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="370" y="30" width="850" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="users" value="Users&#xa;Super Admin&#xa;Coordinator/Admin&#xa;Faculty" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="160" width="210" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="frontend" value="Frontend Layer&#xa;Next.js 16 App Router&#xa;React + TypeScript&#xa;Tailwind CSS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="360" y="145" width="260" height="150" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="api" value="API Layer&#xa;Next.js Route Handlers&#xa;Role Guards&#xa;Business Rules" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="720" y="145" width="260" height="150" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="db" value="Database Layer&#xa;PostgreSQL / Supabase&#xa;Prisma ORM" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="150" width="250" height="140" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="import" value="Import Modules&#xa;Master Course Excel&#xa;Transcript PDF&#xa;Registration PDF&#xa;Offering Template Excel" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="80" y="410" width="250" height="145" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="academic" value="Academic Intelligence&#xa;Academic Setup&#xa;Curriculum Mapping&#xa;Batch Status&#xa;Offering Context" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="430" y="410" width="250" height="145" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="offering" value="Offering Engine&#xa;Draft Offerings&#xa;Manual Course Addition&#xa;Co-offering Setup&#xa;Slot Management" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="780" y="410" width="250" height="145" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="faculty" value="Faculty Workflow&#xa;Faculty Login&#xa;Course Choice Buffer&#xa;Final Submit&#xa;Admin Approval&#xa;Assignment Board" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="410" width="250" height="145" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="reports" value="Reporting Engine&#xa;Combined Routine&#xa;Batch Routine&#xa;Faculty Load&#xa;Room Schedule&#xa;Excel Exports" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="610" y="705" width="330" height="150" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="vercel" value="Production Deployment&#xa;Vercel Hosting&#xa;Supabase Database&#xa;Production Environment Variables" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#666666;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="705" width="300" height="150" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e1" edge="1" parent="1" source="users" target="frontend" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="310" y="220"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e2" edge="1" parent="1" source="frontend" target="api" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="670" y="220"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e3" edge="1" parent="1" source="api" target="db" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1040" y="220"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e4" edge="1" parent="1" source="import" target="academic" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="380" y="483"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e5" edge="1" parent="1" source="academic" target="offering" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="730" y="483"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e6" edge="1" parent="1" source="offering" target="faculty" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1080" y="483"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e7" edge="1" parent="1" source="offering" target="reports" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="905" y="630"/>
+              <mxPoint x="775" y="630"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e8" edge="1" parent="1" source="faculty" target="reports" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1255" y="640"/>
+              <mxPoint x="775" y="640"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e9" edge="1" parent="1" source="reports" target="vercel" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1000" y="780"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e10" edge="1" parent="1" source="api" target="import" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=1;dashed=1;endArrow=block;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="850" y="340"/>
+              <mxPoint x="205" y="340"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e11" edge="1" parent="1" source="db" target="reports" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=1;dashed=1;endArrow=block;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1235" y="620"/>
+              <mxPoint x="775" y="620"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="workflow" name="Admin and Faculty Workflow">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="title2" value="UniFlow Academic Planner — Import to Finalization Workflow" style="text;html=1;strokeColor=none;fillColor=none;fontSize=24;fontStyle=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="440" y="30" width="900" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="a1" value="1. Academic Setup&#xa;Programs, Departments, Curriculum" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="70" y="130" width="230" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="a2" value="2. Master Course Import&#xa;Excel curriculum upload" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="390" y="130" width="230" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="a3" value="3. Transcript + Registration Import&#xa;PDF parsing and status save" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="710" y="130" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="a4" value="4. Batch Status Validation&#xa;Completed / Ongoing / Remaining" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="130" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="a5" value="5. Offering Context&#xa;Suggest next offering courses" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="130" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="b1" value="6. Offering Template Import&#xa;Upload prepared Excel template" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="330" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="b2" value="7. Draft Offering Review&#xa;Courses, sections, batches" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="330" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="b3" value="8. Slot Editing&#xa;Day, time, room&#xa;Conflict checking" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="710" y="330" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="b4" value="9. Co-offering Setup&#xa;Primary owns slots/faculty&#xa;Secondary inherits" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="390" y="330" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="b5" value="10. Manual Course Addition&#xa;Missed/special course&#xa;Availability warning" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="70" y="330" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="c1" value="11. Open Faculty Choice&#xa;Status: FACULTY_CHOICE_BUFFER" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="70" y="550" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="c2" value="12. Faculty Login&#xa;Dashboard + Course Choice" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="390" y="550" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="c3" value="13. Save Buffer&#xa;Tentative selected courses" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="710" y="550" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="c4" value="14. Final Submit&#xa;Faculty locks own choices" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="550" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="c5" value="15. Admin Approval&#xa;Approve pending FINAL choices" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="550" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d1" value="16. Faculty Assignment Board&#xa;Official rows saved in offered_course_teachers" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="760" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d2" value="17. Reports Review&#xa;Routine, room, batch, faculty load" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="760" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d3" value="18. Close Faculty Choice&#xa;Status: FACULTY_CHOICE_FINALIZED" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="710" y="760" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d4" value="19. Final Confirm&#xa;Status: CONFIRMED&#xa;All edits locked" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="390" y="760" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d5" value="20. Export Final Reports&#xa;Print-ready Excel outputs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="70" y="760" width="260" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="f1" edge="1" parent="1" source="a1" target="a2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="345" y="175"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f2" edge="1" parent="1" source="a2" target="a3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="665" y="175"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f3" edge="1" parent="1" source="a3" target="a4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1025" y="175"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f4" edge="1" parent="1" source="a4" target="a5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1395" y="175"/></Array></mxGeometry>
+        </mxCell>
+
+        <mxCell id="f5" edge="1" parent="1" source="a5" target="b1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1580" y="265"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f6" edge="1" parent="1" source="b1" target="b2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1395" y="375"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f7" edge="1" parent="1" source="b2" target="b3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1025" y="375"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f8" edge="1" parent="1" source="b3" target="b4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="665" y="375"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f9" edge="1" parent="1" source="b4" target="b5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="350" y="375"/></Array></mxGeometry>
+        </mxCell>
+
+        <mxCell id="f10" edge="1" parent="1" source="b5" target="c1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="200" y="495"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f11" edge="1" parent="1" source="c1" target="c2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="350" y="595"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f12" edge="1" parent="1" source="c2" target="c3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="665" y="595"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f13" edge="1" parent="1" source="c3" target="c4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1025" y="595"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f14" edge="1" parent="1" source="c4" target="c5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1395" y="595"/></Array></mxGeometry>
+        </mxCell>
+
+        <mxCell id="f15" edge="1" parent="1" source="c5" target="d1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1580" y="700"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f16" edge="1" parent="1" source="d1" target="d2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1395" y="805"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f17" edge="1" parent="1" source="d2" target="d3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1025" y="805"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f18" edge="1" parent="1" source="d3" target="d4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="665" y="805"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="f19" edge="1" parent="1" source="d4" target="d5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;endArrow=block;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="350" y="805"/></Array></mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
