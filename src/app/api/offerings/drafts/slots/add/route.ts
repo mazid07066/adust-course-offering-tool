@@ -263,12 +263,12 @@ export async function POST(req: NextRequest) {
           notIn: groupCourseIds,
         },
         offered_courses: {
-          offerings: {
-            status: {
-              in: ["DRAFT", "CONFIRMED"],
-            },
-          },
-        },
+  offerings: {
+    status: {
+      in: SCHEDULE_CONFLICT_STATUSES,
+    },
+  },
+},
       },
       select: {
         id: true,

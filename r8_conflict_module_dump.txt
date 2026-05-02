@@ -1,0 +1,4063 @@
+
+
+===== FILE: src\lib\course-schedule-policy.ts =====
+
+export const SLOT_OPTIONAL_COURSE_CODES = ["EEE4139", "EEE4239", "EEE4339"];
+
+export const SCHEDULE_CONFLICT_STATUSES = [
+  "DRAFT",
+  "BUFFER_READY",
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export const REPORT_VISIBLE_OFFERING_STATUSES = [
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export const FINALIZED_REPORT_STATUSES = [
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export function normalizeCourseCode(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, "").trim().toUpperCase();
+}
+
+export function normalizePolicyText(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().toUpperCase();
+}
+
+export function isSlotOptionalCourse(course: {
+  course_code?: string | null;
+  course_title?: string | null;
+  course_type?: string | null;
+}) {
+  const code = normalizeCourseCode(course.course_code);
+  const title = normalizePolicyText(course.course_title);
+  const type = normalizePolicyText(course.course_type);
+
+  if (SLOT_OPTIONAL_COURSE_CODES.includes(code)) return true;
+
+  return (
+    type.includes("PROJECT") ||
+    type.includes("INTERNSHIP") ||
+    type.includes("THESIS") ||
+    type.includes("VIVA") ||
+    title.includes("FINAL YEAR DESIGN PROJECT") ||
+    title.includes("FYDP") ||
+    title.includes("PROJECT") ||
+    title.includes("INTERNSHIP") ||
+    title.includes("THESIS") ||
+    title.includes("VIVA")
+  );
+}
+
+
+===== FILE: src\lib\conflict-detection.ts =====
+
+NOT FOUND
+
+
+===== FILE: src\app\api\offerings\conflict-review\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { analyzeOfferingConflicts, OfferingRowInput } from "@/lib/offering-conflicts";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
+
+function parseAcademicTerm(termName: string) {
+  const match = termName.trim().toUpperCase().match(/^(SPRING|SUMMER|FALL)\s+(\d{4})$/);
+
+  if (!match) {
+    throw new Error(`Invalid academic term format: ${termName}`);
+  }
+
+  return {
+    season: match[1],
+    year: Number(match[2]),
+  };
+}
+
+export async function POST(request: NextRequest) {
+  await requireCoordinatorOrAdminApi();
+
+  try {
+    const body = await request.json();
+
+    const {
+      suggested_term_name,
+      rows,
+    }: {
+      suggested_term_name: string;
+      rows: OfferingRowInput[];
+    } = body;
+
+    if (!suggested_term_name || !Array.isArray(rows)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { error: "suggested_term_name and rows are required" },
+        { status: 400 }
+      );
+    }
+
+    let term = await prisma.academic_terms.findFirst({
+      where: { name: suggested_term_name },
+    });
+
+    if (!term) {
+      const parsed = parseAcademicTerm(suggested_term_name);
+
+      term = await prisma.academic_terms.create({
+        data: {
+          name: suggested_term_name,
+          year: parsed.year,
+          term_type: parsed.season,
+          is_active: true,
+        },
+      });
+    }
+
+    const result = await analyzeOfferingConflicts(term.id, rows);
+
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    console.error(error);
+
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "Failed to review conflicts",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\offerings\drafts\slots\add\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { getSectionGroupBatchIds, getSectionGroupCourseIds } from "@/lib/offering-section-group";
+import { canModifySlots } from "@/lib/offering-status";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
+import { SCHEDULE_CONFLICT_STATUSES } from "@/lib/course-schedule-policy";
+const ALLOWED_DAYS = ["THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY", "MONDAY"];
+const ALLOWED_DURATIONS_MINUTES = [60, 90, 120, 180];
+
+function isValidTime(value: string) {
+  return /^\d{2}:\d{2}$/.test(value);
+}
+
+function timeToMinutes(value: string) {
+  const [hh, mm] = value.split(":").map(Number);
+  return hh * 60 + mm;
+}
+
+function inferSlotTypeFromDuration(durationMinutes: number) {
+  if (durationMinutes === 60 || durationMinutes === 90) {
+    return "CLASS";
+  }
+
+  if (durationMinutes === 120 || durationMinutes === 180) {
+    return "LAB";
+  }
+
+  return "CLASS";
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    await requireCoordinatorOrAdminApi();
+
+    const body = await req.json();
+
+    const offeredCourseId = Number(body.offeredCourseId);
+    const dayOfWeek = String(body.dayOfWeek || "").trim().toUpperCase();
+    const startTime = String(body.startTime || "").trim();
+    const endTime = String(body.endTime || "").trim();
+    const roomId = Number(body.roomId);
+
+    if (!Number.isFinite(offeredCourseId) || offeredCourseId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "Valid offeredCourseId is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!ALLOWED_DAYS.includes(dayOfWeek)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "dayOfWeek must be one of THURSDAY, FRIDAY, SATURDAY, SUNDAY, MONDAY.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (!isValidTime(startTime) || !isValidTime(endTime)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "startTime and endTime must be in HH:MM format.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (startTime >= endTime) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "endTime must be later than startTime.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const durationMinutes = timeToMinutes(endTime) - timeToMinutes(startTime);
+
+    if (!ALLOWED_DURATIONS_MINUTES.includes(durationMinutes)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Allowed slot durations are 1 hour, 1.5 hours, 2 hours, and 3 hours only.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (!Number.isFinite(roomId) || roomId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "Valid roomId is required." },
+        { status: 400 }
+      );
+    }
+
+    const offeredCourse = await prisma.offered_courses.findUnique({
+      where: {
+        id: offeredCourseId,
+      },
+      select: {
+        id: true,
+        offering_id: true,
+        primary_offered_course_id: true,
+        offered_course_slots: {
+          select: {
+            id: true,
+          },
+        },
+      },
+    });
+
+    if (!offeredCourse) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "Offered course not found." },
+        { status: 404 }
+      );
+    }
+
+    const offeringStatus = await prisma.offerings.findFirst({
+      where: {
+        id: offeredCourse.offering_id,
+      },
+      select: {
+        status: true,
+      },
+    });
+
+    if (!offeringStatus || !canModifySlots(offeringStatus.status)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Slot modification not allowed in current offering stage.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (offeredCourse.primary_offered_course_id) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "Slots can only be managed from the primary section row." },
+        { status: 400 }
+      );
+    }
+
+    if (offeredCourse.offered_course_slots.length >= 3) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "A course section can have at most 3 weekly slots.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const room = await prisma.rooms.findUnique({
+      where: {
+        id: roomId,
+      },
+      select: {
+        id: true,
+        is_active: true,
+        room_code: true,
+      },
+    });
+
+    if (!room || !room.is_active) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "Selected room is invalid or inactive." },
+        { status: 400 }
+      );
+    }
+
+    const groupCourseIds = await prisma.$transaction((tx) =>
+      getSectionGroupCourseIds(tx, offeredCourseId)
+    );
+
+    const batchIds = await prisma.$transaction((tx) =>
+      getSectionGroupBatchIds(tx, offeredCourseId)
+    );
+
+    const batchRows = await prisma.batches.findMany({
+      where: {
+        id: {
+          in: batchIds,
+        },
+      },
+      select: {
+        batch_code: true,
+      },
+    });
+
+    const batchCodes = batchRows.map((x) => x.batch_code);
+
+    const overlappingBatchSlot = await prisma.offered_course_slots.findFirst({
+      where: {
+        day_of_week: dayOfWeek,
+        start_time: {
+          lt: endTime,
+        },
+        end_time: {
+          gt: startTime,
+        },
+        offered_course_id: {
+          notIn: groupCourseIds,
+        },
+        offered_courses: {
+          offerings: {
+            status: {
+              in: SCHEDULE_CONFLICT_STATUSES,
+            },
+          },
+          offered_course_batches: {
+            some: {
+              batch_id: {
+                in: batchIds,
+              },
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (overlappingBatchSlot) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Batch slot conflict detected for batch ${batchCodes.join(", ")}.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    const overlappingRoomSlot = await prisma.offered_course_slots.findFirst({
+      where: {
+        room_id: roomId,
+        day_of_week: dayOfWeek,
+        start_time: {
+          lt: endTime,
+        },
+        end_time: {
+          gt: startTime,
+        },
+        offered_course_id: {
+          notIn: groupCourseIds,
+        },
+        offered_courses: {
+          offerings: {
+            status: {
+              in: ["DRAFT", "CONFIRMED"],
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (overlappingRoomSlot) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Room conflict detected. Room ${room.room_code} is already occupied for the selected overlapping time.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    const duplicateSameSlot = await prisma.offered_course_slots.findFirst({
+      where: {
+        offered_course_id: offeredCourseId,
+        day_of_week: dayOfWeek,
+        start_time: startTime,
+        end_time: endTime,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (duplicateSameSlot) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "This exact slot already exists for the selected offered course.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const slotType = inferSlotTypeFromDuration(durationMinutes);
+
+    const slot = await prisma.offered_course_slots.create({
+      data: {
+        offered_course_id: offeredCourseId,
+        day_of_week: dayOfWeek,
+        start_time: startTime,
+        end_time: endTime,
+        room_id: roomId,
+        slot_type: slotType,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json({
+      ok: true,
+      slotId: slot.id,
+      slotType,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to add slot.";
+
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json(
+      {
+        ok: false,
+        error: message,
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\offerings\status-transition\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import {
+  canTransitionOfferingStatus,
+  OFFERING_STATUS,
+} from "@/lib/offering-status";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
+
+function normalizeText(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().toUpperCase();
+}
+
+function isSlotOptionalCourse(course: {
+  master_courses: {
+    course_title?: string | null;
+    course_type?: string | null;
+  };
+}) {
+  const title = normalizeText(course.master_courses.course_title);
+  const type = normalizeText(course.master_courses.course_type);
+
+  if (
+    type.includes("PROJECT") ||
+    type.includes("INTERNSHIP") ||
+    type.includes("THESIS") ||
+    type.includes("VIVA")
+  ) {
+    return true;
+  }
+
+  if (
+    title.includes("FINAL YEAR DESIGN PROJECT") ||
+    title.includes("FYDP") ||
+    title.includes("INTERNSHIP") ||
+    title.includes("THESIS") ||
+    title.includes("VIVA")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+export async function POST(request: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await request.json();
+    const offeringId = Number(body?.offeringId);
+    const targetStatus = normalizeText(body?.targetStatus);
+
+    if (!offeringId) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "Valid offeringId is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!targetStatus) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "targetStatus is required." },
+        { status: 400 }
+      );
+    }
+
+    const offering = await prisma.offerings.findFirst({
+      where: { id: offeringId },
+      include: {
+        offered_courses: {
+          include: {
+            master_courses: true,
+            offered_course_batches: true,
+            offered_course_slots: true,
+            offered_course_teachers: {
+              include: {
+                teachers: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!offering) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "Offering not found." },
+        { status: 404 }
+      );
+    }
+
+    if (!canTransitionOfferingStatus(offering.status, targetStatus)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Invalid lifecycle transition from ${offering.status} to ${targetStatus}.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    const blockers: string[] = [];
+
+    if (targetStatus === OFFERING_STATUS.BUFFER_READY) {
+      if (offering.offered_courses.length === 0) {
+        blockers.push("Cannot move empty offering to BUFFER_READY.");
+      }
+
+      for (const course of offering.offered_courses) {
+        const isPrimary = !course.primary_offered_course_id;
+        const slotOptional = isSlotOptionalCourse(course);
+
+        if (course.offered_course_batches.length === 0) {
+          blockers.push(
+            `${course.master_courses.course_code} Sec-${course.section}: no batch assigned.`
+          );
+        }
+
+        if (!isPrimary) {
+          continue;
+        }
+
+        if (!slotOptional && course.offered_course_slots.length === 0) {
+          blockers.push(
+            `${course.master_courses.course_code} Sec-${course.section}: no meeting slot assigned.`
+          );
+        }
+      }
+    }
+
+    if (targetStatus === OFFERING_STATUS.CONFIRMED) {
+      for (const course of offering.offered_courses) {
+        const isPrimary = !course.primary_offered_course_id;
+        const slotOptional = isSlotOptionalCourse(course);
+
+        if (course.offered_course_batches.length === 0) {
+          blockers.push(
+            `${course.master_courses.course_code} Sec-${course.section}: no batch assigned.`
+          );
+        }
+
+        if (!isPrimary) {
+          continue;
+        }
+
+        if (!slotOptional && course.offered_course_slots.length === 0) {
+          blockers.push(
+            `${course.master_courses.course_code} Sec-${course.section}: no meeting slot assigned.`
+          );
+        }
+
+        if (course.offered_course_teachers.length === 0) {
+          blockers.push(
+            `${course.master_courses.course_code} Sec-${course.section}: no faculty assigned.`
+          );
+        }
+
+        if (course.offered_course_teachers.length > 1) {
+          blockers.push(
+            `${course.master_courses.course_code} Sec-${course.section}: multiple faculty assignments found.`
+          );
+        }
+
+        const inactiveAssignedTeacher = course.offered_course_teachers.find(
+          (row) => !row.teachers.is_active
+        );
+
+        if (inactiveAssignedTeacher) {
+          blockers.push(
+            `${course.master_courses.course_code} Sec-${course.section}: assigned faculty is inactive.`
+          );
+        }
+      }
+    }
+
+    if (blockers.length > 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Transition to ${targetStatus} blocked.`,
+          blockers,
+        },
+        { status: 400 }
+      );
+    }
+
+    const updated = await prisma.offerings.update({
+      where: { id: offeringId },
+      data: { status: targetStatus },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json({
+      ok: true,
+      message: `Offering moved to ${updated.status}.`,
+      offering: updated,
+    });
+  } catch (error) {
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to change offering status.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\admin\offerings\page-client.tsx =====
+
+"use client";
+
+import { useMemo, useState } from "react";
+import AdminLayout from "@/components/admin-layout";
+import ProgramBatchSelector from "@/components/program-batch-selector";
+import { useAcademicCatalogPrograms } from "@/hooks/use-academic-catalog-programs";
+import { useProgramBatches } from "@/hooks/use-program-batches";
+
+type OfferingContextCourse = {
+  id: number;
+  courseCode: string;
+  courseTitle: string;
+  normalizedTitle: string | null;
+  credit: number | null;
+  courseType: string | null;
+  levelTerm: string | null;
+  groupName: string | null;
+  status: "COMPLETED" | "ONGOING" | "REMAINING";
+};
+
+type ContextData = {
+  ok?: boolean;
+  success?: boolean;
+  error?: string;
+
+  programId: number;
+  programCode: string;
+  programLabel: string;
+
+  resolvedBatchProgramId: number;
+  resolvedBatchProgramShortName: string;
+  resolvedBatchProgramName: string;
+
+  batchId: number;
+  batchCode: string;
+  batchAdmissionTerm: string | null;
+
+  currentTermName: string | null;
+  latestCompletedAcademicTerm: string | null;
+  suggestedOfferingAcademicTerm: string | null;
+
+  latestCompletedLevelTerm: string | null;
+  latestOngoingLevelTerm: string | null;
+  suggestedNextLevelTerm: string | null;
+
+  completedCount: number;
+  ongoingCount: number;
+  remainingCount: number;
+  totalCourses: number;
+
+  completedCredits: number;
+  ongoingCredits: number;
+  combinedCredits: number;
+
+  completedCourses: OfferingContextCourse[];
+  ongoingCourses: OfferingContextCourse[];
+  remainingCourses: OfferingContextCourse[];
+  candidateCoursesForNextOffering: OfferingContextCourse[];
+
+  academicProgress: {
+    latestCompletedTerm: string | null;
+    currentRegistrationTerm: string | null;
+    suggestedOfferingTerm: string | null;
+  };
+
+  summary: {
+    totalCourses: number;
+    completedCourses: number;
+    ongoingCourses: number;
+    remainingCourses: number;
+    completedCredits: number;
+    ongoingCredits: number;
+    combinedCredits: number;
+  };
+};
+
+type DraftContextResponse = {
+  ok?: boolean;
+  error?: string;
+  draftId: number | null;
+  hiddenCourseIds: number[];
+  totalDraftCredits: number;
+  draftStatus?: string | null;
+};
+
+function CourseTable({
+  title,
+  subtitle,
+  badgeText,
+  badgeClassName,
+  courses,
+  emptyText,
+  showAddAction = false,
+  canAdd = false,
+  onAddCourse,
+  addingCourseId,
+}: {
+  title: string;
+  subtitle: string;
+  badgeText: string;
+  badgeClassName: string;
+  courses: OfferingContextCourse[];
+  emptyText: string;
+  showAddAction?: boolean;
+  canAdd?: boolean;
+  onAddCourse?: (course: OfferingContextCourse) => Promise<void>;
+  addingCourseId?: number | null;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h4 className="text-base font-semibold text-slate-900">{title}</h4>
+          <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+        </div>
+
+        <div className={`rounded-full px-3 py-1 text-xs font-medium ${badgeClassName}`}>
+          {badgeText}
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Code</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Title</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Credit</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Type</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Level-Term</th>
+              <th className="border-b border-slate-200 px-3 py-3 text-left">Group</th>
+              {showAddAction && (
+                <th className="border-b border-slate-200 px-3 py-3 text-left">Action</th>
+              )}
+            </tr>
+          </thead>
+          <tbody className="bg-white">
+            {courses.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={showAddAction ? 7 : 6}
+                  className="px-4 py-8 text-center text-slate-500"
+                >
+                  {emptyText}
+                </td>
+              </tr>
+            ) : (
+              courses.map((course) => (
+                <tr key={course.id} className="hover:bg-slate-50">
+                  <td className="border-b border-slate-100 px-3 py-2 font-medium text-slate-900">
+                    {course.courseCode}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.courseTitle}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.credit ?? "-"}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.courseType || "-"}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.levelTerm || "-"}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                    {course.groupName || "-"}
+                  </td>
+                  {showAddAction && (
+                    <td className="border-b border-slate-100 px-3 py-2">
+                      <button
+                        type="button"
+                        disabled={!canAdd || addingCourseId === course.id}
+                        onClick={() => onAddCourse?.(course)}
+                        className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {addingCourseId === course.id ? "Adding..." : "Add"}
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+export default function OfferingsPageClient() {
+  const {
+    programs,
+    programCode,
+    setProgramCode,
+    selectedProgram,
+    loadingPrograms,
+    programError,
+  } = useAcademicCatalogPrograms();
+
+  const {
+    batches,
+    batchCode,
+    setBatchCode,
+    loadingBatches,
+    batchError,
+  } = useProgramBatches(programCode);
+
+  const [loadingContext, setLoadingContext] = useState(false);
+  const [loadingDraftContext, setLoadingDraftContext] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [contextData, setContextData] = useState<ContextData | null>(null);
+
+  const [draftId, setDraftId] = useState<number | null>(null);
+  const [draftStatus, setDraftStatus] = useState<string | null>(null);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [addingCourseId, setAddingCourseId] = useState<number | null>(null);
+
+  const [hiddenCourseIds, setHiddenCourseIds] = useState<number[]>([]);
+  const [totalDraftCredits, setTotalDraftCredits] = useState(0);
+  const [maxAllowedCredits, setMaxAllowedCredits] = useState("18");
+
+  async function loadDraftContext(
+    selectedProgramCode: string,
+    selectedBatchCode: string,
+    selectedTermName: string,
+    fallbackDraftId?: number | null
+  ) {
+    setLoadingDraftContext(true);
+
+    try {
+      const params = new URLSearchParams({
+        programCode: selectedProgramCode,
+        batchCode: selectedBatchCode,
+        termName: selectedTermName,
+      });
+
+      const res = await fetch(`/api/offerings/drafts/context?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const json: DraftContextResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load draft context.");
+      }
+
+      setDraftId(json.draftId ?? fallbackDraftId ?? null);
+      setDraftStatus(json.draftStatus || null);
+      setHiddenCourseIds(json.hiddenCourseIds || []);
+      setTotalDraftCredits(Number(json.totalDraftCredits || 0));
+    } catch (err) {
+      setDraftId(fallbackDraftId ?? null);
+      setDraftStatus(null);
+      setHiddenCourseIds([]);
+      setTotalDraftCredits(0);
+      throw err;
+    } finally {
+      setLoadingDraftContext(false);
+    }
+  }
+
+  async function loadContext(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!programCode || !batchCode) {
+      setError("Please select both academic identity and batch.");
+      setMessage("");
+      setContextData(null);
+      setDraftId(null);
+      setDraftStatus(null);
+      setHiddenCourseIds([]);
+      setTotalDraftCredits(0);
+      return;
+    }
+
+    setLoadingContext(true);
+    setError("");
+    setMessage("");
+    setContextData(null);
+    setDraftId(null);
+    setDraftStatus(null);
+    setHiddenCourseIds([]);
+    setTotalDraftCredits(0);
+
+    try {
+      const params = new URLSearchParams({
+        programCode,
+        batchCode,
+      });
+
+      const res = await fetch(`/api/offering-context?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const json: ContextData = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load offering context.");
+      }
+
+      setContextData(json);
+
+      if (json.suggestedOfferingAcademicTerm) {
+        await loadDraftContext(
+          json.programCode,
+          json.batchCode,
+          json.suggestedOfferingAcademicTerm
+        );
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load offering context."
+      );
+    } finally {
+      setLoadingContext(false);
+    }
+  }
+
+  async function createDraftOffering() {
+    if (!contextData) {
+      setError("Load workspace first.");
+      setMessage("");
+      return;
+    }
+
+    if (!contextData.programCode || !contextData.suggestedOfferingAcademicTerm) {
+      setError("Program code or suggested offering term is missing.");
+      setMessage("");
+      return;
+    }
+
+    setCreatingDraft(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/offerings/drafts/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          programCode: contextData.programCode,
+          termName: contextData.suggestedOfferingAcademicTerm,
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to create draft offering.");
+      }
+
+      const createdDraftId = Number(json.draftId);
+      setDraftId(createdDraftId);
+
+      await loadDraftContext(
+        contextData.programCode,
+        contextData.batchCode,
+        contextData.suggestedOfferingAcademicTerm,
+        createdDraftId
+      );
+
+      setMessage(
+        json.reused
+          ? `Existing draft loaded successfully. Draft ID: ${json.draftId}`
+          : `Draft offering created successfully. Draft ID: ${json.draftId}`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to create draft offering."
+      );
+    } finally {
+      setCreatingDraft(false);
+    }
+  }
+
+  async function handleAddCourse(course: OfferingContextCourse) {
+    if (!contextData) {
+      setError("Load workspace first.");
+      setMessage("");
+      return;
+    }
+
+    if (!draftId) {
+      setError("Create draft offering first.");
+      setMessage("");
+      return;
+    }
+
+    const sectionInput = window.prompt("Enter section number (example: 1, 2, 11)");
+    if (!sectionInput) return;
+
+    const section = sectionInput.trim();
+    if (!section) return;
+
+    setAddingCourseId(course.id);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/offerings/drafts/add-course", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          draftId,
+          courseId: course.id,
+          section,
+          batchIds: [contextData.batchId],
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to add course to draft.");
+      }
+
+      await loadDraftContext(
+        contextData.programCode,
+        contextData.batchCode,
+        contextData.suggestedOfferingAcademicTerm || "",
+        draftId
+      );
+
+      setMessage(
+        `Course added to draft successfully. ${course.courseCode} | Section ${section}`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to add course to draft."
+      );
+    } finally {
+      setAddingCourseId(null);
+    }
+  }
+
+  const visibleCandidateCourses = useMemo(() => {
+    return (contextData?.candidateCoursesForNextOffering || []).filter(
+      (course) => !hiddenCourseIds.includes(course.id)
+    );
+  }, [contextData?.candidateCoursesForNextOffering, hiddenCourseIds]);
+
+  const visibleRemainingCourses = useMemo(() => {
+    return (contextData?.remainingCourses || []).filter(
+      (course) => !hiddenCourseIds.includes(course.id)
+    );
+  }, [contextData?.remainingCourses, hiddenCourseIds]);
+
+  const maxCreditsNumber = Number(maxAllowedCredits || 0);
+  const exceedsMaxCredits =
+    Number.isFinite(maxCreditsNumber) &&
+    maxCreditsNumber > 0 &&
+    totalDraftCredits > maxCreditsNumber;
+
+  const combinedError = error || programError || batchError;
+
+  return (
+    <AdminLayout title="Offerings Workspace">
+      <div className="space-y-6">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-900">
+            Offerings Workspace
+          </h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Load a batch context first, then use the recommended course pool as the
+            working starting point for open-credit offering preparation.
+          </p>
+        </div>
+
+        <form onSubmit={loadContext} className="space-y-4">
+          <ProgramBatchSelector
+            programs={programs}
+            programCode={programCode}
+            setProgramCode={setProgramCode}
+            loadingPrograms={loadingPrograms}
+            batches={batches}
+            batchCode={batchCode}
+            setBatchCode={setBatchCode}
+            loadingBatches={loadingBatches}
+            showBatch={true}
+          />
+
+          <button
+            type="submit"
+            disabled={loadingContext || !programCode || !batchCode}
+            className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+          >
+            {loadingContext ? "Loading..." : "Load Workspace"}
+          </button>
+        </form>
+
+        {combinedError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {combinedError}
+          </div>
+        )}
+
+        {message && (
+          <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {message}
+          </div>
+        )}
+
+        {selectedProgram && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Selected Academic Identity</p>
+            <p className="mt-2 text-base font-semibold text-slate-900">
+              {selectedProgram.displayLabel}
+            </p>
+          </div>
+        )}
+
+        {contextData && (
+          <>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={createDraftOffering}
+                disabled={creatingDraft || !contextData.suggestedOfferingAcademicTerm}
+                className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {creatingDraft ? "Creating..." : "Create Draft Offering"}
+              </button>
+
+              {loadingDraftContext && (
+                <div className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700">
+                  Loading draft context...
+                </div>
+              )}
+
+              {draftId && (
+                <div className="rounded-full bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700">
+                  Active Draft ID: {draftId}
+                </div>
+              )}
+
+              {draftStatus && (
+                <div className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700">
+                  Draft Status: {draftStatus}
+                </div>
+              )}
+
+              {contextData.suggestedOfferingAcademicTerm && (
+                <div className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700">
+                  Draft Term: {contextData.suggestedOfferingAcademicTerm}
+                </div>
+              )}
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Latest Completed Semester</p>
+                <p className="mt-2 text-xl font-semibold text-slate-900">
+                  {contextData.academicProgress.latestCompletedTerm || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <p className="text-sm text-amber-700">Current Registration Semester</p>
+                <p className="mt-2 text-xl font-semibold text-amber-900">
+                  {contextData.academicProgress.currentRegistrationTerm || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+                <p className="text-sm text-green-700">Suggested Offering Semester</p>
+                <p className="mt-2 text-xl font-semibold text-green-900">
+                  {contextData.academicProgress.suggestedOfferingTerm || "-"}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Latest Completed Level-Term</p>
+                <p className="mt-2 text-xl font-semibold text-slate-900">
+                  {contextData.latestCompletedLevelTerm || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <p className="text-sm text-amber-700">Latest Ongoing Level-Term</p>
+                <p className="mt-2 text-xl font-semibold text-amber-900">
+                  {contextData.latestOngoingLevelTerm || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+                <p className="text-sm text-green-700">Suggested Next Level-Term</p>
+                <p className="mt-2 text-xl font-semibold text-green-900">
+                  {contextData.suggestedNextLevelTerm || "-"}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Total Courses</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {contextData.summary.totalCourses}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+                <p className="text-sm text-green-700">Completed</p>
+                <p className="mt-2 text-2xl font-semibold text-green-800">
+                  {contextData.summary.completedCourses}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <p className="text-sm text-amber-700">Ongoing</p>
+                <p className="mt-2 text-2xl font-semibold text-amber-800">
+                  {contextData.summary.ongoingCourses}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm">
+                <p className="text-sm text-red-700">Remaining</p>
+                <p className="mt-2 text-2xl font-semibold text-red-800">
+                  {visibleRemainingCourses.length}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+                <p className="text-sm text-green-700">Total Completed Credits</p>
+                <p className="mt-2 text-2xl font-semibold text-green-900">
+                  {contextData.completedCredits}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <p className="text-sm text-amber-700">Total Ongoing Credits</p>
+                <p className="mt-2 text-2xl font-semibold text-amber-900">
+                  {contextData.ongoingCredits}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
+                <p className="text-sm text-blue-700">Completed + Ongoing Credits</p>
+                <p className="mt-2 text-2xl font-semibold text-blue-900">
+                  {contextData.combinedCredits}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Current Draft Credits</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {totalDraftCredits}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <label className="text-sm text-slate-500">Maximum Allowed Credits</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={maxAllowedCredits}
+                  onChange={(e) => setMaxAllowedCredits(e.target.value)}
+                  className="mt-2 w-full rounded-xl border px-4 py-3"
+                />
+              </div>
+
+              <div
+                className={`rounded-2xl border p-5 shadow-sm ${
+                  exceedsMaxCredits
+                    ? "border-red-200 bg-red-50"
+                    : "border-green-200 bg-green-50"
+                }`}
+              >
+                <p
+                  className={`text-sm ${
+                    exceedsMaxCredits ? "text-red-700" : "text-green-700"
+                  }`}
+                >
+                  Draft Credit Status
+                </p>
+                <p
+                  className={`mt-2 text-sm font-semibold ${
+                    exceedsMaxCredits ? "text-red-800" : "text-green-800"
+                  }`}
+                >
+                  {exceedsMaxCredits
+                    ? `Warning: current draft credit (${totalDraftCredits}) exceeds maximum allowed credit (${maxCreditsNumber}).`
+                    : "Within the current maximum credit limit."}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Requested Academic Identity</p>
+                <p className="mt-2 text-base font-semibold text-slate-900">
+                  {contextData.programCode}
+                </p>
+                <p className="mt-1 text-sm text-slate-600">{contextData.programLabel}</p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Resolved Batch Owner Program</p>
+                <p className="mt-2 text-base font-semibold text-slate-900">
+                  {contextData.resolvedBatchProgramShortName}
+                </p>
+                <p className="mt-1 text-sm text-slate-600">
+                  {contextData.resolvedBatchProgramName}
+                </p>
+              </div>
+            </div>
+
+            <CourseTable
+              title="Candidate Courses for Next Offering"
+              subtitle="Recommended starting pool from the saved academic progression. Courses already assigned in the current draft for this batch are hidden."
+              badgeText={`${visibleCandidateCourses.length} course(s)`}
+              badgeClassName="bg-slate-100 text-slate-700"
+              courses={visibleCandidateCourses}
+              emptyText="No candidate course found."
+              showAddAction={true}
+              canAdd={Boolean(draftId)}
+              onAddCourse={handleAddCourse}
+              addingCourseId={addingCourseId}
+            />
+
+            <CourseTable
+              title="All Remaining Courses"
+              subtitle="Full remaining course pool for this batch. Courses already assigned in the current draft for this batch are hidden."
+              badgeText={`${visibleRemainingCourses.length} remaining`}
+              badgeClassName="bg-red-50 text-red-700"
+              courses={visibleRemainingCourses}
+              emptyText="No remaining course loaded yet."
+            />
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h4 className="text-base font-semibold text-slate-900">
+                Next development note
+              </h4>
+              <p className="mt-2 text-sm text-slate-600">
+                This workspace now shows total completed credits, total ongoing credits,
+                and the combined completed-plus-ongoing credits for the selected batch,
+                while keeping the existing draft offering preparation flow intact.
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+    </AdminLayout>
+  );
+}
+
+
+===== FILE: src\app\admin\reports\page-client.tsx =====
+
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+type Term = {
+  id: number;
+  name: string;
+  year: number;
+  term_type: string;
+};
+
+type ProgramOption = {
+  programCode: string;
+  displayLabel: string;
+};
+
+type BatchOption = {
+  id: number;
+  batchCode: string;
+  admissionTerm: string | null;
+};
+
+type ReportTab =
+  | "COMBINED"
+  | "BATCH"
+  | "PROGRAM"
+  | "DAY"
+  | "CLASS_LAB"
+  | "FACULTY_ROUTINE"
+  | "ROOM"
+  | "FACULTY_LOAD"
+  | "FACULTY_LOAD_TAKEN"
+  | "OFFERING_SUMMARY";
+
+const tabs: Array<{ key: ReportTab; label: string }> = [
+  { key: "COMBINED", label: "Combined Routine" },
+  { key: "PROGRAM", label: "Program-wise Routine" },
+  { key: "BATCH", label: "Batch-wise Routine" },
+  { key: "DAY", label: "Day-wise Routine" },
+  { key: "CLASS_LAB", label: "Class / Lab Schedule" },
+  { key: "FACULTY_ROUTINE", label: "Faculty-wise Routine" },
+  { key: "ROOM", label: "Room-wise Schedule" },
+  { key: "FACULTY_LOAD", label: "Faculty Load Combined" },
+  { key: "FACULTY_LOAD_TAKEN", label: "Faculty Load Taken" },
+  { key: "OFFERING_SUMMARY", label: "Offering Summary" },
+];
+
+function buildQuery(params: Record<string, string>) {
+  const qs = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value.trim()) qs.set(key, value.trim());
+  });
+
+  return qs.toString();
+}
+
+function getReportApi(tab: ReportTab) {
+  switch (tab) {
+    case "BATCH":
+      return "/api/admin/reports/batch-routine";
+    case "PROGRAM":
+      return "/api/admin/reports/confirmed-schedule";
+    case "DAY":
+      return "/api/admin/reports/day-wise-routine";
+    case "CLASS_LAB":
+      return "/api/admin/reports/class-lab-schedule";
+    case "FACULTY_ROUTINE":
+      return "/api/admin/reports/faculty-wise-routine";
+    case "ROOM":
+      return "/api/admin/reports/room-schedule";
+    case "FACULTY_LOAD":
+    case "FACULTY_LOAD_TAKEN":
+      return "/api/admin/reports/faculty-load";
+    case "OFFERING_SUMMARY":
+      return "/api/admin/reports/offering-summary";
+    case "COMBINED":
+    default:
+      return "/api/admin/reports/confirmed-schedule";
+  }
+}
+
+function getExportUrl(tab: ReportTab, params: Record<string, string>) {
+  const query = buildQuery(params);
+
+  switch (tab) {
+    case "BATCH":
+      return `/api/export/batch-wise-routine?${query}`;
+    case "PROGRAM":
+      return `/api/export/program-wise-routine?${query}`;
+    case "ROOM":
+      return `/api/export/room-wise-schedule?${query}`;
+    case "FACULTY_ROUTINE":
+      return `/api/export/faculty-wise-routine?${query}`;
+    case "FACULTY_LOAD":
+      return `/api/export/faculty-load-combined?${query}`;
+    case "FACULTY_LOAD_TAKEN":
+      return `/api/export/faculty-load-taken?${query}`;
+    case "OFFERING_SUMMARY":
+      return `/api/export/offering-summary?${query}`;
+    case "CLASS_LAB":
+    case "DAY":
+    case "COMBINED":
+    default:
+      return `/api/export/combined-routine?${query}`;
+  }
+}
+
+function getRowsFromResponse(tab: ReportTab, data: any): any[] {
+  if (tab === "FACULTY_LOAD" || tab === "FACULTY_LOAD_TAKEN") {
+    return data.rows || [];
+  }
+
+  if (tab === "DAY" && Array.isArray(data.groups)) {
+    return data.groups.flatMap((group: any) =>
+      (group.rows || []).map((row: any) => ({
+        ...row,
+        dayGroup: group.dayOfWeek,
+      }))
+    );
+  }
+
+  if (tab === "CLASS_LAB" && data.groups) {
+    return [
+      ...(data.groups.classRows || []),
+      ...(data.groups.labRows || []),
+      ...(data.groups.projectRows || []),
+    ];
+  }
+
+  return data.rows || [];
+}
+
+function SummaryCards({ summary }: { summary: any }) {
+  if (!summary) return null;
+
+  return (
+    <div className="grid gap-4 md:grid-cols-4">
+      {Object.entries(summary).map(([key, value]) => (
+        <div key={key} className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            {key.replace(/([A-Z])/g, " $1")}
+          </div>
+          <div className="mt-2 text-2xl font-bold text-slate-900">
+            {String(value)}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RoutineTable({ rows }: { rows: any[] }) {
+  return (
+    <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
+      <table className="min-w-full text-sm">
+        <thead className="bg-slate-50">
+          <tr>
+            <th className="border-b px-3 py-3 text-left">Day</th>
+            <th className="border-b px-3 py-3 text-left">Time</th>
+            <th className="border-b px-3 py-3 text-left">Room</th>
+            <th className="border-b px-3 py-3 text-left">Program</th>
+            <th className="border-b px-3 py-3 text-left">Batch</th>
+            <th className="border-b px-3 py-3 text-left">Course</th>
+            <th className="border-b px-3 py-3 text-left">Section</th>
+            <th className="border-b px-3 py-3 text-left">Credit</th>
+            <th className="border-b px-3 py-3 text-left">Faculty</th>
+            <th className="border-b px-3 py-3 text-left">Type</th>
+            <th className="border-b px-3 py-3 text-left">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={`${row.offeredCourseId || row.courseCode}-${index}`}>
+              <td className="border-b px-3 py-2">{row.dayOfWeek || "-"}</td>
+              <td className="border-b px-3 py-2">
+                {row.startTime || "-"} - {row.endTime || "-"}
+              </td>
+              <td className="border-b px-3 py-2">{row.roomCode || "-"}</td>
+              <td className="border-b px-3 py-2">{row.programCode || "-"}</td>
+              <td className="border-b px-3 py-2">
+                {Array.isArray(row.batchCodes)
+                  ? row.batchCodes.join(", ")
+                  : row.batchCode || "-"}
+              </td>
+              <td className="border-b px-3 py-2">
+                <span className="font-medium">{row.courseCode || "-"}</span>
+                <br />
+                <span className="text-slate-600">{row.courseTitle || "-"}</span>
+              </td>
+              <td className="border-b px-3 py-2">{row.section || "-"}</td>
+              <td className="border-b px-3 py-2">{row.credit ?? "-"}</td>
+              <td className="border-b px-3 py-2">{row.facultyText || "-"}</td>
+              <td className="border-b px-3 py-2">{row.scheduleKind || "-"}</td>
+              <td className="border-b px-3 py-2">{row.offeringStatus || "-"}</td>
+            </tr>
+          ))}
+
+          {!rows.length ? (
+            <tr>
+              <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
+                No rows found.
+              </td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FacultyLoadTable({ rows, detailed }: { rows: any[]; detailed?: boolean }) {
+  if (detailed) {
+    const flattened = rows.flatMap((faculty) =>
+      (faculty.assignedCourses || []).map((course: any) => ({
+        faculty,
+        course,
+      }))
+    );
+
+    return (
+      <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="border-b px-3 py-3 text-left">Faculty</th>
+              <th className="border-b px-3 py-3 text-left">Program</th>
+              <th className="border-b px-3 py-3 text-left">Batch</th>
+              <th className="border-b px-3 py-3 text-left">Course</th>
+              <th className="border-b px-3 py-3 text-left">Section</th>
+              <th className="border-b px-3 py-3 text-left">Credit</th>
+              <th className="border-b px-3 py-3 text-left">Load Type</th>
+              <th className="border-b px-3 py-3 text-left">Schedule</th>
+              <th className="border-b px-3 py-3 text-left">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {flattened.map((item, index) => (
+              <tr key={`${item.faculty.teacherCode}-${item.course.offeredCourseId}-${index}`}>
+                <td className="border-b px-3 py-2">
+                  {item.faculty.teacherCode} - {item.faculty.teacherName}
+                </td>
+                <td className="border-b px-3 py-2">{item.course.programCode}</td>
+                <td className="border-b px-3 py-2">
+                  {(item.course.batchCodes || []).join(", ") || "-"}
+                </td>
+                <td className="border-b px-3 py-2">
+                  <span className="font-medium">{item.course.courseCode}</span>
+                  <br />
+                  <span className="text-slate-600">{item.course.courseTitle}</span>
+                </td>
+                <td className="border-b px-3 py-2">{item.course.section}</td>
+                <td className="border-b px-3 py-2">{item.course.assignedCredit}</td>
+                <td className="border-b px-3 py-2">{item.course.loadType}</td>
+                <td className="border-b px-3 py-2">{item.course.scheduleText}</td>
+                <td className="border-b px-3 py-2">{item.course.offeringStatus}</td>
+              </tr>
+            ))}
+
+            {!flattened.length ? (
+              <tr>
+                <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                  No faculty load rows found.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
+      <table className="min-w-full text-sm">
+        <thead className="bg-slate-50">
+          <tr>
+            <th className="border-b px-3 py-3 text-left">Initial</th>
+            <th className="border-b px-3 py-3 text-left">Faculty</th>
+            <th className="border-b px-3 py-3 text-left">Designation</th>
+            <th className="border-b px-3 py-3 text-left">Department</th>
+            <th className="border-b px-3 py-3 text-left">Seniority</th>
+            <th className="border-b px-3 py-3 text-left">Theory</th>
+            <th className="border-b px-3 py-3 text-left">Lab</th>
+            <th className="border-b px-3 py-3 text-left">Project</th>
+            <th className="border-b px-3 py-3 text-left">Total</th>
+            <th className="border-b px-3 py-3 text-left">Phone</th>
+            <th className="border-b px-3 py-3 text-left">Email</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.teacherId}>
+              <td className="border-b px-3 py-2">{row.teacherCode}</td>
+              <td className="border-b px-3 py-2">{row.teacherName}</td>
+              <td className="border-b px-3 py-2">{row.designation}</td>
+              <td className="border-b px-3 py-2">{row.departmentCode}</td>
+              <td className="border-b px-3 py-2">{row.seniorityLevel ?? "-"}</td>
+              <td className="border-b px-3 py-2">{row.theoryCredits}</td>
+              <td className="border-b px-3 py-2">{row.labCredits}</td>
+              <td className="border-b px-3 py-2">{row.projectCredits}</td>
+              <td className="border-b px-3 py-2 font-semibold">{row.totalCredits}</td>
+              <td className="border-b px-3 py-2">{row.phone}</td>
+              <td className="border-b px-3 py-2">{row.email}</td>
+            </tr>
+          ))}
+
+          {!rows.length ? (
+            <tr>
+              <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
+                No faculty load rows found.
+              </td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function OfferingSummaryTable({ rows }: { rows: any[] }) {
+  return (
+    <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
+      <table className="min-w-full text-sm">
+        <thead className="bg-slate-50">
+          <tr>
+            <th className="border-b px-3 py-3 text-left">Status</th>
+            <th className="border-b px-3 py-3 text-left">Role</th>
+            <th className="border-b px-3 py-3 text-left">Program</th>
+            <th className="border-b px-3 py-3 text-left">Batch</th>
+            <th className="border-b px-3 py-3 text-left">Course</th>
+            <th className="border-b px-3 py-3 text-left">Section</th>
+            <th className="border-b px-3 py-3 text-left">Credit</th>
+            <th className="border-b px-3 py-3 text-left">Faculty</th>
+            <th className="border-b px-3 py-3 text-left">Schedule</th>
+            <th className="border-b px-3 py-3 text-left">Co-offered With</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={`${row.offeredCourseId}-${index}`}>
+              <td className="border-b px-3 py-2">{row.offeringStatus}</td>
+              <td className="border-b px-3 py-2">{row.role}</td>
+              <td className="border-b px-3 py-2">{row.programCode}</td>
+              <td className="border-b px-3 py-2">
+                {(row.batchCodes || []).join(", ") || "-"}
+              </td>
+              <td className="border-b px-3 py-2">
+                <span className="font-medium">{row.courseCode}</span>
+                <br />
+                <span className="text-slate-600">{row.courseTitle}</span>
+              </td>
+              <td className="border-b px-3 py-2">{row.section}</td>
+              <td className="border-b px-3 py-2">{row.credit}</td>
+              <td className="border-b px-3 py-2">{row.facultyText}</td>
+              <td className="border-b px-3 py-2">{row.scheduleText}</td>
+              <td className="border-b px-3 py-2">{row.coOfferedCourseText}</td>
+            </tr>
+          ))}
+
+          {!rows.length ? (
+            <tr>
+              <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
+                No offering summary rows found.
+              </td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export default function ReportsPageClient() {
+  const [activeTab, setActiveTab] = useState<ReportTab>("COMBINED");
+
+  const [terms, setTerms] = useState<Term[]>([]);
+  const [programs, setPrograms] = useState<ProgramOption[]>([]);
+  const [batches, setBatches] = useState<BatchOption[]>([]);
+
+  const [termName, setTermName] = useState("");
+  const [programCode, setProgramCode] = useState("");
+  const [batchCode, setBatchCode] = useState("");
+  const [scheduleKind, setScheduleKind] = useState("ALL");
+  const [teacherCode, setTeacherCode] = useState("");
+  const [roomCode, setRoomCode] = useState("");
+
+  const [loading, setLoading] = useState(false);
+  const [loadingOptions, setLoadingOptions] = useState(false);
+  const [error, setError] = useState("");
+  const [summary, setSummary] = useState<any>(null);
+  const [rows, setRows] = useState<any[]>([]);
+
+  async function loadInitialOptions() {
+    setLoadingOptions(true);
+
+    try {
+      const [termsRes, programsRes] = await Promise.all([
+        fetch("/api/academic-terms/list", { cache: "no-store" }),
+        fetch("/api/academic-catalog/options", { cache: "no-store" }),
+      ]);
+
+      const termsJson = await termsRes.json();
+      const programsJson = await programsRes.json();
+
+      const loadedTerms: Term[] = termsJson.terms || [];
+      const loadedPrograms: ProgramOption[] = programsJson.programs || [];
+
+      setTerms(loadedTerms);
+      setPrograms(loadedPrograms);
+
+      if (!termName && loadedTerms.length > 0) {
+        setTermName(loadedTerms[0].name);
+      }
+    } catch {
+      setTerms([]);
+      setPrograms([]);
+    } finally {
+      setLoadingOptions(false);
+    }
+  }
+
+  async function loadBatches(program: string) {
+    setBatchCode("");
+
+    if (!program) {
+      setBatches([]);
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `/api/program-batches/options?programCode=${encodeURIComponent(program)}`,
+        { cache: "no-store" }
+      );
+      const json = await res.json();
+
+      setBatches(json.batches || []);
+    } catch {
+      setBatches([]);
+    }
+  }
+
+  useEffect(() => {
+    loadInitialOptions();
+  }, []);
+
+  useEffect(() => {
+    loadBatches(programCode);
+  }, [programCode]);
+
+  const queryParams = useMemo(
+    () => ({
+      termName,
+      programCode,
+      batchCode,
+      scheduleKind,
+      teacherCode,
+      roomCode,
+    }),
+    [termName, programCode, batchCode, scheduleKind, teacherCode, roomCode]
+  );
+
+  async function loadReport() {
+    if (!termName) {
+      setError("Please select an academic term first.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setSummary(null);
+    setRows([]);
+
+    try {
+      const api = getReportApi(activeTab);
+      const qs = buildQuery(queryParams);
+
+      const res = await fetch(`${api}?${qs}`, { cache: "no-store" });
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load report.");
+      }
+
+      setSummary(json.summary || null);
+      setRows(getRowsFromResponse(activeTab, json));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load report.");
+      setSummary(null);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (termName) {
+      loadReport();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  const exportUrl = getExportUrl(activeTab, queryParams);
+
+  const isFacultyLoadTab =
+    activeTab === "FACULTY_LOAD" || activeTab === "FACULTY_LOAD_TAKEN";
+
+  const isOfferingSummaryTab = activeTab === "OFFERING_SUMMARY";
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-3xl border bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">
+              Professional Reporting Center
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Preview and export combined, program-wise, batch-wise, class, lab,
+              room, faculty, load, and offering reports.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={loadReport}
+              disabled={loading || !termName}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+            >
+              {loading ? "Loading..." : "Refresh Preview"}
+            </button>
+
+            <a
+              href={exportUrl}
+              className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700"
+            >
+              Export Excel
+            </a>
+          </div>
+        </div>
+
+        <div className="mt-6 grid gap-4 lg:grid-cols-6">
+          <div>
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              Academic Term
+            </label>
+            <select
+              value={termName}
+              onChange={(e) => setTermName(e.target.value)}
+              disabled={loadingOptions}
+              className="w-full rounded-xl border px-3 py-3 text-sm"
+            >
+              <option value="">Select Term</option>
+              {terms.map((term) => (
+                <option key={term.id} value={term.name}>
+                  {term.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              Program
+            </label>
+            <select
+              value={programCode}
+              onChange={(e) => setProgramCode(e.target.value)}
+              className="w-full rounded-xl border px-3 py-3 text-sm"
+            >
+              <option value="">All Programs</option>
+              {programs.map((program) => (
+                <option key={program.programCode} value={program.programCode}>
+                  {program.displayLabel || program.programCode}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              Batch
+            </label>
+            <select
+              value={batchCode}
+              onChange={(e) => setBatchCode(e.target.value)}
+              className="w-full rounded-xl border px-3 py-3 text-sm"
+              disabled={!programCode}
+            >
+              <option value="">All Batches</option>
+              {batches.map((batch) => (
+                <option key={batch.id} value={batch.batchCode}>
+                  {batch.batchCode}
+                  {batch.admissionTerm ? ` | ${batch.admissionTerm}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              Schedule Type
+            </label>
+            <select
+              value={scheduleKind}
+              onChange={(e) => setScheduleKind(e.target.value)}
+              className="w-full rounded-xl border px-3 py-3 text-sm"
+            >
+              <option value="ALL">All</option>
+              <option value="CLASS">Class</option>
+              <option value="LAB">Lab</option>
+              <option value="PROJECT">Project / No Slot</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              Faculty Initial
+            </label>
+            <input
+              value={teacherCode}
+              onChange={(e) => setTeacherCode(e.target.value.toUpperCase())}
+              placeholder="AAM"
+              className="w-full rounded-xl border px-3 py-3 text-sm"
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              Room Code
+            </label>
+            <input
+              value={roomCode}
+              onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+              placeholder="CLS 408"
+              className="w-full rounded-xl border px-3 py-3 text-sm"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap gap-2">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setActiveTab(tab.key)}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                activeTab === tab.key
+                  ? "bg-blue-600 text-white"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      ) : null}
+
+      <SummaryCards summary={summary} />
+
+      <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+        Current Preview: <span className="font-semibold">{rows.length}</span>{" "}
+        rows. Export button uses the same filters.
+      </div>
+
+      {isFacultyLoadTab ? (
+        <FacultyLoadTable rows={rows} detailed={activeTab === "FACULTY_LOAD_TAKEN"} />
+      ) : isOfferingSummaryTab ? (
+        <OfferingSummaryTable rows={rows} />
+      ) : (
+        <RoutineTable rows={rows} />
+      )}
+    </div>
+  );
+}
+
+
+===== FILE: src\app\admin\offering-drafts\page-client.tsx =====
+
+"use client";
+
+import { Fragment, useEffect, useMemo, useState } from "react";
+import AdminLayout from "@/components/admin-layout";
+import ProgramTermSelector from "@/components/program-term-selector";
+import { useAcademicCatalogPrograms } from "@/hooks/use-academic-catalog-programs";
+import { useAcademicTerms } from "@/hooks/use-academic-terms";
+
+type RoomOption = {
+  id: number;
+  room_code: string;
+  room_type?: string | null;
+};
+
+type DraftSlot = {
+  id: number;
+  day_of_week: string;
+  start_time: string;
+  end_time: string;
+  room_id: number;
+  slot_type?: string | null;
+  rooms: {
+    room_code: string;
+    room_type?: string | null;
+  } | null;
+};
+
+type LinkedCourseRow = {
+  id: number;
+  section: string;
+  master_course: {
+    course_code: string;
+    course_title: string;
+    program_code: string;
+    program_name: string;
+  };
+  offered_course_batches: Array<{
+    batch_id: number;
+    batches: {
+      batch_code: string;
+    };
+  }>;
+};
+
+type SectionGroup = {
+  primary_course: {
+    id: number;
+    section: string;
+    is_cooffered: boolean;
+    master_course: {
+      course_code: string;
+      course_title: string;
+      program_code: string;
+      program_name: string;
+    };
+    offered_course_batches: Array<{
+      batch_id: number;
+      batches: {
+        batch_code: string;
+      };
+    }>;
+    offered_course_teachers: Array<{
+      teacher_id: number;
+      teachers: {
+        teacher_code: string;
+        full_name: string;
+      } | null;
+    }>;
+    offered_course_slots: DraftSlot[];
+    schedule_text?: string;
+  };
+  linked_courses: LinkedCourseRow[];
+  section_batch_codes: string[];
+};
+
+type Draft = {
+  id: number;
+  status: string;
+  created_at: string | null;
+  academic_terms: {
+    name: string;
+  };
+  programs: {
+    short_name: string;
+    name: string;
+  };
+  section_groups: SectionGroup[];
+};
+
+type DraftResponse = {
+  ok?: boolean;
+  error?: string;
+  matchedProgramCodes?: string[];
+  drafts?: Draft[];
+};
+
+type RoomResponse = {
+  ok?: boolean;
+  error?: string;
+  rooms?: Array<
+    | {
+        id: number;
+        room_code: string;
+        room_type?: string | null;
+      }
+    | {
+        id: number;
+        roomCode: string;
+        roomType?: string | null;
+      }
+  >;
+};
+
+type ProgramBatchResponse = {
+  ok?: boolean;
+  error?: string;
+  batches?: Array<
+    | {
+        id: number;
+        batch_code: string;
+      }
+    | {
+        id: number;
+        batchCode: string;
+      }
+  >;
+};
+
+type SlotEditorRow = {
+  dayOfWeek: string;
+  startTime: string;
+  durationMinutes: string;
+  roomId: string;
+  availableRooms: RoomOption[];
+  loadingRooms: boolean;
+};
+
+type BatchOption = {
+  id: number;
+  batchCode: string;
+};
+
+const DAYS = ["THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY", "MONDAY"];
+
+const DURATIONS = [
+  { value: "60", label: "1 Hour" },
+  { value: "90", label: "1.5 Hours" },
+  { value: "120", label: "2 Hours" },
+  { value: "180", label: "3 Hours" },
+];
+
+const WEEKLY_CLASS_OPTIONS = [
+  { value: "1", label: "Once in a week" },
+  { value: "2", label: "Twice in a week" },
+  { value: "3", label: "Thrice in a week" },
+];
+
+function addMinutesToTime(startTime: string, minutesToAdd: number) {
+  const [hh, mm] = startTime.split(":").map(Number);
+  const total = hh * 60 + mm + minutesToAdd;
+  const endHour = Math.floor(total / 60) % 24;
+  const endMinute = total % 60;
+  return `${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")}`;
+}
+
+function roomLabel(
+  room:
+    | { room_code: string; room_type?: string | null }
+    | { roomCode: string; roomType?: string | null }
+    | null
+    | undefined
+) {
+  if (!room) return "-";
+
+  if ("room_code" in room) {
+    return room.room_type ? `${room.room_type} | ${room.room_code}` : room.room_code;
+  }
+
+  return room.roomType ? `${room.roomType} | ${room.roomCode}` : room.roomCode;
+}
+
+function normalizeRoomOption(
+  room:
+    | { id: number; room_code: string; room_type?: string | null }
+    | { id: number; roomCode: string; roomType?: string | null }
+): RoomOption {
+  if ("room_code" in room) {
+    return {
+      id: room.id,
+      room_code: room.room_code,
+      room_type: room.room_type ?? null,
+    };
+  }
+
+  return {
+    id: room.id,
+    room_code: room.roomCode,
+    room_type: room.roomType ?? null,
+  };
+}
+
+function normalizeBatchOption(
+  row:
+    | {
+        id: number;
+        batch_code: string;
+      }
+    | {
+        id: number;
+        batchCode: string;
+      }
+): BatchOption {
+  if ("batch_code" in row) {
+    return {
+      id: row.id,
+      batchCode: row.batch_code,
+    };
+  }
+
+  return {
+    id: row.id,
+    batchCode: row.batchCode,
+  };
+}
+
+function buildDefaultSlotRow(initialRoomId = ""): SlotEditorRow {
+  return {
+    dayOfWeek: "THURSDAY",
+    startTime: "09:00",
+    durationMinutes: "60",
+    roomId: initialRoomId,
+    availableRooms: [],
+    loadingRooms: false,
+  };
+}
+
+function getRemainingSlotCount(currentSlotCount: number, weeklyTarget: string) {
+  const target = Number(weeklyTarget || "1");
+  return Math.max(1, target - currentSlotCount);
+}
+
+export default function OfferingDraftsPageClient() {
+  const {
+    programs,
+    programCode,
+    setProgramCode,
+    loadingPrograms,
+    programError,
+  } = useAcademicCatalogPrograms();
+
+  const {
+    terms,
+    termName,
+    setTermName,
+    loadingTerms,
+    termError,
+  } = useAcademicTerms();
+
+  const [loading, setLoading] = useState(false);
+  const [roomsLoading, setRoomsLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [matchedProgramCodes, setMatchedProgramCodes] = useState<string[]>([]);
+
+  const [allRooms, setAllRooms] = useState<RoomOption[]>([]);
+
+  const [slotEditorCourseId, setSlotEditorCourseId] = useState<number | null>(null);
+  const [editingSlotId, setEditingSlotId] = useState<number | null>(null);
+  const [slotWeeklyTarget, setSlotWeeklyTarget] = useState("1");
+  const [slotRows, setSlotRows] = useState<SlotEditorRow[]>([]);
+
+  const [savingSlot, setSavingSlot] = useState(false);
+  const [deletingCourseId, setDeletingCourseId] = useState<number | null>(null);
+  const [deletingSlotId, setDeletingSlotId] = useState<number | null>(null);
+
+  const [attachEditorCourseId, setAttachEditorCourseId] = useState<number | null>(null);
+  const [attachProgramCode, setAttachProgramCode] = useState("");
+  const [attachBatchCode, setAttachBatchCode] = useState("");
+  const [attachBatchOptions, setAttachBatchOptions] = useState<BatchOption[]>([]);
+  const [attachOptionsLoading, setAttachOptionsLoading] = useState(false);
+  const [savingAttach, setSavingAttach] = useState(false);
+
+  const combinedError = error || programError || termError;
+  const configuredRoomCount = allRooms.length;
+
+  function getPrimaryCourseById(courseId: number) {
+    for (const draft of drafts) {
+      for (const group of draft.section_groups) {
+        if (group.primary_course.id === courseId) {
+          return group.primary_course;
+        }
+      }
+    }
+    return null;
+  }
+
+  function currentCourseSlotCount() {
+    if (!slotEditorCourseId) return 0;
+    const course = getPrimaryCourseById(slotEditorCourseId);
+    return course?.offered_course_slots.length || 0;
+  }
+
+  function resizeSlotRows(targetCount: number) {
+    setSlotRows((prev) => {
+      const next = [...prev];
+      if (next.length < targetCount) {
+        const fallbackRoomId =
+          next[0]?.roomId || (allRooms.length > 0 ? String(allRooms[0].id) : "");
+        while (next.length < targetCount) {
+          next.push(buildDefaultSlotRow(fallbackRoomId));
+        }
+      } else if (next.length > targetCount) {
+        next.length = targetCount;
+      }
+      return next;
+    });
+  }
+
+  function openSlotEditorForNew(courseId: number) {
+    const course = getPrimaryCourseById(courseId);
+    const currentSlotCount = course?.offered_course_slots.length || 0;
+    const initialTarget = currentSlotCount === 0 ? "1" : currentSlotCount === 1 ? "2" : "3";
+    const rowCount = getRemainingSlotCount(currentSlotCount, initialTarget);
+
+    setSlotEditorCourseId(courseId);
+    setEditingSlotId(null);
+    setSlotWeeklyTarget(initialTarget);
+    setSlotRows(
+      Array.from({ length: rowCount }, () =>
+        buildDefaultSlotRow(allRooms.length > 0 ? String(allRooms[0].id) : "")
+      )
+    );
+  }
+
+  function openSlotEditorForEdit(courseId: number, slot: DraftSlot) {
+    const start = slot.start_time;
+    const end = slot.end_time;
+    const [sh, sm] = start.split(":").map(Number);
+    const [eh, em] = end.split(":").map(Number);
+    const duration = String(Math.max(60, eh * 60 + em - (sh * 60 + sm)));
+
+    setSlotEditorCourseId(courseId);
+    setEditingSlotId(slot.id);
+    setSlotWeeklyTarget("1");
+    setSlotRows([
+      {
+        dayOfWeek: slot.day_of_week,
+        startTime: slot.start_time,
+        durationMinutes: duration,
+        roomId: String(slot.room_id),
+        availableRooms: [],
+        loadingRooms: false,
+      },
+    ]);
+  }
+
+  function closeSlotEditor() {
+    setSlotEditorCourseId(null);
+    setEditingSlotId(null);
+    setSlotWeeklyTarget("1");
+    setSlotRows([]);
+  }
+
+  async function loadAttachBatchOptions(selectedProgramCode: string) {
+    if (!selectedProgramCode) {
+      setAttachBatchOptions([]);
+      return;
+    }
+
+    setAttachOptionsLoading(true);
+
+    try {
+      const params = new URLSearchParams({
+        programCode: selectedProgramCode,
+      });
+
+      const res = await fetch(`/api/program-batches/options?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const json: ProgramBatchResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load batches.");
+      }
+
+      setAttachBatchOptions((json.batches || []).map(normalizeBatchOption));
+    } catch (err) {
+      setAttachBatchOptions([]);
+      setError(err instanceof Error ? err.message : "Failed to load batches.");
+    } finally {
+      setAttachOptionsLoading(false);
+    }
+  }
+
+  function openAttachEditor(courseId: number, defaultProgramCode: string) {
+    setAttachEditorCourseId(courseId);
+    setAttachProgramCode(defaultProgramCode);
+    setAttachBatchCode("");
+    setAttachBatchOptions([]);
+    void loadAttachBatchOptions(defaultProgramCode);
+  }
+
+  function closeAttachEditor() {
+    setAttachEditorCourseId(null);
+    setAttachProgramCode("");
+    setAttachBatchCode("");
+    setAttachBatchOptions([]);
+  }
+
+  async function loadAllRooms() {
+    setRoomsLoading(true);
+
+    try {
+      const res = await fetch("/api/rooms/options", {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const json: RoomResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load room options.");
+      }
+
+      const fetchedRooms = (json.rooms || []).map(normalizeRoomOption);
+      setAllRooms(fetchedRooms);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load room options.");
+    } finally {
+      setRoomsLoading(false);
+    }
+  }
+
+  async function loadAvailableRoomsForRow(index: number, preferredRoomId?: string) {
+    const row = slotRows[index];
+    if (!row) return;
+
+    const endTime = addMinutesToTime(row.startTime, Number(row.durationMinutes || 60));
+
+    setSlotRows((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, loadingRooms: true } : item))
+    );
+
+    try {
+      const params = new URLSearchParams({
+        dayOfWeek: row.dayOfWeek,
+        startTime: row.startTime,
+        endTime,
+      });
+
+      const res = await fetch(`/api/rooms/options?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const json: RoomResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load available rooms.");
+      }
+
+      const fetchedRooms = (json.rooms || []).map(normalizeRoomOption);
+
+      setSlotRows((prev) =>
+        prev.map((item, i) => {
+          if (i !== index) return item;
+
+          let nextRoomId = item.roomId;
+
+          if (fetchedRooms.length === 0) {
+            nextRoomId = "";
+          } else if (
+            preferredRoomId &&
+            fetchedRooms.some((room) => String(room.id) === preferredRoomId)
+          ) {
+            nextRoomId = preferredRoomId;
+          } else if (
+            item.roomId &&
+            fetchedRooms.some((room) => String(room.id) === item.roomId)
+          ) {
+            nextRoomId = item.roomId;
+          } else {
+            nextRoomId = String(fetchedRooms[0].id);
+          }
+
+          return {
+            ...item,
+            availableRooms: fetchedRooms,
+            roomId: nextRoomId,
+            loadingRooms: false,
+          };
+        })
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load available rooms.");
+      setSlotRows((prev) =>
+        prev.map((item, i) =>
+          i === index ? { ...item, loadingRooms: false, availableRooms: [] } : item
+        )
+      );
+    }
+  }
+
+  useEffect(() => {
+    void loadAllRooms();
+  }, []);
+
+  useEffect(() => {
+    if (!slotEditorCourseId || editingSlotId) return;
+
+    const currentCount = currentCourseSlotCount();
+    const desiredRows = getRemainingSlotCount(currentCount, slotWeeklyTarget);
+    resizeSlotRows(desiredRows);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotWeeklyTarget, slotEditorCourseId, editingSlotId]);
+
+  useEffect(() => {
+    if (!slotEditorCourseId || slotRows.length === 0) return;
+
+    slotRows.forEach((row, index) => {
+      void loadAvailableRoomsForRow(index, row.roomId || undefined);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    slotEditorCourseId,
+    slotRows.map((row) => `${row.dayOfWeek}|${row.startTime}|${row.durationMinutes}`).join("||"),
+  ]);
+
+  async function loadDrafts(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+
+    if (!programCode || !termName) {
+      setError("Please select both academic identity and term.");
+      setMessage("");
+      setDrafts([]);
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const params = new URLSearchParams({
+        programCode,
+        termName,
+      });
+
+      const res = await fetch(`/api/offerings/drafts?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const json: DraftResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load draft offerings.");
+      }
+
+      setMatchedProgramCodes(json.matchedProgramCodes || []);
+      setDrafts(json.drafts || []);
+
+      if ((json.drafts || []).length === 0) {
+        setMessage("No draft offerings found for the selected academic identity and term.");
+      } else {
+        setMessage("");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load draft offerings.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteDraft(id: number) {
+    const ok = window.confirm("Delete this full draft offering?");
+    if (!ok) return;
+
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(`/api/offerings/drafts/${id}`, {
+        method: "DELETE",
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to delete draft offering.");
+      }
+
+      setMessage("Draft offering deleted successfully.");
+      await loadDrafts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete draft offering.");
+    }
+  }
+
+  async function deleteDraftCourse(offeredCourseId: number) {
+    const ok = window.confirm(
+      "Delete this course row? If it is a primary section, linked secondaries under it will also be removed."
+    );
+    if (!ok) return;
+
+    setDeletingCourseId(offeredCourseId);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(`/api/offerings/drafts/courses/${offeredCourseId}`, {
+        method: "DELETE",
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to delete draft course.");
+      }
+
+      if (slotEditorCourseId === offeredCourseId) {
+        closeSlotEditor();
+      }
+
+      setMessage("Draft course deleted successfully.");
+      await loadDrafts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete draft course.");
+    } finally {
+      setDeletingCourseId(null);
+    }
+  }
+
+  async function deleteSlot(slotId: number) {
+    const ok = window.confirm("Delete this slot?");
+    if (!ok) return;
+
+    setDeletingSlotId(slotId);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(`/api/offerings/drafts/slots/${slotId}`, {
+        method: "DELETE",
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to delete slot.");
+      }
+
+      if (editingSlotId === slotId) {
+        closeSlotEditor();
+      }
+
+      setMessage("Slot deleted successfully.");
+      await loadDrafts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete slot.");
+    } finally {
+      setDeletingSlotId(null);
+    }
+  }
+
+  async function publishDraft(id: number) {
+    const ok = window.confirm(
+      "Move this offering to BUFFER_READY so it becomes ready for the faculty-choice phase?"
+    );
+    if (!ok) return;
+
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(`/api/offerings/drafts/${id}/publish`, {
+        method: "POST",
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        const blockerText =
+          Array.isArray(json.blockers) && json.blockers.length > 0
+            ? `\n\nBlockers:\n- ${json.blockers.join("\n- ")}`
+            : "";
+
+        throw new Error(
+          (json.error || "Failed to move offering to BUFFER_READY.") + blockerText
+        );
+      }
+
+      setMessage(
+        "Offering moved to BUFFER_READY. It is now prepared for the upcoming faculty-choice phase."
+      );
+      await loadDrafts();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to move offering to BUFFER_READY."
+      );
+    }
+  }
+
+  async function saveAttachBatch() {
+    if (!attachEditorCourseId || !attachProgramCode || !attachBatchCode) {
+      setError("Please choose both academic identity and batch.");
+      setMessage("");
+      return;
+    }
+
+    setSavingAttach(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/offerings/drafts/attach-batches", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          offeredCourseId: attachEditorCourseId,
+          programCode: attachProgramCode,
+          batchCode: attachBatchCode,
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to attach batch.");
+      }
+
+      setMessage("Batch attached successfully.");
+      closeAttachEditor();
+      await loadDrafts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to attach batch.");
+    } finally {
+      setSavingAttach(false);
+    }
+  }
+
+  function updateSlotRow(index: number, patch: Partial<SlotEditorRow>) {
+    setSlotRows((prev) =>
+      prev.map((row, i) => (i === index ? { ...row, ...patch } : row))
+    );
+  }
+
+  async function saveSlot() {
+    if (!slotEditorCourseId) {
+      setError("No offered course selected for slot scheduling.");
+      setMessage("");
+      return;
+    }
+
+    if (slotRows.length === 0) {
+      setError("No slot rows are ready to save.");
+      setMessage("");
+      return;
+    }
+
+    setSavingSlot(true);
+    setError("");
+    setMessage("");
+
+    try {
+      if (editingSlotId) {
+        const row = slotRows[0];
+        const endTime = addMinutesToTime(row.startTime, Number(row.durationMinutes || 60));
+
+        if (!row.roomId) {
+          throw new Error("Please select a room for the slot.");
+        }
+
+        const res = await fetch(`/api/offerings/drafts/slots/${editingSlotId}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            dayOfWeek: row.dayOfWeek,
+            startTime: row.startTime,
+            endTime,
+            roomId: Number(row.roomId),
+            slotType: "CLASS",
+          }),
+        });
+
+        const json = await res.json();
+
+        if (!res.ok) {
+          throw new Error(json.error || "Failed to update slot.");
+        }
+
+        await loadDrafts();
+        setMessage("Slot updated successfully.");
+        closeSlotEditor();
+        return;
+      }
+
+      for (let i = 0; i < slotRows.length; i += 1) {
+        const row = slotRows[i];
+        const endTime = addMinutesToTime(row.startTime, Number(row.durationMinutes || 60));
+
+        if (!row.roomId) {
+          throw new Error(`Please select a room for slot ${i + 1}.`);
+        }
+
+        const res = await fetch("/api/offerings/drafts/slots/add", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            offeredCourseId: slotEditorCourseId,
+            dayOfWeek: row.dayOfWeek,
+            startTime: row.startTime,
+            endTime,
+            roomId: Number(row.roomId),
+          }),
+        });
+
+        const json = await res.json();
+
+        if (!res.ok) {
+          throw new Error(json.error || `Failed to save slot ${i + 1}.`);
+        }
+      }
+
+      await loadDrafts();
+      setMessage(`${slotRows.length} slot(s) saved successfully.`);
+      closeSlotEditor();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save slots.");
+    } finally {
+      setSavingSlot(false);
+    }
+  }
+
+  const draftCount = useMemo(() => drafts.length, [drafts]);
+
+  return (
+    <AdminLayout title="Draft Offerings">
+      <div className="space-y-6">
+        <form onSubmit={loadDrafts} className="space-y-4">
+          <ProgramTermSelector
+            programs={programs}
+            programCode={programCode}
+            setProgramCode={setProgramCode}
+            loadingPrograms={loadingPrograms}
+            terms={terms}
+            termName={termName}
+            setTermName={setTermName}
+            loadingTerms={loadingTerms}
+          />
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="submit"
+              disabled={loading || !programCode || !termName}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+            >
+              {loading ? "Loading..." : "Load Drafts"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void loadAllRooms()}
+              disabled={roomsLoading}
+              className="rounded-xl bg-slate-200 px-4 py-3 text-sm font-medium text-slate-800 hover:bg-slate-300 disabled:opacity-60"
+            >
+              {roomsLoading ? "Loading Rooms..." : "Reload Rooms"}
+            </button>
+
+            <a
+              href="/admin/rooms"
+              className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Open Rooms Setup
+            </a>
+
+            <a
+              href={`/admin/co-offering-setup?termName=${encodeURIComponent(termName || "")}&primaryProgramCode=${encodeURIComponent(programCode || "")}`}
+              className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white hover:bg-indigo-700"
+            >
+              Open Co-offering Setup
+            </a>
+          </div>
+        </form>
+
+        {configuredRoomCount === 0 && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            No active room is available yet. Please open Rooms Setup and create at least one active room before slot assignment.
+          </div>
+        )}
+
+        {combinedError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 whitespace-pre-wrap">
+            {combinedError}
+          </div>
+        )}
+
+        {message && (
+          <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {message}
+          </div>
+        )}
+
+        {matchedProgramCodes.length > 0 && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+            Draft lookup matched program(s): {matchedProgramCodes.join(", ")}
+          </div>
+        )}
+
+        {draftCount > 0 && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+            Section-group view active. Each row below is one operational teaching section.
+          </div>
+        )}
+
+        <div className="space-y-4">
+          {drafts.map((draft) => (
+            <div
+              key={draft.id}
+              className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+            >
+              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">
+                    {draft.programs.short_name} — {draft.academic_terms.name}
+                  </h3>
+                  <p className="text-sm text-slate-500">
+                    Draft ID: {draft.id} | Status: {draft.status}
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => publishDraft(draft.id)}
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+                  >
+                    Open for Faculty Choice
+                  </button>
+
+                  <button
+                    onClick={() => deleteDraft(draft.id)}
+                    className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+                  >
+                    Delete Draft
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="border-b px-3 py-3 text-left">Section Group</th>
+                      <th className="border-b px-3 py-3 text-left">All Batches</th>
+                      <th className="border-b px-3 py-3 text-left">Faculty</th>
+                      <th className="border-b px-3 py-3 text-left">Schedule</th>
+                      <th className="border-b px-3 py-3 text-left">Action</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {draft.section_groups.map((group) => {
+                      const currentSlotCount = group.primary_course.offered_course_slots.length;
+                      const remainingCount = editingSlotId
+                        ? 1
+                        : getRemainingSlotCount(currentSlotCount, slotWeeklyTarget);
+
+                      return (
+                        <Fragment key={group.primary_course.id}>
+                          <tr>
+                            <td className="border-b px-3 py-3 align-top">
+                              <div className="space-y-3">
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                    Primary
+                                  </div>
+                                  <div className="mt-1 font-medium text-slate-900">
+                                    {group.primary_course.master_course.course_code} — {group.primary_course.master_course.course_title}
+                                  </div>
+                                  <div className="mt-1 text-xs text-slate-600">
+                                    Program: {group.primary_course.master_course.program_code}
+                                  </div>
+                                  <div className="mt-1 text-xs text-slate-600">
+                                    Section: {group.primary_course.section}
+                                  </div>
+                                  <div className="mt-2 text-xs text-slate-600">
+                                    Batches:{" "}
+                                    {group.primary_course.offered_course_batches
+                                      .map((b) => b.batches.batch_code)
+                                      .join(", ") || "-"}
+                                  </div>
+
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openAttachEditor(
+                                          group.primary_course.id,
+                                          draft.programs.short_name
+                                        )
+                                      }
+                                      className="rounded-lg border px-2 py-1 text-xs font-medium text-slate-700 hover:bg-white"
+                                    >
+                                      Add Batch
+                                    </button>
+
+                                    <a
+                                      href={`/admin/co-offering-setup?termName=${encodeURIComponent(termName || draft.academic_terms.name)}&primaryProgramCode=${encodeURIComponent(programCode || draft.programs.short_name)}&primaryOfferedCourseId=${group.primary_course.id}`}
+                                      className="rounded-lg border px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-white"
+                                    >
+                                      Manage Co-offering
+                                    </a>
+                                  </div>
+
+                                  {attachEditorCourseId === group.primary_course.id && (
+                                    <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                                      <div className="grid gap-3 md:grid-cols-2">
+                                        <div>
+                                          <label className="mb-2 block text-xs font-medium text-slate-700">
+                                            Academic Identity
+                                          </label>
+                                          <select
+                                            value={attachProgramCode}
+                                            onChange={(e) => {
+                                              setAttachProgramCode(e.target.value);
+                                              setAttachBatchCode("");
+                                              void loadAttachBatchOptions(e.target.value);
+                                            }}
+                                            className="w-full rounded-lg border px-3 py-2 text-sm"
+                                          >
+                                            <option value="">Select program</option>
+                                            {programs.map((item, index) => (
+                                              <option
+                                                key={`${item.programCode}-${index}`}
+                                                value={item.programCode}
+                                              >
+                                                {item.displayLabel}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+
+                                        <div>
+                                          <label className="mb-2 block text-xs font-medium text-slate-700">
+                                            Batch
+                                          </label>
+                                          <select
+                                            value={attachBatchCode}
+                                            onChange={(e) => setAttachBatchCode(e.target.value)}
+                                            className="w-full rounded-lg border px-3 py-2 text-sm"
+                                            disabled={!attachProgramCode || attachOptionsLoading}
+                                          >
+                                            <option value="">
+                                              {attachOptionsLoading ? "Loading batches..." : "Select batch"}
+                                            </option>
+                                            {attachBatchOptions.map((item) => (
+                                              <option key={`attach-${item.id}`} value={item.batchCode}>
+                                                {item.batchCode}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      </div>
+
+                                      <div className="mt-3 flex gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={saveAttachBatch}
+                                          disabled={savingAttach || !attachProgramCode || !attachBatchCode}
+                                          className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                                        >
+                                          {savingAttach ? "Saving..." : "Save Batch"}
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={closeAttachEditor}
+                                          className="rounded-lg bg-slate-200 px-3 py-2 text-xs font-medium text-slate-800 hover:bg-slate-300"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {group.linked_courses.length > 0 && (
+                                  <div className="space-y-2">
+                                    {group.linked_courses.map((linked) => (
+                                      <div
+                                        key={linked.id}
+                                        className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"
+                                      >
+                                        <div className="text-xs font-semibold uppercase tracking-wide text-indigo-600">
+                                          Linked Secondary
+                                        </div>
+                                        <div className="mt-1 font-medium text-slate-900">
+                                          {linked.master_course.course_code} — {linked.master_course.course_title}
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-600">
+                                          Program: {linked.master_course.program_code}
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-600">
+                                          Section: {linked.section}
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-600">
+                                          Batches:{" "}
+                                          {linked.offered_course_batches
+                                            .map((b) => b.batches.batch_code)
+                                            .join(", ") || "-"}
+                                        </div>
+
+                                        <div className="mt-2 flex flex-wrap gap-2">
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              openAttachEditor(linked.id, linked.master_course.program_code)
+                                            }
+                                            className="rounded-lg border px-2 py-1 text-xs font-medium text-slate-700 hover:bg-white"
+                                          >
+                                            Add Batch
+                                          </button>
+
+                                          <a
+                                            href={`/admin/co-offering-setup?termName=${encodeURIComponent(termName || draft.academic_terms.name)}&primaryProgramCode=${encodeURIComponent(programCode || draft.programs.short_name)}&primaryOfferedCourseId=${group.primary_course.id}`}
+                                            className="rounded-lg border px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-white"
+                                          >
+                                            Manage Co-offering
+                                          </a>
+
+                                          <button
+                                            type="button"
+                                            onClick={() => deleteDraftCourse(linked.id)}
+                                            disabled={deletingCourseId === linked.id}
+                                            className="rounded-lg border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+                                          >
+                                            {deletingCourseId === linked.id ? "Deleting..." : "Remove Link"}
+                                          </button>
+                                        </div>
+
+                                        {attachEditorCourseId === linked.id && (
+                                          <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                                            <div className="grid gap-3 md:grid-cols-2">
+                                              <div>
+                                                <label className="mb-2 block text-xs font-medium text-slate-700">
+                                                  Academic Identity
+                                                </label>
+                                                <select
+                                                  value={attachProgramCode}
+                                                  onChange={(e) => {
+                                                    setAttachProgramCode(e.target.value);
+                                                    setAttachBatchCode("");
+                                                    void loadAttachBatchOptions(e.target.value);
+                                                  }}
+                                                  className="w-full rounded-lg border px-3 py-2 text-sm"
+                                                >
+                                                  <option value="">Select program</option>
+                                                  {programs.map((item, index) => (
+                                                    <option
+                                                      key={`${item.programCode}-${index}`}
+                                                      value={item.programCode}
+                                                    >
+                                                      {item.displayLabel}
+                                                    </option>
+                                                  ))}
+                                                </select>
+                                              </div>
+
+                                              <div>
+                                                <label className="mb-2 block text-xs font-medium text-slate-700">
+                                                  Batch
+                                                </label>
+                                                <select
+                                                  value={attachBatchCode}
+                                                  onChange={(e) => setAttachBatchCode(e.target.value)}
+                                                  className="w-full rounded-lg border px-3 py-2 text-sm"
+                                                  disabled={!attachProgramCode || attachOptionsLoading}
+                                                >
+                                                  <option value="">
+                                                    {attachOptionsLoading ? "Loading batches..." : "Select batch"}
+                                                  </option>
+                                                  {attachBatchOptions.map((item) => (
+                                                    <option key={`attach-linked-${item.id}`} value={item.batchCode}>
+                                                      {item.batchCode}
+                                                    </option>
+                                                  ))}
+                                                </select>
+                                              </div>
+                                            </div>
+
+                                            <div className="mt-3 flex gap-2">
+                                              <button
+                                                type="button"
+                                                onClick={saveAttachBatch}
+                                                disabled={savingAttach || !attachProgramCode || !attachBatchCode}
+                                                className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                                              >
+                                                {savingAttach ? "Saving..." : "Save Batch"}
+                                              </button>
+
+                                              <button
+                                                type="button"
+                                                onClick={closeAttachEditor}
+                                                className="rounded-lg bg-slate-200 px-3 py-2 text-xs font-medium text-slate-800 hover:bg-slate-300"
+                                              >
+                                                Cancel
+                                              </button>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+
+                            <td className="border-b px-3 py-3 align-top">
+                              {group.section_batch_codes.join(", ") || "-"}
+                            </td>
+
+                            <td className="border-b px-3 py-3 align-top">
+                              {group.primary_course.offered_course_teachers.length === 0
+                                ? "-"
+                                : group.primary_course.offered_course_teachers
+                                    .map((t) => t.teachers?.teacher_code || "-")
+                                    .join(", ")}
+                            </td>
+
+                            <td className="border-b px-3 py-3 align-top">
+                              {group.primary_course.offered_course_slots.length === 0 ? (
+                                "-"
+                              ) : (
+                                <div className="space-y-2">
+                                  {group.primary_course.offered_course_slots.map((slot) => (
+                                    <div
+                                      key={slot.id}
+                                      className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+                                    >
+                                      <div className="text-xs font-medium text-slate-800">
+                                        {slot.day_of_week} {slot.start_time}-{slot.end_time}
+                                      </div>
+                                      <div className="mt-1 text-xs text-slate-600">
+                                        {roomLabel(slot.rooms)}
+                                      </div>
+                                      <div className="mt-2 flex gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            openSlotEditorForEdit(group.primary_course.id, slot)
+                                          }
+                                          className="rounded-lg border px-2 py-1 text-xs font-medium text-slate-700 hover:bg-white"
+                                        >
+                                          Edit
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => deleteSlot(slot.id)}
+                                          disabled={deletingSlotId === slot.id}
+                                          className="rounded-lg border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+                                        >
+                                          {deletingSlotId === slot.id ? "Deleting..." : "Delete"}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+
+                            <td className="border-b px-3 py-3 align-top">
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => openSlotEditorForNew(group.primary_course.id)}
+                                  disabled={currentSlotCount >= 3}
+                                  className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                                >
+                                  {currentSlotCount >= 3
+                                    ? "Max 3 Reached"
+                                    : currentSlotCount > 0
+                                      ? "Add Remaining Slot(s)"
+                                      : "Add Slot(s)"}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => deleteDraftCourse(group.primary_course.id)}
+                                  disabled={deletingCourseId === group.primary_course.id}
+                                  className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60"
+                                >
+                                  {deletingCourseId === group.primary_course.id ? "Deleting..." : "Delete Section"}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+
+                          {slotEditorCourseId === group.primary_course.id && (
+                            <tr>
+                              <td colSpan={5} className="bg-slate-50 px-4 py-4">
+                                <div className="mb-4 grid gap-4 md:grid-cols-3">
+                                  <div>
+                                    <label className="mb-2 block text-sm font-medium text-slate-700">
+                                      Weekly Plan
+                                    </label>
+                                    <select
+                                      value={slotWeeklyTarget}
+                                      onChange={(e) => setSlotWeeklyTarget(e.target.value)}
+                                      className="w-full rounded-xl border px-4 py-3"
+                                      disabled={Boolean(editingSlotId)}
+                                    >
+                                      {WEEKLY_CLASS_OPTIONS.map((item) => (
+                                        <option key={item.value} value={item.value}>
+                                          {item.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+
+                                  <div>
+                                    <label className="mb-2 block text-sm font-medium text-slate-700">
+                                      Current Saved Slots
+                                    </label>
+                                    <input
+                                      value={`${currentSlotCount}`}
+                                      readOnly
+                                      className="w-full rounded-xl border bg-slate-100 px-4 py-3"
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label className="mb-2 block text-sm font-medium text-slate-700">
+                                      Rows To Fill Now
+                                    </label>
+                                    <input
+                                      value={editingSlotId ? "1" : `${remainingCount}`}
+                                      readOnly
+                                      className="w-full rounded-xl border bg-slate-100 px-4 py-3"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="space-y-4">
+                                  {slotRows.map((row, index) => {
+                                    const endTime = addMinutesToTime(
+                                      row.startTime,
+                                      Number(row.durationMinutes || 60)
+                                    );
+
+                                    return (
+                                      <div
+                                        key={index}
+                                        className="rounded-2xl border border-slate-200 bg-white p-4"
+                                      >
+                                        <div className="mb-3 text-sm font-semibold text-slate-800">
+                                          {editingSlotId ? "Edit Slot" : `Slot ${index + 1}`}
+                                        </div>
+
+                                        <div className="grid gap-4 md:grid-cols-6">
+                                          <div>
+                                            <label className="mb-2 block text-sm font-medium text-slate-700">
+                                              Day
+                                            </label>
+                                            <select
+                                              value={row.dayOfWeek}
+                                              onChange={(e) =>
+                                                updateSlotRow(index, { dayOfWeek: e.target.value })
+                                              }
+                                              className="w-full rounded-xl border px-4 py-3"
+                                            >
+                                              {DAYS.map((day) => (
+                                                <option key={day} value={day}>
+                                                  {day}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          </div>
+
+                                          <div>
+                                            <label className="mb-2 block text-sm font-medium text-slate-700">
+                                              Start Time
+                                            </label>
+                                            <input
+                                              type="time"
+                                              value={row.startTime}
+                                              onChange={(e) =>
+                                                updateSlotRow(index, { startTime: e.target.value })
+                                              }
+                                              className="w-full rounded-xl border px-4 py-3"
+                                            />
+                                          </div>
+
+                                          <div>
+                                            <label className="mb-2 block text-sm font-medium text-slate-700">
+                                              Duration
+                                            </label>
+                                            <select
+                                              value={row.durationMinutes}
+                                              onChange={(e) =>
+                                                updateSlotRow(index, {
+                                                  durationMinutes: e.target.value,
+                                                })
+                                              }
+                                              className="w-full rounded-xl border px-4 py-3"
+                                            >
+                                              {DURATIONS.map((item) => (
+                                                <option key={item.value} value={item.value}>
+                                                  {item.label}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          </div>
+
+                                          <div>
+                                            <label className="mb-2 block text-sm font-medium text-slate-700">
+                                              End Time
+                                            </label>
+                                            <input
+                                              value={endTime}
+                                              readOnly
+                                              className="w-full rounded-xl border bg-slate-100 px-4 py-3"
+                                            />
+                                          </div>
+
+                                          <div className="md:col-span-2">
+                                            <label className="mb-2 block text-sm font-medium text-slate-700">
+                                              Available Room
+                                            </label>
+                                            <select
+                                              value={row.roomId}
+                                              onChange={(e) =>
+                                                updateSlotRow(index, { roomId: e.target.value })
+                                              }
+                                              className="w-full rounded-xl border px-4 py-3"
+                                              disabled={row.loadingRooms || row.availableRooms.length === 0}
+                                            >
+                                              {row.availableRooms.length === 0 ? (
+                                                <option value="">No available room</option>
+                                              ) : (
+                                                row.availableRooms.map((room) => (
+                                                  <option key={room.id} value={room.id}>
+                                                    {roomLabel(room)}
+                                                  </option>
+                                                ))
+                                              )}
+                                            </select>
+                                          </div>
+                                        </div>
+
+                                        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                                          {row.loadingRooms
+                                            ? "Checking room availability..."
+                                            : row.availableRooms.length === 0
+                                              ? "No room available for this day/time."
+                                              : `${row.availableRooms.length} room(s) available for this slot.`}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+
+                                <div className="mt-4 flex items-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={saveSlot}
+                                    disabled={
+                                      savingSlot ||
+                                      slotRows.length === 0 ||
+                                      slotRows.some(
+                                        (row) =>
+                                          row.loadingRooms ||
+                                          row.availableRooms.length === 0 ||
+                                          !row.roomId
+                                      )
+                                    }
+                                    className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                                  >
+                                    {savingSlot
+                                      ? editingSlotId
+                                        ? "Updating..."
+                                        : "Saving..."
+                                      : editingSlotId
+                                        ? "Update Slot"
+                                        : slotRows.length > 1
+                                          ? "Save All Slots"
+                                          : "Save Slot"}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={closeSlotEditor}
+                                    className="rounded-xl bg-slate-200 px-4 py-3 text-sm font-medium text-slate-800 hover:bg-slate-300"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+
+                    {draft.section_groups.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
+                          No section groups found in this draft.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+
+          {drafts.length === 0 && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm">
+              No draft offerings found for the selected academic identity and term.
+            </div>
+          )}
+        </div>
+      </div>
+    </AdminLayout>
+  );
+}
+
+
+===== FILE: prisma\schema.prisma =====
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model academic_terms {
+  id                          Int                           @id @default(autoincrement())
+  name                        String                        @unique @db.VarChar(100)
+  year                        Int
+  term_type                   String                        @db.VarChar(30)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  faculty_course_selections   faculty_course_selections[]
+  offerings                   offerings[]
+}
+
+model batch_completed_courses {
+  id                Int             @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int?
+  course_code       String          @db.VarChar(100)
+  course_title      String          @db.VarChar(300)
+  normalized_title  String          @db.VarChar(300)
+  credit            Float
+  grade             String?         @db.VarChar(20)
+  source_student_id String?         @db.VarChar(100)
+  source_file_name  String?         @db.VarChar(300)
+  academic_terms    academic_terms? @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batch_current_registrations {
+  id                Int            @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int
+  course_code       String         @db.VarChar(100)
+  course_title      String         @db.VarChar(300)
+  normalized_title  String         @db.VarChar(300)
+  credit            Float
+  source_student_id String?        @db.VarChar(100)
+  source_file_name  String?        @db.VarChar(300)
+  academic_terms    academic_terms @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches        @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batches {
+  id                          Int                           @id @default(autoincrement())
+  program_id                  Int
+  batch_code                  String                        @db.VarChar(100)
+  admission_term              String?                       @db.VarChar(100)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  programs                    programs                      @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_course_batches      offered_course_batches[]
+
+  @@unique([program_id, batch_code], map: "uq_program_batch")
+}
+
+model departments {
+  id         Int        @id @default(autoincrement())
+  name       String     @unique @db.VarChar(200)
+  short_name String     @unique @db.VarChar(50)
+  programs   programs[]
+  teachers   teachers[]
+}
+
+model master_courses {
+  id               Int               @id @default(autoincrement())
+  program_id       Int
+  course_code      String
+  course_title     String
+  normalized_title String
+  credit           Float
+  course_type      String
+  level_term       String?
+  group_name       String?
+  is_active        Boolean           @default(true)
+  created_at       DateTime          @default(now())
+  curriculum_key   String?
+  updated_at       DateTime          @default(now()) @updatedAt
+  program          programs          @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  offered_courses  offered_courses[]
+
+  @@unique([program_id, course_code])
+  @@unique([curriculum_key, course_code])
+  @@index([curriculum_key])
+}
+
+model offered_course_batches {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  batch_id          Int
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_slots {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  day_of_week       String          @db.VarChar(20)
+  start_time        String          @db.VarChar(10)
+  end_time          String          @db.VarChar(10)
+  room_id           Int
+  slot_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rooms             rooms           @relation(fields: [room_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_teachers {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  assigned_credit   Float
+  load_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_courses {
+  id                        Int                         @id @default(autoincrement())
+  offering_id               Int
+  master_course_id          Int
+  section                   String                      @db.VarChar(20)
+  is_cooffered              Boolean?                    @default(false)
+  primary_offered_course_id Int?
+  notes                     String?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_batches    offered_course_batches[]
+  offered_course_slots      offered_course_slots[]
+  offered_course_teachers   offered_course_teachers[]
+  master_courses            master_courses              @relation(fields: [master_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offerings                 offerings                   @relation(fields: [offering_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+    offered_course_manual_cooffers offered_course_manual_cooffers[]
+  primary_offered_course    offered_courses?            @relation("offered_course_cooffer_links", fields: [primary_offered_course_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  secondary_offered_courses offered_courses[]           @relation("offered_course_cooffer_links")
+
+  @@index([offering_id, section], map: "ix_offered_courses_offering_section")
+  @@index([primary_offered_course_id], map: "ix_offered_courses_primary_offered_course_id")
+}
+
+model offerings {
+  id                  Int               @id @default(autoincrement())
+  academic_term_id    Int
+  program_id          Int
+  prepared_by_user_id Int
+  status              String            @db.VarChar(30)
+  created_at          DateTime?         @default(now()) @db.Timestamptz(6)
+  offered_courses     offered_courses[]
+  academic_terms      academic_terms    @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users               users             @relation(fields: [prepared_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  programs            programs          @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_course_selections {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  academic_term_id  Int
+  priority_order    Int?
+  status            String          @db.VarChar(30)
+  selected_at       DateTime?       @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?       @default(now()) @updatedAt @db.Timestamptz(6)
+  confirmed_at      DateTime?       @db.Timestamptz(6)
+  academic_terms    academic_terms  @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([offered_course_id, teacher_id], map: "uq_faculty_course_selection")
+  @@index([teacher_id], map: "ix_faculty_course_selections_teacher_id")
+  @@index([academic_term_id], map: "ix_faculty_course_selections_term_id")
+  @@index([status], map: "ix_faculty_course_selections_status")
+  @@index([teacher_id, academic_term_id], map: "ix_faculty_course_selections_teacher_term")
+}
+
+model programs {
+  id             Int              @id @default(autoincrement())
+  department_id  Int
+  name           String           @db.VarChar(200)
+  short_name     String           @db.VarChar(50)
+  batches        batches[]
+  master_courses master_courses[]
+  offerings      offerings[]
+  departments    departments      @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([department_id, name], map: "uq_program_department_name")
+}
+
+model rooms {
+  id                   Int                    @id @default(autoincrement())
+  room_code            String                 @unique @db.VarChar(100)
+  room_type            String                 @db.VarChar(50)
+  capacity             Int?
+  is_active            Boolean?
+  offered_course_slots offered_course_slots[]
+}
+
+model student_report_logs {
+  id                        Int       @id @default(autoincrement())
+  student_id                String    @db.VarChar(100)
+  student_name              String?   @db.VarChar(200)
+  uploaded_by_user_id       Int
+  transcript_filename       String?   @db.VarChar(300)
+  registration_filename     String?   @db.VarChar(300)
+  latest_completed_semester String?   @db.VarChar(100)
+  registration_semester     String?   @db.VarChar(100)
+  total_earned_credits      Float?
+  gpa                       Float?
+  generated_excel_path      String?   @db.VarChar(500)
+  created_at                DateTime? @default(now()) @db.Timestamptz(6)
+  users                     users     @relation(fields: [uploaded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([id], map: "ix_student_report_logs_id")
+  @@index([student_id], map: "ix_student_report_logs_student_id")
+}
+
+model teachers {
+  id                        Int                         @id @default(autoincrement())
+  department_id             Int
+  teacher_code              String                      @unique @db.VarChar(100)
+  full_name                 String                      @db.VarChar(200)
+  designation               String?                     @db.VarChar(150)
+  email                     String?                     @db.VarChar(200)
+  phone                     String?                     @db.VarChar(50)
+  seniority_level           Int?
+  is_active                 Boolean?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_teachers   offered_course_teachers[]
+  departments               departments                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                     users[]
+
+  @@index([department_id], map: "ix_teachers_department_id")
+  @@index([seniority_level], map: "ix_teachers_seniority_level")
+}
+
+model users {
+  id                  Int                   @id @default(autoincrement())
+  username            String                @unique(map: "ix_users_username") @db.VarChar(100)
+  full_name           String                @db.VarChar(200)
+  password_hash       String
+  role                String                @db.VarChar(50)
+  is_active           Boolean?
+  teacher_id          Int?
+  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  offerings           offerings[]
+  student_report_logs student_report_logs[]
+  teachers            teachers?             @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  // ✅ ADD THIS LINE ONLY
+  faculty_login_sessions FacultyLoginSession[]
+
+  @@index([id], map: "ix_users_id")
+}
+
+model academic_catalog_entries {
+  id                 Int      @id @default(autoincrement())
+  department_code    String
+  department_name    String
+  program_code       String   @unique
+  program_title      String
+  program_type       String
+  study_shift        String
+  curriculum_version String
+  student_id_suffix  String?  @unique
+  display_label      String
+  is_active          Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @default(now()) @updatedAt
+  curriculum_key     String?
+
+  @@index([department_code])
+  @@index([program_type])
+  @@index([study_shift])
+  @@index([curriculum_version])
+  @@index([curriculum_key])
+}
+model SystemSetting {
+  id               Int      @id @default(autoincrement())
+  settingKey       String   @unique
+  settingValue     String
+  updatedByUserId  Int?
+  updatedAt        DateTime @updatedAt
+}
+
+model FacultyLoginSession {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  sessionToken  String   @unique
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+
+  user          users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model offered_course_manual_cooffers {
+  id                  Int             @id @default(autoincrement())
+  offered_course_id   Int
+  target_program_code String?         @db.VarChar(100)
+  manual_course_code  String          @db.VarChar(100)
+  note                String?         @db.VarChar(300)
+  created_at          DateTime        @default(now())
+  offered_courses     offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([offered_course_id], map: "ix_offered_course_manual_cooffers_offered_course_id")
+  @@index([target_program_code], map: "ix_offered_course_manual_cooffers_target_program_code")
+}
+model faculty_login_sessions {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  teacher_id    Int?
+  session_token String   @unique @db.VarChar(191)
+  created_at    DateTime @default(now())
+  expires_at    DateTime
+  warned_at     DateTime?
+  revoked_at    DateTime?
+
+  @@index([user_id], map: "ix_faculty_login_sessions_user_id")
+  @@index([teacher_id], map: "ix_faculty_login_sessions_teacher_id")
+  @@index([expires_at], map: "ix_faculty_login_sessions_expires_at")
+}
+
+model notifications {
+  id                Int      @id @default(autoincrement())
+  recipient_user_id Int?
+  recipient_teacher_id Int?
+  event_type        String   @db.VarChar(100)
+  title             String   @db.VarChar(200)
+  message           String   @db.Text
+  is_read           Boolean  @default(false)
+  created_by_user_id Int?
+  created_at        DateTime @default(now())
+  read_at           DateTime?
+
+  @@index([recipient_user_id], map: "ix_notifications_recipient_user_id")
+  @@index([recipient_teacher_id], map: "ix_notifications_recipient_teacher_id")
+  @@index([event_type], map: "ix_notifications_event_type")
+  @@index([is_read], map: "ix_notifications_is_read")
+}

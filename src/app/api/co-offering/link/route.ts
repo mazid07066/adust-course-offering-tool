@@ -3,9 +3,16 @@ import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
+const CO_OFFERING_LINK_ALLOWED_STATUSES = [
+  "DRAFT",
+  "BUFFER_READY",
+  "FACULTY_CHOICE_BUFFER",
+];
+
 export async function POST(req: NextRequest) {
   try {
-    await requireCoordinatorOrAdminApi();
+    const guard = await requireCoordinatorOrAdminApi();
+    if (guard instanceof Response) return guard;
 
     const body = await req.json();
 
@@ -20,7 +27,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!Number.isFinite(secondaryOfferedCourseId) || secondaryOfferedCourseId <= 0) {
+    if (
+      !Number.isFinite(secondaryOfferedCourseId) ||
+      secondaryOfferedCourseId <= 0
+    ) {
       clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         { ok: false, error: "Valid secondaryOfferedCourseId is required." },
@@ -42,6 +52,7 @@ export async function POST(req: NextRequest) {
         offerings: {
           include: {
             academic_terms: true,
+            programs: true,
           },
         },
         master_courses: {
@@ -58,6 +69,7 @@ export async function POST(req: NextRequest) {
         offerings: {
           include: {
             academic_terms: true,
+            programs: true,
           },
         },
         master_courses: {
@@ -84,18 +96,43 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (primary.offerings.status !== "DRAFT" || secondary.offerings.status !== "DRAFT") {
+    if (
+      !CO_OFFERING_LINK_ALLOWED_STATUSES.includes(primary.offerings.status) ||
+      !CO_OFFERING_LINK_ALLOWED_STATUSES.includes(secondary.offerings.status)
+    ) {
       clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
-        { ok: false, error: "Both sections must belong to DRAFT offerings." },
+        {
+          ok: false,
+          error:
+            "Both sections must belong to offerings in DRAFT, BUFFER_READY, or FACULTY_CHOICE_BUFFER status.",
+        },
         { status: 400 }
       );
     }
 
-    if (primary.offerings.academic_term_id !== secondary.offerings.academic_term_id) {
+    if (
+      primary.offerings.academic_term_id !== secondary.offerings.academic_term_id
+    ) {
       clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
-        { ok: false, error: "Primary and secondary sections must be in the same academic term." },
+        {
+          ok: false,
+          error:
+            "Primary and secondary sections must be in the same academic term.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (primary.offerings.id === secondary.offerings.id) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Primary and secondary sections should come from different offerings/programs for co-offering.",
+        },
         { status: 400 }
       );
     }
@@ -103,7 +140,11 @@ export async function POST(req: NextRequest) {
     if (primary.primary_offered_course_id) {
       clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
-        { ok: false, error: "The selected primary section is already a linked secondary section." },
+        {
+          ok: false,
+          error:
+            "The selected primary section is already a linked secondary section.",
+        },
         { status: 400 }
       );
     }
@@ -111,7 +152,26 @@ export async function POST(req: NextRequest) {
     if (secondary.primary_offered_course_id) {
       clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
-        { ok: false, error: "The selected secondary section is already linked under another primary." },
+        {
+          ok: false,
+          error:
+            "The selected secondary section is already linked under another primary.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const primaryCredit = Number(primary.master_courses.credit || 0);
+    const secondaryCredit = Number(secondary.master_courses.credit || 0);
+
+    if (primaryCredit !== secondaryCredit) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Primary and secondary sections must have the same credit value for co-offering.",
+        },
         { status: 400 }
       );
     }
@@ -138,15 +198,28 @@ export async function POST(req: NextRequest) {
     });
 
     clearReportingCacheWithLog("offering/reporting data changed");
+
     return NextResponse.json({
       ok: true,
       message: "Co-offering link created successfully.",
+      link: {
+        primaryOfferedCourseId: primary.id,
+        secondaryOfferedCourseId: secondary.id,
+        termName: primary.offerings.academic_terms.name,
+        primaryProgramCode: primary.offerings.programs.short_name,
+        secondaryProgramCode: secondary.offerings.programs.short_name,
+        primaryCourseCode: primary.master_courses.course_code,
+        secondaryCourseCode: secondary.master_courses.course_code,
+      },
     });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to create co-offering link.";
+      error instanceof Error
+        ? error.message
+        : "Failed to create co-offering link.";
 
     clearReportingCacheWithLog("offering/reporting data changed");
+
     return NextResponse.json(
       {
         ok: false,
