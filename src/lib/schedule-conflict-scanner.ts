@@ -38,6 +38,28 @@ export type ScheduleConflictItem = {
   };
 };
 
+type OperationalGroup = {
+  groupId: number;
+  offeringId: number;
+  termName: string;
+  programCode: string;
+  status: string;
+  offeredCourseId: number;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  slots: {
+    id: number;
+    dayOfWeek: string;
+    startTime: string;
+    endTime: string;
+    roomId: number;
+    roomCode: string;
+  }[];
+  batchCodes: string[];
+  teacherCodes: string[];
+};
+
 function timeToMinutes(value: string) {
   const [hour, minute] = String(value || "00:00")
     .split(":")
@@ -62,24 +84,15 @@ function intersection(left: string[], right: string[]) {
   return left.filter((item) => rightSet.has(item));
 }
 
-function sectionGroupId(slot: {
-  offered_courses: {
-    id: number;
-    primary_offered_course_id: number | null;
-  };
-}) {
-  return slot.offered_courses.primary_offered_course_id || slot.offered_courses.id;
-}
-
-function buildCourseLabel(slot: any) {
+function label(group: OperationalGroup) {
   return {
-    offeringId: slot.offered_courses.offering_id,
-    offeredCourseId: slot.offered_courses.id,
-    programCode: slot.offered_courses.offerings.programs.short_name,
-    courseCode: slot.offered_courses.master_courses.course_code,
-    courseTitle: slot.offered_courses.master_courses.course_title,
-    section: slot.offered_courses.section,
-    status: slot.offered_courses.offerings.status,
+    offeringId: group.offeringId,
+    offeredCourseId: group.offeredCourseId,
+    programCode: group.programCode,
+    courseCode: group.courseCode,
+    courseTitle: group.courseTitle,
+    section: group.section,
+    status: group.status,
   };
 }
 
@@ -94,7 +107,9 @@ export async function scanScheduleConflicts(options: {
           where: {
             ...(options.termId ? { id: options.termId } : {}),
             ...(options.termName
-              ? { name: String(options.termName).trim().toUpperCase() }
+              ? {
+                  name: String(options.termName).trim().toUpperCase(),
+                }
               : {}),
           },
           select: {
@@ -118,26 +133,70 @@ export async function scanScheduleConflicts(options: {
     };
   }
 
-  const slots = await prisma.offered_course_slots.findMany({
+  /*
+    IMPORTANT:
+    We scan only PRIMARY operational sections.
+
+    If a course is secondary co-offered:
+    - its old/imported slots are ignored for conflict checking
+    - it inherits primary slot/faculty
+    - its batches are added to the primary operational group
+
+    This prevents false conflicts after co-offering.
+  */
+  const primaryCourses = await prisma.offered_courses.findMany({
     where: {
-      offered_courses: {
-        ...(options.offeringId ? { offering_id: options.offeringId } : {}),
-        offerings: {
-          ...(term?.id ? { academic_term_id: term.id } : {}),
-          status: {
-            in: SCHEDULE_CONFLICT_STATUSES,
-          },
+      primary_offered_course_id: null,
+      ...(options.offeringId
+        ? {
+            OR: [
+              { offering_id: options.offeringId },
+              {
+                secondary_offered_courses: {
+                  some: {
+                    offering_id: options.offeringId,
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+      offerings: {
+        ...(term?.id ? { academic_term_id: term.id } : {}),
+        status: {
+          in: SCHEDULE_CONFLICT_STATUSES,
         },
       },
     },
     include: {
-      rooms: true,
-      offered_courses: {
+      offerings: {
+        include: {
+          academic_terms: true,
+          programs: true,
+        },
+      },
+      master_courses: true,
+      offered_course_slots: {
+        include: {
+          rooms: true,
+        },
+      },
+      offered_course_batches: {
+        include: {
+          batches: true,
+        },
+      },
+      offered_course_teachers: {
+        include: {
+          teachers: true,
+        },
+      },
+      secondary_offered_courses: {
         include: {
           offerings: {
             include: {
-              academic_terms: true,
               programs: true,
+              academic_terms: true,
             },
           },
           master_courses: true,
@@ -146,110 +205,136 @@ export async function scanScheduleConflicts(options: {
               batches: true,
             },
           },
-          offered_course_teachers: {
-            include: {
-              teachers: true,
-            },
-          },
         },
       },
     },
-    orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+    orderBy: [{ offering_id: "asc" }, { id: "asc" }],
   });
+
+  const groups: OperationalGroup[] = primaryCourses
+    .filter((course) => course.offered_course_slots.length > 0)
+    .map((course) => {
+      const primaryBatches = course.offered_course_batches.map(
+        (row) => row.batches.batch_code
+      );
+
+      const secondaryBatches = course.secondary_offered_courses.flatMap(
+        (secondary) =>
+          secondary.offered_course_batches.map((row) => row.batches.batch_code)
+      );
+
+      return {
+        groupId: course.id,
+        offeringId: course.offering_id,
+        termName: course.offerings.academic_terms.name,
+        programCode: course.offerings.programs.short_name,
+        status: course.offerings.status,
+        offeredCourseId: course.id,
+        courseCode: course.master_courses.course_code,
+        courseTitle: course.master_courses.course_title,
+        section: course.section,
+        slots: course.offered_course_slots.map((slot) => ({
+          id: slot.id,
+          dayOfWeek: slot.day_of_week,
+          startTime: slot.start_time,
+          endTime: slot.end_time,
+          roomId: slot.room_id,
+          roomCode: slot.rooms?.room_code || "-",
+        })),
+        batchCodes: unique([...primaryBatches, ...secondaryBatches]),
+        teacherCodes: unique(
+          course.offered_course_teachers.map(
+            (row) => row.teachers.teacher_code
+          )
+        ),
+      };
+    });
 
   const conflicts: ScheduleConflictItem[] = [];
   const seen = new Set<string>();
 
-  for (let i = 0; i < slots.length; i += 1) {
-    const first = slots[i];
+  for (let i = 0; i < groups.length; i += 1) {
+    const first = groups[i];
 
-    for (let j = i + 1; j < slots.length; j += 1) {
-      const second = slots[j];
+    for (let j = i + 1; j < groups.length; j += 1) {
+      const second = groups[j];
 
-      if (first.day_of_week !== second.day_of_week) continue;
+      if (first.groupId === second.groupId) continue;
 
-      if (
-        !overlaps(
-          first.start_time,
-          first.end_time,
-          second.start_time,
-          second.end_time
-        )
-      ) {
-        continue;
+      for (const firstSlot of first.slots) {
+        for (const secondSlot of second.slots) {
+          if (firstSlot.dayOfWeek !== secondSlot.dayOfWeek) continue;
+
+          if (
+            !overlaps(
+              firstSlot.startTime,
+              firstSlot.endTime,
+              secondSlot.startTime,
+              secondSlot.endTime
+            )
+          ) {
+            continue;
+          }
+
+          const sameRoom = firstSlot.roomId === secondSlot.roomId;
+          const commonBatches = intersection(first.batchCodes, second.batchCodes);
+          const commonTeachers = intersection(
+            first.teacherCodes,
+            second.teacherCodes
+          );
+
+          const pushConflict = (
+            type: ScheduleConflictType,
+            batchCodes: string[],
+            teacherCodes: string[]
+          ) => {
+            const key = [
+              type,
+              first.groupId,
+              second.groupId,
+              firstSlot.id,
+              secondSlot.id,
+              batchCodes.join(","),
+              teacherCodes.join(","),
+            ].join("|");
+
+            if (seen.has(key)) return;
+            seen.add(key);
+
+            conflicts.push({
+              type,
+              severity: "BLOCKER",
+              termName: first.termName,
+              dayOfWeek: firstSlot.dayOfWeek,
+              startTime: firstSlot.startTime,
+              endTime: firstSlot.endTime,
+              conflictWithStartTime: secondSlot.startTime,
+              conflictWithEndTime: secondSlot.endTime,
+              roomCode: sameRoom ? firstSlot.roomCode : "-",
+              batchCodes,
+              teacherCodes,
+              first: label(first),
+              second: label(second),
+            });
+          };
+
+          if (sameRoom) {
+            pushConflict("ROOM_CONFLICT", [], []);
+          }
+
+          if (commonBatches.length > 0) {
+            pushConflict("BATCH_CONFLICT", commonBatches, []);
+          }
+
+          if (commonTeachers.length > 0) {
+            pushConflict("FACULTY_CONFLICT", [], commonTeachers);
+          }
+        }
       }
-
-      if (sectionGroupId(first) === sectionGroupId(second)) continue;
-
-      const firstBatches = unique(
-        first.offered_courses.offered_course_batches.map(
-          (row) => row.batches.batch_code
-        )
-      );
-
-      const secondBatches = unique(
-        second.offered_courses.offered_course_batches.map(
-          (row) => row.batches.batch_code
-        )
-      );
-
-      const commonBatches = intersection(firstBatches, secondBatches);
-
-      const firstTeachers = unique(
-        first.offered_courses.offered_course_teachers.map(
-          (row) => row.teachers.teacher_code
-        )
-      );
-
-      const secondTeachers = unique(
-        second.offered_courses.offered_course_teachers.map(
-          (row) => row.teachers.teacher_code
-        )
-      );
-
-      const commonTeachers = intersection(firstTeachers, secondTeachers);
-      const sameRoom = first.room_id === second.room_id;
-
-      const pushConflict = (
-        type: ScheduleConflictType,
-        batchCodes: string[],
-        teacherCodes: string[]
-      ) => {
-        const key = [
-          type,
-          first.id,
-          second.id,
-          batchCodes.join(","),
-          teacherCodes.join(","),
-        ].join("|");
-
-        if (seen.has(key)) return;
-        seen.add(key);
-
-        conflicts.push({
-          type,
-          severity: "BLOCKER",
-          termName: first.offered_courses.offerings.academic_terms.name,
-          dayOfWeek: first.day_of_week,
-          startTime: first.start_time,
-          endTime: first.end_time,
-          conflictWithStartTime: second.start_time,
-          conflictWithEndTime: second.end_time,
-          roomCode: sameRoom ? first.rooms?.room_code || "-" : "-",
-          batchCodes,
-          teacherCodes,
-          first: buildCourseLabel(first),
-          second: buildCourseLabel(second),
-        });
-      };
-
-      if (sameRoom) pushConflict("ROOM_CONFLICT", [], []);
-      if (commonBatches.length > 0) pushConflict("BATCH_CONFLICT", commonBatches, []);
-      if (commonTeachers.length > 0) pushConflict("FACULTY_CONFLICT", [], commonTeachers);
     }
   }
 
-  const filtered = options.offeringId
+  const offeringFilteredConflicts = options.offeringId
     ? conflicts.filter(
         (conflict) =>
           conflict.first.offeringId === options.offeringId ||
@@ -259,13 +344,18 @@ export async function scanScheduleConflicts(options: {
 
   return {
     ok: true,
-    conflicts: filtered,
+    conflicts: offeringFilteredConflicts,
     summary: {
-      total: filtered.length,
-      roomConflicts: filtered.filter((item) => item.type === "ROOM_CONFLICT").length,
-      batchConflicts: filtered.filter((item) => item.type === "BATCH_CONFLICT").length,
-      facultyConflicts: filtered.filter((item) => item.type === "FACULTY_CONFLICT")
-        .length,
+      total: offeringFilteredConflicts.length,
+      roomConflicts: offeringFilteredConflicts.filter(
+        (item) => item.type === "ROOM_CONFLICT"
+      ).length,
+      batchConflicts: offeringFilteredConflicts.filter(
+        (item) => item.type === "BATCH_CONFLICT"
+      ).length,
+      facultyConflicts: offeringFilteredConflicts.filter(
+        (item) => item.type === "FACULTY_CONFLICT"
+      ).length,
     },
   };
 }

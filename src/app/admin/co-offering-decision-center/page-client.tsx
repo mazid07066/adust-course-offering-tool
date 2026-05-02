@@ -1,4 +1,3 @@
-// src/app/admin/co-offering-decision-center/page-client.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -23,14 +22,18 @@ type Offering = {
 
 type CourseOption = {
   id: number;
+  offeringId: number;
   programCode: string;
+  programName: string;
   offeringStatus: string;
   courseCode: string;
   courseTitle: string;
   section: string;
   credit: number;
   primaryOfferedCourseId: number | null;
+  isCooffered: boolean;
   linkedPrimaryLabel: string;
+  secondaryCount: number;
   slotCount: number;
   teacherCount: number;
   batchCodes: string[];
@@ -52,20 +55,35 @@ export default function Page() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resettingOfferingId, setResettingOfferingId] = useState<number | null>(
+    null
+  );
 
   const programOptions = useMemo(() => {
-    return Array.from(new Set(offerings.map(o => o.programCode)));
+    return Array.from(new Set(offerings.map((item) => item.programCode))).sort();
   }, [offerings]);
 
   const primaryCourses = useMemo(() => {
-    return courses.filter(c => c.programCode === primaryProgram);
+    return courses
+      .filter((course) => course.programCode === primaryProgram)
+      .sort((a, b) => a.courseCode.localeCompare(b.courseCode));
   }, [courses, primaryProgram]);
 
   const secondaryCourses = useMemo(() => {
-    return courses.filter(c => c.programCode === secondaryProgram);
+    return courses
+      .filter((course) => course.programCode === secondaryProgram)
+      .sort((a, b) => a.courseCode.localeCompare(b.courseCode));
   }, [courses, secondaryProgram]);
 
-  const selectedSecondary = secondaryCourses.find(c => String(c.id) === secondaryCourseId);
+  const selectedPrimary = useMemo(() => {
+    return primaryCourses.find((course) => String(course.id) === primaryCourseId);
+  }, [primaryCourses, primaryCourseId]);
+
+  const selectedSecondary = useMemo(() => {
+    return secondaryCourses.find(
+      (course) => String(course.id) === secondaryCourseId
+    );
+  }, [secondaryCourses, secondaryCourseId]);
 
   async function load() {
     setLoading(true);
@@ -73,34 +91,88 @@ export default function Page() {
     setMessage("");
 
     try {
-      const res = await fetch(`/api/admin/co-offering-decision/candidates?termName=${termName}`);
+      const qs = new URLSearchParams({ termName });
+
+      const res = await fetch(
+        `/api/admin/co-offering-decision/candidates?${qs.toString()}`,
+        { cache: "no-store" }
+      );
+
       const json = await res.json();
 
-      if (!res.ok) throw new Error(json.error);
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load co-offering data.");
+      }
 
-      setOfferings(json.diagnostics.matchedOfferings || []);
+      setOfferings(json.diagnostics?.matchedOfferings || []);
       setCourses(json.courses || []);
       setCandidates(json.candidates || []);
 
-      if (!json.candidates.length) {
-        setMessage("No auto candidates. Use manual linking.");
+      if ((json.candidates || []).length === 0) {
+        setMessage("No auto candidates found. Use manual linking.");
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load co-offering data."
+      );
     } finally {
       setLoading(false);
     }
   }
 
+  async function resetConfirmedOffering(offeringId: number, label: string) {
+    const ok = window.confirm(
+      `Reset ${label} from CONFIRMED to FACULTY_CHOICE_FINALIZED?\n\nThis will allow co-offering edits again. You must re-confirm it later from Final Schedule Control.`
+    );
+
+    if (!ok) return;
+
+    setResettingOfferingId(offeringId);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(
+        "/api/admin/co-offering-decision/reset-confirmed",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ offeringId }),
+        }
+      );
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to reset offering.");
+      }
+
+      setMessage(json.message || "Offering reset successfully.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset offering.");
+    } finally {
+      setResettingOfferingId(null);
+    }
+  }
+
   async function manualLink() {
     if (!primaryCourseId || !secondaryCourseId) {
-      setError("Select both courses");
+      setError("Select both primary and secondary courses.");
       return;
     }
+
+    setError("");
+    setMessage("");
 
     try {
       const res = await fetch("/api/admin/co-offering-decision/manual-link", {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           primaryOfferedCourseId: Number(primaryCourseId),
           secondaryOfferedCourseId: Number(secondaryCourseId),
@@ -108,169 +180,343 @@ export default function Page() {
       });
 
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error);
 
-      setMessage("Linked successfully");
-      load();
-    } catch (err: any) {
-      setError(err.message);
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to link courses.");
+      }
+
+      setMessage(json.message || "Linked successfully.");
+      setPrimaryCourseId("");
+      setSecondaryCourseId("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to link courses.");
     }
   }
 
   async function unlinkCourse(id: number) {
+    const ok = window.confirm("Unlink/reset this co-offered course?");
+    if (!ok) return;
+
+    setError("");
+    setMessage("");
+
     try {
       const res = await fetch("/api/admin/co-offering-decision/unlink", {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ offeredCourseId: id }),
       });
 
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error);
 
-      setMessage("Unlinked successfully");
-      load();
-    } catch (err: any) {
-      setError(err.message);
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to unlink course.");
+      }
+
+      setMessage(json.message || "Unlinked successfully.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to unlink course.");
     }
   }
 
   useEffect(() => {
-    load();
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <AdminLayout title="Co-offering Decision Center">
       <div className="space-y-6">
-
-        {/* HEADER */}
-        <div className="border p-6 rounded bg-white">
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-bold">Co-offering Decision Center</h2>
 
-          <div className="flex gap-3 mt-4">
+          <div className="mt-4 flex flex-wrap gap-3">
             <input
               value={termName}
               onChange={(e) => setTermName(e.target.value.toUpperCase())}
-              className="border px-3 py-2 rounded"
+              className="rounded-xl border px-4 py-3"
             />
 
             <button
+              type="button"
               onClick={load}
-              className="bg-black text-white px-4 py-2 rounded"
+              disabled={loading}
+              className="rounded-xl bg-black px-5 py-3 text-white disabled:opacity-60"
             >
               {loading ? "Loading..." : "Load"}
             </button>
           </div>
-        </div>
+        </section>
 
-        {/* STATUS */}
-        {message && <div className="text-green-600">{message}</div>}
-        {error && <div className="text-red-600">{error}</div>}
+        {message ? (
+          <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {message}
+          </div>
+        ) : null}
 
-        {/* MANUAL LINK */}
-        <div className="border p-6 rounded bg-white">
-          <h3 className="font-bold mb-4">Manual Course Linking</h3>
+        {error ? (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        ) : null}
 
-          <div className="grid grid-cols-2 gap-4">
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
+          <h3 className="mb-4 text-lg font-bold">Offering Status / Reset</h3>
 
-            {/* PRIMARY */}
+          <div className="overflow-x-auto rounded-2xl border">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="border-b px-3 py-3 text-left">Offering</th>
+                  <th className="border-b px-3 py-3 text-left">Program</th>
+                  <th className="border-b px-3 py-3 text-left">Status</th>
+                  <th className="border-b px-3 py-3 text-left">Courses</th>
+                  <th className="border-b px-3 py-3 text-left">Action</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {offerings.map((offering) => (
+                  <tr key={offering.offeringId}>
+                    <td className="border-b px-3 py-2">
+                      #{offering.offeringId}
+                    </td>
+                    <td className="border-b px-3 py-2">
+                      {offering.programCode}
+                    </td>
+                    <td className="border-b px-3 py-2">
+                      <span
+                        className={
+                          offering.status === "CONFIRMED"
+                            ? "rounded-full bg-red-50 px-2 py-1 text-xs font-semibold text-red-700"
+                            : "rounded-full bg-green-50 px-2 py-1 text-xs font-semibold text-green-700"
+                        }
+                      >
+                        {offering.status}
+                      </span>
+                    </td>
+                    <td className="border-b px-3 py-2">
+                      {offering.courseCount}
+                    </td>
+                    <td className="border-b px-3 py-2">
+                      {offering.status === "CONFIRMED" ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            resetConfirmedOffering(
+                              offering.offeringId,
+                              `${offering.programCode} #${offering.offeringId}`
+                            )
+                          }
+                          disabled={resettingOfferingId === offering.offeringId}
+                          className="rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+                        >
+                          {resettingOfferingId === offering.offeringId
+                            ? "Resetting..."
+                            : "Reset to Editable"}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-slate-500">Editable</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+
+                {offerings.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-8 text-center text-slate-500">
+                      No offerings loaded.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
+          <h3 className="mb-4 text-lg font-bold">Manual Course Linking</h3>
+
+          <div className="grid gap-4 lg:grid-cols-2">
             <div>
-              <label>Primary Program</label>
+              <label className="mb-2 block text-sm font-medium">
+                Primary Program
+              </label>
               <select
                 value={primaryProgram}
                 onChange={(e) => {
                   setPrimaryProgram(e.target.value);
                   setPrimaryCourseId("");
                 }}
-                className="border p-2 w-full"
+                className="w-full rounded-xl border px-4 py-3"
               >
-                {programOptions.map(p => (
-                  <option key={p}>{p}</option>
-                ))}
-              </select>
-
-              <label className="mt-2 block">Primary Course</label>
-              <select
-                value={primaryCourseId}
-                onChange={(e) => setPrimaryCourseId(e.target.value)}
-                className="border p-2 w-full"
-              >
-                <option value="">Select</option>
-                {primaryCourses.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.courseCode} Sec-{c.section}
+                {programOptions.map((program) => (
+                  <option key={program} value={program}>
+                    {program}
                   </option>
                 ))}
               </select>
+
+              <label className="mb-2 mt-4 block text-sm font-medium">
+                Primary Course
+              </label>
+              <select
+                value={primaryCourseId}
+                onChange={(e) => setPrimaryCourseId(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+              >
+                <option value="">Select primary course</option>
+                {primaryCourses.map((course) => (
+                  <option
+                    key={course.id}
+                    value={course.id}
+                    disabled={
+                      course.offeringStatus === "CONFIRMED" ||
+                      Boolean(course.primaryOfferedCourseId)
+                    }
+                  >
+                    {course.courseCode} Sec-{course.section} |{" "}
+                    {course.courseTitle} | {course.offeringStatus}
+                    {course.primaryOfferedCourseId ? " | Linked Secondary" : ""}
+                  </option>
+                ))}
+              </select>
+
+              {selectedPrimary ? (
+                <div className="mt-3 rounded-xl border bg-slate-50 p-3 text-sm">
+                  <div>
+                    <b>Credit:</b> {selectedPrimary.credit}
+                  </div>
+                  <div>
+                    <b>Batches:</b>{" "}
+                    {selectedPrimary.batchCodes?.join(", ") || "-"}
+                  </div>
+                  <div>
+                    <b>Own slots:</b> {selectedPrimary.slotCount}
+                  </div>
+                  <div>
+                    <b>Faculty rows:</b> {selectedPrimary.teacherCount}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
-            {/* SECONDARY */}
             <div>
-              <label>Secondary Program</label>
+              <label className="mb-2 block text-sm font-medium">
+                Secondary Program
+              </label>
               <select
                 value={secondaryProgram}
                 onChange={(e) => {
                   setSecondaryProgram(e.target.value);
                   setSecondaryCourseId("");
                 }}
-                className="border p-2 w-full"
+                className="w-full rounded-xl border px-4 py-3"
               >
-                {programOptions.map(p => (
-                  <option key={p}>{p}</option>
-                ))}
-              </select>
-
-              <label className="mt-2 block">Secondary Course</label>
-              <select
-                value={secondaryCourseId}
-                onChange={(e) => setSecondaryCourseId(e.target.value)}
-                className="border p-2 w-full"
-              >
-                <option value="">Select</option>
-                {secondaryCourses.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.courseCode} Sec-{c.section}
-                    {c.primaryOfferedCourseId ? " (Linked)" : ""}
+                {programOptions.map((program) => (
+                  <option key={program} value={program}>
+                    {program}
                   </option>
                 ))}
               </select>
 
-              {/* 🔴 UNLINK BUTTON */}
-              {selectedSecondary?.primaryOfferedCourseId && (
-                <button
-                  onClick={() => unlinkCourse(selectedSecondary.id)}
-                  className="bg-red-600 text-white px-3 py-2 rounded mt-3"
-                >
-                  Unlink This Course
-                </button>
-              )}
+              <label className="mb-2 mt-4 block text-sm font-medium">
+                Secondary Course
+              </label>
+              <select
+                value={secondaryCourseId}
+                onChange={(e) => setSecondaryCourseId(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+              >
+                <option value="">Select secondary course</option>
+                {secondaryCourses.map((course) => (
+                  <option
+                    key={course.id}
+                    value={course.id}
+                    disabled={course.offeringStatus === "CONFIRMED"}
+                  >
+                    {course.courseCode} Sec-{course.section} |{" "}
+                    {course.courseTitle} | {course.offeringStatus}
+                    {course.primaryOfferedCourseId
+                      ? ` | Linked to ${course.linkedPrimaryLabel}`
+                      : ""}
+                  </option>
+                ))}
+              </select>
+
+              {selectedSecondary ? (
+                <div className="mt-3 rounded-xl border bg-slate-50 p-3 text-sm">
+                  <div>
+                    <b>Credit:</b> {selectedSecondary.credit}
+                  </div>
+                  <div>
+                    <b>Batches:</b>{" "}
+                    {selectedSecondary.batchCodes?.join(", ") || "-"}
+                  </div>
+                  <div>
+                    <b>Own slots:</b> {selectedSecondary.slotCount}
+                  </div>
+                  <div>
+                    <b>Faculty rows:</b> {selectedSecondary.teacherCount}
+                  </div>
+                  <div>
+                    <b>Linked:</b>{" "}
+                    {selectedSecondary.primaryOfferedCourseId
+                      ? selectedSecondary.linkedPrimaryLabel
+                      : "No"}
+                  </div>
+
+                  {selectedSecondary.primaryOfferedCourseId ? (
+                    <button
+                      type="button"
+                      onClick={() => unlinkCourse(selectedSecondary.id)}
+                      className="mt-3 rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700"
+                    >
+                      Unlink This Course
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
 
           <button
+            type="button"
             onClick={manualLink}
-            className="bg-green-600 text-white px-4 py-2 rounded mt-4"
+            disabled={!primaryCourseId || !secondaryCourseId}
+            className="mt-5 rounded-xl bg-green-600 px-5 py-3 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60"
           >
             Link Courses
           </button>
-        </div>
+        </section>
 
-        {/* AUTO CANDIDATES */}
-        <div className="border p-6 rounded bg-white">
-          <h3 className="font-bold mb-4">Auto Suggestions</h3>
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
+          <h3 className="mb-4 text-lg font-bold">Auto Suggestions</h3>
 
-          {candidates.map((c) => (
-            <div key={`${c.primaryId}-${c.secondaryId}`} className="border p-3 mb-2">
-              <div>{c.primaryLabel}</div>
-              <div className="text-sm text-gray-500">
-                ↔ {c.secondaryLabel}
+          {candidates.map((candidate) => (
+            <div
+              key={`${candidate.primaryId}-${candidate.secondaryId}`}
+              className="mb-2 rounded-xl border p-3 text-sm"
+            >
+              <div>{candidate.primaryLabel}</div>
+              <div className="text-slate-500">↔ {candidate.secondaryLabel}</div>
+              <div className="text-xs text-slate-400">
+                Score: {candidate.score} | {candidate.reason}
               </div>
             </div>
           ))}
-        </div>
 
+          {candidates.length === 0 ? (
+            <div className="rounded-xl border bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+              No automatic suggestions. Use manual linking above.
+            </div>
+          ) : null}
+        </section>
       </div>
     </AdminLayout>
   );
 }
-
-
