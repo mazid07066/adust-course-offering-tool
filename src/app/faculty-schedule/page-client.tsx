@@ -36,6 +36,12 @@ type ApiResponse = {
   rows?: FacultyRoutineRow[];
 };
 
+const PROGRAM_LABELS: Record<string, string> = {
+  "BSC-EEE-EVE-NEW": "B.Sc. in EEE (Evening/Diploma Holders)",
+  "BSC-EEE-REG-NEW": "B.Sc. in EEE (Regular)",
+  "BSC-RAE-REG-NEW": "B.Sc. in RAE",
+};
+
 function groupRowsByFaculty(rows: FacultyRoutineRow[]) {
   const map = new Map<string, FacultyRoutineRow[]>();
 
@@ -171,11 +177,56 @@ export default function FacultySchedulePageClient() {
             </p>
           </div>
 
-          
+          <div className="flex flex-wrap gap-3">
+            
+
+            <Link
+              href="/schedule"
+              className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700"
+            >
+              Student Routine
+            </Link>
+          </div>
         </div>
       </header>
 
       <section className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-bold text-slate-900">
+            Program Identification
+          </h2>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-bold text-slate-900">
+                BSC-EEE-EVE-NEW
+              </div>
+              <div className="mt-1 text-sm text-slate-600">
+                B.Sc. in EEE (Evening/Diploma Holders)
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-bold text-slate-900">
+                BSC-EEE-REG-NEW
+              </div>
+              <div className="mt-1 text-sm text-slate-600">
+                B.Sc. in EEE (Regular)
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-bold text-slate-900">
+                BSC-RAE-REG-NEW
+              </div>
+              <div className="mt-1 text-sm text-slate-600">
+                B.Sc. in RAE
+              </div>
+            </div>
+          </div>
+        </section>
+        
         <section className="rounded-3xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-bold">Search Faculty Routine</h2>
 
