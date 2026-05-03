@@ -171,21 +171,7 @@ export default function FacultySchedulePageClient() {
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/"
-              className="rounded-xl border bg-white px-5 py-3 text-sm font-semibold hover:bg-slate-50"
-            >
-              Public Home
-            </Link>
-
-            <Link
-              href="/schedule"
-              className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700"
-            >
-              Student Routine
-            </Link>
-          </div>
+          
         </div>
       </header>
 
