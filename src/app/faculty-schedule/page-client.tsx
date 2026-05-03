@@ -359,14 +359,27 @@ export default function FacultySchedulePageClient() {
           </div>
         </section>
 
-        <footer className="rounded-3xl bg-white p-6 text-center text-sm text-slate-600 shadow-sm">
-          <div className="font-bold text-slate-900">UniFlow Academic Planner</div>
-          <div className="mt-2">
-            Built with Next.js, React, TypeScript, Prisma ORM, PostgreSQL, and
-            Tailwind CSS.
-          </div>
-          <div className="mt-1">
-            A public routine viewing system for confirmed university schedules.
+        <footer className="rounded-3xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-600 shadow-sm">
+          <div className="space-y-2">
+            <div className="font-semibold text-slate-900">
+              UniFlow Academic Planner
+            </div>
+            <div>
+              Course Offering, Faculty Assignment, Scheduling and Reporting
+              System
+            </div>
+            <div>
+              Built with Next.js, React, TypeScript, Prisma ORM, PostgreSQL
+              Supabase and Vercel Deployment.
+            </div>
+            <div className="font-semibold text-slate-900">
+              Designed and Developed by Mazid Ishtique Ahmed
+            </div>
+            <div>
+              Assistant Professor, EEE and Chairman, Dept. of Robotics and
+              Automation Engineering, Atish Dipankar University of Science &
+              Technology (ADUST)
+            </div>
           </div>
         </footer>
       </section>
