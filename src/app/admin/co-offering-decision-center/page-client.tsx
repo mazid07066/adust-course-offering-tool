@@ -39,6 +39,29 @@ type CourseOption = {
   batchCodes: string[];
 };
 
+type BatchOption = {
+  id: number;
+  batchCode: string;
+  programCode: string;
+  isAttached?: boolean;
+  hasConflict?: boolean;
+  conflictReason?: string;
+  isInactive?: boolean;
+};
+
+type BatchEditorCourse = {
+  id: number;
+  programCode: string;
+  programName: string;
+  termName: string;
+  offeringStatus: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  isSecondary: boolean;
+  primaryLabel: string;
+};
+
 export default function Page() {
   const [termName, setTermName] = useState("SUMMER 2026");
 
@@ -51,6 +74,14 @@ export default function Page() {
 
   const [primaryCourseId, setPrimaryCourseId] = useState("");
   const [secondaryCourseId, setSecondaryCourseId] = useState("");
+
+  const [batchEditCourseId, setBatchEditCourseId] = useState("");
+  const [batchEditorCourse, setBatchEditorCourse] =
+    useState<BatchEditorCourse | null>(null);
+  const [availableBatches, setAvailableBatches] = useState<BatchOption[]>([]);
+  const [selectedBatchCodes, setSelectedBatchCodes] = useState<string[]>([]);
+  const [loadingBatchEditor, setLoadingBatchEditor] = useState(false);
+  const [savingBatches, setSavingBatches] = useState(false);
 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -84,6 +115,12 @@ export default function Page() {
       (course) => String(course.id) === secondaryCourseId
     );
   }, [secondaryCourses, secondaryCourseId]);
+
+  const batchEditCourses = useMemo(() => {
+    return courses
+      .filter((course) => course.programCode === secondaryProgram)
+      .sort((a, b) => a.courseCode.localeCompare(b.courseCode));
+  }, [courses, secondaryProgram]);
 
   async function load() {
     setLoading(true);
@@ -122,7 +159,7 @@ export default function Page() {
 
   async function resetConfirmedOffering(offeringId: number, label: string) {
     const ok = window.confirm(
-      `Reset ${label} from CONFIRMED to FACULTY_CHOICE_FINALIZED?\n\nThis will allow co-offering edits again. You must re-confirm it later from Final Schedule Control.`
+      `Reset ${label} from CONFIRMED to FACULTY_CHOICE_FINALIZED?\n\nThis will allow co-offering and batch edits again. You must re-confirm it later from Final Schedule Control.`
     );
 
     if (!ok) return;
@@ -136,9 +173,7 @@ export default function Page() {
         "/api/admin/co-offering-decision/reset-confirmed",
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ offeringId }),
         }
       );
@@ -170,9 +205,7 @@ export default function Page() {
     try {
       const res = await fetch("/api/admin/co-offering-decision/manual-link", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           primaryOfferedCourseId: Number(primaryCourseId),
           secondaryOfferedCourseId: Number(secondaryCourseId),
@@ -204,9 +237,7 @@ export default function Page() {
     try {
       const res = await fetch("/api/admin/co-offering-decision/unlink", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ offeredCourseId: id }),
       });
 
@@ -220,6 +251,114 @@ export default function Page() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to unlink course.");
+    }
+  }
+
+  async function loadBatchEditor(courseId: string) {
+    setBatchEditCourseId(courseId);
+    setBatchEditorCourse(null);
+    setAvailableBatches([]);
+    setSelectedBatchCodes([]);
+
+    if (!courseId) return;
+
+    setLoadingBatchEditor(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const qs = new URLSearchParams({ offeredCourseId: courseId });
+
+      const res = await fetch(
+        `/api/admin/co-offering-decision/course-batches/options?${qs.toString()}`,
+        { cache: "no-store" }
+      );
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load batch editor.");
+      }
+
+      setBatchEditorCourse(json.course || null);
+      setAvailableBatches(json.availableBatches || []);
+      setSelectedBatchCodes(json.attachedBatchCodes || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load batch editor.");
+    } finally {
+      setLoadingBatchEditor(false);
+    }
+  }
+
+  function toggleBatch(batchCode: string) {
+    setSelectedBatchCodes((prev) =>
+      prev.includes(batchCode)
+        ? prev.filter((item) => item !== batchCode)
+        : [...prev, batchCode].sort()
+    );
+  }
+
+  async function saveBatchLinks() {
+    if (!batchEditCourseId) {
+      setError("Select a course first.");
+      return;
+    }
+
+    if (selectedBatchCodes.length === 0) {
+      setError("Select at least one batch.");
+      return;
+    }
+
+    const conflictingSelections = availableBatches.filter(
+      (batch) =>
+        selectedBatchCodes.includes(batch.batchCode) && batch.hasConflict
+    );
+
+    if (conflictingSelections.length > 0) {
+      const proceed = window.confirm(
+        `WARNING:\n\nSome selected batches have schedule conflicts.\n\n` +
+          conflictingSelections
+            .map(
+              (b) =>
+                `${b.batchCode} -> ${b.conflictReason || "Conflict detected"}`
+            )
+            .join("\n\n") +
+          `\n\nDo you still want to continue? The server will still block unsafe conflicts.`
+      );
+
+      if (!proceed) return;
+    }
+
+    setSavingBatches(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(
+        "/api/admin/co-offering-decision/course-batches/update",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            offeredCourseId: Number(batchEditCourseId),
+            batchCodes: selectedBatchCodes,
+          }),
+        }
+      );
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to update batches.");
+      }
+
+      setMessage(json.message || "Batch list updated.");
+      await load();
+      await loadBatchEditor(batchEditCourseId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update batches.");
+    } finally {
+      setSavingBatches(false);
     }
   }
 
@@ -282,12 +421,8 @@ export default function Page() {
               <tbody>
                 {offerings.map((offering) => (
                   <tr key={offering.offeringId}>
-                    <td className="border-b px-3 py-2">
-                      #{offering.offeringId}
-                    </td>
-                    <td className="border-b px-3 py-2">
-                      {offering.programCode}
-                    </td>
+                    <td className="border-b px-3 py-2">#{offering.offeringId}</td>
+                    <td className="border-b px-3 py-2">{offering.programCode}</td>
                     <td className="border-b px-3 py-2">
                       <span
                         className={
@@ -299,9 +434,7 @@ export default function Page() {
                         {offering.status}
                       </span>
                     </td>
-                    <td className="border-b px-3 py-2">
-                      {offering.courseCount}
-                    </td>
+                    <td className="border-b px-3 py-2">{offering.courseCount}</td>
                     <td className="border-b px-3 py-2">
                       {offering.status === "CONFIRMED" ? (
                         <button
@@ -343,9 +476,7 @@ export default function Page() {
 
           <div className="grid gap-4 lg:grid-cols-2">
             <div>
-              <label className="mb-2 block text-sm font-medium">
-                Primary Program
-              </label>
+              <label className="mb-2 block text-sm font-medium">Primary Program</label>
               <select
                 value={primaryProgram}
                 onChange={(e) => {
@@ -381,7 +512,6 @@ export default function Page() {
                   >
                     {course.courseCode} Sec-{course.section} |{" "}
                     {course.courseTitle} | {course.offeringStatus}
-                    {course.primaryOfferedCourseId ? " | Linked Secondary" : ""}
                   </option>
                 ))}
               </select>
@@ -392,8 +522,7 @@ export default function Page() {
                     <b>Credit:</b> {selectedPrimary.credit}
                   </div>
                   <div>
-                    <b>Batches:</b>{" "}
-                    {selectedPrimary.batchCodes?.join(", ") || "-"}
+                    <b>Batches:</b> {selectedPrimary.batchCodes?.join(", ") || "-"}
                   </div>
                   <div>
                     <b>Own slots:</b> {selectedPrimary.slotCount}
@@ -492,6 +621,203 @@ export default function Page() {
           >
             Link Courses
           </button>
+        </section>
+
+        <section className="rounded-3xl border border-blue-200 bg-white p-6 shadow-sm">
+          <h3 className="mb-4 text-lg font-bold">Course Batch Control</h3>
+          <p className="mb-4 text-sm text-slate-600">
+            Shows all batches under the selected program. Attached batches,
+            inactive batches, and schedule-warning batches are clearly marked.
+          </p>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-medium">
+                Program for Batch Editing
+              </label>
+              <select
+                value={secondaryProgram}
+                onChange={(e) => {
+                  setSecondaryProgram(e.target.value);
+                  setSecondaryCourseId("");
+                  setBatchEditCourseId("");
+                  setBatchEditorCourse(null);
+                  setAvailableBatches([]);
+                  setSelectedBatchCodes([]);
+                }}
+                className="w-full rounded-xl border px-4 py-3"
+              >
+                {programOptions.map((program) => (
+                  <option key={program} value={program}>
+                    {program}
+                  </option>
+                ))}
+              </select>
+
+              <label className="mb-2 mt-4 block text-sm font-medium">
+                Course to Edit Batches
+              </label>
+              <select
+                value={batchEditCourseId}
+                onChange={(e) => void loadBatchEditor(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+              >
+                <option value="">Select course</option>
+                {batchEditCourses.map((course) => (
+                  <option key={course.id} value={course.id}>
+                    {course.courseCode} Sec-{course.section} |{" "}
+                    {course.courseTitle} | {course.offeringStatus}
+                    {course.primaryOfferedCourseId
+                      ? ` | Secondary linked to ${course.linkedPrimaryLabel}`
+                      : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="rounded-2xl border bg-slate-50 p-4 text-sm">
+              {loadingBatchEditor ? (
+                <div>Loading batch editor...</div>
+              ) : batchEditorCourse ? (
+                <div className="space-y-1">
+                  <div>
+                    <b>Selected:</b> {batchEditorCourse.programCode} |{" "}
+                    {batchEditorCourse.courseCode} Sec-{batchEditorCourse.section}
+                  </div>
+                  <div>
+                    <b>Title:</b> {batchEditorCourse.courseTitle}
+                  </div>
+                  <div>
+                    <b>Status:</b> {batchEditorCourse.offeringStatus}
+                  </div>
+                  <div>
+                    <b>Co-offer role:</b>{" "}
+                    {batchEditorCourse.isSecondary
+                      ? `Secondary, inherits ${batchEditorCourse.primaryLabel}`
+                      : "Primary / independent"}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-slate-500">Select a course to edit batches.</div>
+              )}
+            </div>
+          </div>
+
+          {batchEditorCourse ? (
+            <div className="mt-5">
+              <h4 className="mb-3 font-semibold">All Batches</h4>
+
+              <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-5">
+                {availableBatches.map((batch) => {
+                  const isSelected = selectedBatchCodes.includes(batch.batchCode);
+
+                  let cardClass =
+                    "cursor-pointer rounded-xl border p-3 text-sm transition-all";
+
+                  if (isSelected) {
+                    cardClass +=
+                      " border-blue-400 bg-blue-50 text-blue-900 shadow-sm";
+                  } else {
+                    cardClass += " bg-white hover:bg-slate-50";
+                  }
+
+                  if (batch.hasConflict) {
+                    cardClass += " border-red-300";
+                  }
+
+                  if (batch.isInactive) {
+                    cardClass += " opacity-50";
+                  }
+
+                  return (
+                    <label key={batch.id} className={cardClass}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleBatch(batch.batchCode)}
+                            />
+
+                            <span className="font-semibold">
+                              {batch.batchCode}
+                            </span>
+                          </div>
+
+                          <div className="mt-1 text-xs text-slate-500">
+                            {batch.programCode}
+                          </div>
+
+                          {batch.isAttached ? (
+                            <div className="mt-2 inline-block rounded-full bg-green-100 px-2 py-1 text-[10px] font-bold text-green-700">
+                              CURRENTLY ATTACHED
+                            </div>
+                          ) : null}
+
+                          {batch.hasConflict ? (
+                            <div className="mt-2 rounded-lg bg-red-50 px-2 py-2 text-[11px] text-red-700">
+                              Conflict detected
+                              <br />
+                              {batch.conflictReason}
+                            </div>
+                          ) : null}
+
+                          {batch.isInactive ? (
+                            <div className="mt-2 inline-block rounded-full bg-slate-200 px-2 py-1 text-[10px] font-bold text-slate-600">
+                              INACTIVE
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className="mt-4 rounded-xl border bg-slate-50 p-4">
+                <div className="mb-2 text-sm font-semibold">
+                  Selected batches ({selectedBatchCodes.length})
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {selectedBatchCodes.length ? (
+                    selectedBatchCodes.map((code) => (
+                      <div
+                        key={code}
+                        className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800"
+                      >
+                        {code}
+                      </div>
+                    ))
+                  ) : (
+                    <span className="text-sm text-slate-500">
+                      No batch selected
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={saveBatchLinks}
+                disabled={
+                  savingBatches ||
+                  batchEditorCourse.offeringStatus === "CONFIRMED" ||
+                  selectedBatchCodes.length === 0
+                }
+                className="mt-4 rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {savingBatches
+                  ? "Saving Batch Configuration..."
+                  : batchEditorCourse.offeringStatus === "CONFIRMED"
+                    ? "Reset Offering First"
+                    : `Save ${selectedBatchCodes.length} Batch Selection${
+                        selectedBatchCodes.length > 1 ? "s" : ""
+                      }`}
+              </button>
+            </div>
+          ) : null}
         </section>
 
         <section className="rounded-3xl border bg-white p-6 shadow-sm">

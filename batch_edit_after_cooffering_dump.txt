@@ -1,0 +1,4333 @@
+
+
+===== FILE: src\app\admin\co-offering-decision-center\page-client.tsx =====
+
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import AdminLayout from "@/components/admin-layout";
+
+type Candidate = {
+  primaryId: number;
+  secondaryId: number;
+  primaryLabel: string;
+  secondaryLabel: string;
+  score: number;
+  reason: string;
+};
+
+type Offering = {
+  offeringId: number;
+  programCode: string;
+  programName: string;
+  status: string;
+  courseCount: number;
+};
+
+type CourseOption = {
+  id: number;
+  offeringId: number;
+  programCode: string;
+  programName: string;
+  offeringStatus: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  credit: number;
+  primaryOfferedCourseId: number | null;
+  isCooffered: boolean;
+  linkedPrimaryLabel: string;
+  secondaryCount: number;
+  slotCount: number;
+  teacherCount: number;
+  batchCodes: string[];
+};
+
+export default function Page() {
+  const [termName, setTermName] = useState("SUMMER 2026");
+
+  const [offerings, setOfferings] = useState<Offering[]>([]);
+  const [courses, setCourses] = useState<CourseOption[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+
+  const [primaryProgram, setPrimaryProgram] = useState("BSC-EEE-REG-NEW");
+  const [secondaryProgram, setSecondaryProgram] = useState("BSC-RAE-REG-NEW");
+
+  const [primaryCourseId, setPrimaryCourseId] = useState("");
+  const [secondaryCourseId, setSecondaryCourseId] = useState("");
+
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [resettingOfferingId, setResettingOfferingId] = useState<number | null>(
+    null
+  );
+
+  const programOptions = useMemo(() => {
+    return Array.from(new Set(offerings.map((item) => item.programCode))).sort();
+  }, [offerings]);
+
+  const primaryCourses = useMemo(() => {
+    return courses
+      .filter((course) => course.programCode === primaryProgram)
+      .sort((a, b) => a.courseCode.localeCompare(b.courseCode));
+  }, [courses, primaryProgram]);
+
+  const secondaryCourses = useMemo(() => {
+    return courses
+      .filter((course) => course.programCode === secondaryProgram)
+      .sort((a, b) => a.courseCode.localeCompare(b.courseCode));
+  }, [courses, secondaryProgram]);
+
+  const selectedPrimary = useMemo(() => {
+    return primaryCourses.find((course) => String(course.id) === primaryCourseId);
+  }, [primaryCourses, primaryCourseId]);
+
+  const selectedSecondary = useMemo(() => {
+    return secondaryCourses.find(
+      (course) => String(course.id) === secondaryCourseId
+    );
+  }, [secondaryCourses, secondaryCourseId]);
+
+  async function load() {
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const qs = new URLSearchParams({ termName });
+
+      const res = await fetch(
+        `/api/admin/co-offering-decision/candidates?${qs.toString()}`,
+        { cache: "no-store" }
+      );
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load co-offering data.");
+      }
+
+      setOfferings(json.diagnostics?.matchedOfferings || []);
+      setCourses(json.courses || []);
+      setCandidates(json.candidates || []);
+
+      if ((json.candidates || []).length === 0) {
+        setMessage("No auto candidates found. Use manual linking.");
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load co-offering data."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function resetConfirmedOffering(offeringId: number, label: string) {
+    const ok = window.confirm(
+      `Reset ${label} from CONFIRMED to FACULTY_CHOICE_FINALIZED?\n\nThis will allow co-offering edits again. You must re-confirm it later from Final Schedule Control.`
+    );
+
+    if (!ok) return;
+
+    setResettingOfferingId(offeringId);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(
+        "/api/admin/co-offering-decision/reset-confirmed",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ offeringId }),
+        }
+      );
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to reset offering.");
+      }
+
+      setMessage(json.message || "Offering reset successfully.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset offering.");
+    } finally {
+      setResettingOfferingId(null);
+    }
+  }
+
+  async function manualLink() {
+    if (!primaryCourseId || !secondaryCourseId) {
+      setError("Select both primary and secondary courses.");
+      return;
+    }
+
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/co-offering-decision/manual-link", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          primaryOfferedCourseId: Number(primaryCourseId),
+          secondaryOfferedCourseId: Number(secondaryCourseId),
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to link courses.");
+      }
+
+      setMessage(json.message || "Linked successfully.");
+      setPrimaryCourseId("");
+      setSecondaryCourseId("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to link courses.");
+    }
+  }
+
+  async function unlinkCourse(id: number) {
+    const ok = window.confirm("Unlink/reset this co-offered course?");
+    if (!ok) return;
+
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/co-offering-decision/unlink", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ offeredCourseId: id }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to unlink course.");
+      }
+
+      setMessage(json.message || "Unlinked successfully.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to unlink course.");
+    }
+  }
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <AdminLayout title="Co-offering Decision Center">
+      <div className="space-y-6">
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-bold">Co-offering Decision Center</h2>
+
+          <div className="mt-4 flex flex-wrap gap-3">
+            <input
+              value={termName}
+              onChange={(e) => setTermName(e.target.value.toUpperCase())}
+              className="rounded-xl border px-4 py-3"
+            />
+
+            <button
+              type="button"
+              onClick={load}
+              disabled={loading}
+              className="rounded-xl bg-black px-5 py-3 text-white disabled:opacity-60"
+            >
+              {loading ? "Loading..." : "Load"}
+            </button>
+          </div>
+        </section>
+
+        {message ? (
+          <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {message}
+          </div>
+        ) : null}
+
+        {error ? (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        ) : null}
+
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
+          <h3 className="mb-4 text-lg font-bold">Offering Status / Reset</h3>
+
+          <div className="overflow-x-auto rounded-2xl border">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="border-b px-3 py-3 text-left">Offering</th>
+                  <th className="border-b px-3 py-3 text-left">Program</th>
+                  <th className="border-b px-3 py-3 text-left">Status</th>
+                  <th className="border-b px-3 py-3 text-left">Courses</th>
+                  <th className="border-b px-3 py-3 text-left">Action</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {offerings.map((offering) => (
+                  <tr key={offering.offeringId}>
+                    <td className="border-b px-3 py-2">
+                      #{offering.offeringId}
+                    </td>
+                    <td className="border-b px-3 py-2">
+                      {offering.programCode}
+                    </td>
+                    <td className="border-b px-3 py-2">
+                      <span
+                        className={
+                          offering.status === "CONFIRMED"
+                            ? "rounded-full bg-red-50 px-2 py-1 text-xs font-semibold text-red-700"
+                            : "rounded-full bg-green-50 px-2 py-1 text-xs font-semibold text-green-700"
+                        }
+                      >
+                        {offering.status}
+                      </span>
+                    </td>
+                    <td className="border-b px-3 py-2">
+                      {offering.courseCount}
+                    </td>
+                    <td className="border-b px-3 py-2">
+                      {offering.status === "CONFIRMED" ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            resetConfirmedOffering(
+                              offering.offeringId,
+                              `${offering.programCode} #${offering.offeringId}`
+                            )
+                          }
+                          disabled={resettingOfferingId === offering.offeringId}
+                          className="rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+                        >
+                          {resettingOfferingId === offering.offeringId
+                            ? "Resetting..."
+                            : "Reset to Editable"}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-slate-500">Editable</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+
+                {offerings.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-8 text-center text-slate-500">
+                      No offerings loaded.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
+          <h3 className="mb-4 text-lg font-bold">Manual Course Linking</h3>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-medium">
+                Primary Program
+              </label>
+              <select
+                value={primaryProgram}
+                onChange={(e) => {
+                  setPrimaryProgram(e.target.value);
+                  setPrimaryCourseId("");
+                }}
+                className="w-full rounded-xl border px-4 py-3"
+              >
+                {programOptions.map((program) => (
+                  <option key={program} value={program}>
+                    {program}
+                  </option>
+                ))}
+              </select>
+
+              <label className="mb-2 mt-4 block text-sm font-medium">
+                Primary Course
+              </label>
+              <select
+                value={primaryCourseId}
+                onChange={(e) => setPrimaryCourseId(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+              >
+                <option value="">Select primary course</option>
+                {primaryCourses.map((course) => (
+                  <option
+                    key={course.id}
+                    value={course.id}
+                    disabled={
+                      course.offeringStatus === "CONFIRMED" ||
+                      Boolean(course.primaryOfferedCourseId)
+                    }
+                  >
+                    {course.courseCode} Sec-{course.section} |{" "}
+                    {course.courseTitle} | {course.offeringStatus}
+                    {course.primaryOfferedCourseId ? " | Linked Secondary" : ""}
+                  </option>
+                ))}
+              </select>
+
+              {selectedPrimary ? (
+                <div className="mt-3 rounded-xl border bg-slate-50 p-3 text-sm">
+                  <div>
+                    <b>Credit:</b> {selectedPrimary.credit}
+                  </div>
+                  <div>
+                    <b>Batches:</b>{" "}
+                    {selectedPrimary.batchCodes?.join(", ") || "-"}
+                  </div>
+                  <div>
+                    <b>Own slots:</b> {selectedPrimary.slotCount}
+                  </div>
+                  <div>
+                    <b>Faculty rows:</b> {selectedPrimary.teacherCount}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium">
+                Secondary Program
+              </label>
+              <select
+                value={secondaryProgram}
+                onChange={(e) => {
+                  setSecondaryProgram(e.target.value);
+                  setSecondaryCourseId("");
+                }}
+                className="w-full rounded-xl border px-4 py-3"
+              >
+                {programOptions.map((program) => (
+                  <option key={program} value={program}>
+                    {program}
+                  </option>
+                ))}
+              </select>
+
+              <label className="mb-2 mt-4 block text-sm font-medium">
+                Secondary Course
+              </label>
+              <select
+                value={secondaryCourseId}
+                onChange={(e) => setSecondaryCourseId(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+              >
+                <option value="">Select secondary course</option>
+                {secondaryCourses.map((course) => (
+                  <option
+                    key={course.id}
+                    value={course.id}
+                    disabled={course.offeringStatus === "CONFIRMED"}
+                  >
+                    {course.courseCode} Sec-{course.section} |{" "}
+                    {course.courseTitle} | {course.offeringStatus}
+                    {course.primaryOfferedCourseId
+                      ? ` | Linked to ${course.linkedPrimaryLabel}`
+                      : ""}
+                  </option>
+                ))}
+              </select>
+
+              {selectedSecondary ? (
+                <div className="mt-3 rounded-xl border bg-slate-50 p-3 text-sm">
+                  <div>
+                    <b>Credit:</b> {selectedSecondary.credit}
+                  </div>
+                  <div>
+                    <b>Batches:</b>{" "}
+                    {selectedSecondary.batchCodes?.join(", ") || "-"}
+                  </div>
+                  <div>
+                    <b>Own slots:</b> {selectedSecondary.slotCount}
+                  </div>
+                  <div>
+                    <b>Faculty rows:</b> {selectedSecondary.teacherCount}
+                  </div>
+                  <div>
+                    <b>Linked:</b>{" "}
+                    {selectedSecondary.primaryOfferedCourseId
+                      ? selectedSecondary.linkedPrimaryLabel
+                      : "No"}
+                  </div>
+
+                  {selectedSecondary.primaryOfferedCourseId ? (
+                    <button
+                      type="button"
+                      onClick={() => unlinkCourse(selectedSecondary.id)}
+                      className="mt-3 rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700"
+                    >
+                      Unlink This Course
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={manualLink}
+            disabled={!primaryCourseId || !secondaryCourseId}
+            className="mt-5 rounded-xl bg-green-600 px-5 py-3 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60"
+          >
+            Link Courses
+          </button>
+        </section>
+
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
+          <h3 className="mb-4 text-lg font-bold">Auto Suggestions</h3>
+
+          {candidates.map((candidate) => (
+            <div
+              key={`${candidate.primaryId}-${candidate.secondaryId}`}
+              className="mb-2 rounded-xl border p-3 text-sm"
+            >
+              <div>{candidate.primaryLabel}</div>
+              <div className="text-slate-500">↔ {candidate.secondaryLabel}</div>
+              <div className="text-xs text-slate-400">
+                Score: {candidate.score} | {candidate.reason}
+              </div>
+            </div>
+          ))}
+
+          {candidates.length === 0 ? (
+            <div className="rounded-xl border bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+              No automatic suggestions. Use manual linking above.
+            </div>
+          ) : null}
+        </section>
+      </div>
+    </AdminLayout>
+  );
+}
+
+
+===== FILE: src\app\api\admin\co-offering-decision\candidates\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+
+const VISIBLE_STATUSES = [
+  "DRAFT",
+  "BUFFER_READY",
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+const TARGET_PROGRAMS = [
+  "BSC-EEE-EVE-NEW",
+  "BSC-EEE-REG-NEW",
+  "BSC-RAE-REG-NEW",
+];
+
+function normalize(value: unknown) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function titleScore(a: string, b: string) {
+  const aa = new Set(normalize(a).split(" ").filter(Boolean));
+  const bb = new Set(normalize(b).split(" ").filter(Boolean));
+
+  if (aa.size === 0 || bb.size === 0) return 0;
+
+  const common = [...aa].filter((item) => bb.has(item)).length;
+  return common / Math.max(aa.size, bb.size);
+}
+
+export async function GET(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const termName = normalize(searchParams.get("termName"));
+
+    if (!termName) {
+      return NextResponse.json(
+        { ok: false, error: "termName is required." },
+        { status: 400 }
+      );
+    }
+
+    const offerings = await prisma.offerings.findMany({
+      where: {
+        academic_terms: {
+          name: termName,
+        },
+        status: {
+          in: VISIBLE_STATUSES,
+        },
+        programs: {
+          short_name: {
+            in: TARGET_PROGRAMS,
+          },
+        },
+      },
+      include: {
+        programs: true,
+        academic_terms: true,
+        offered_courses: {
+          include: {
+            master_courses: true,
+            primary_offered_course: {
+              include: {
+                master_courses: true,
+                offerings: {
+                  include: {
+                    programs: true,
+                  },
+                },
+              },
+            },
+            secondary_offered_courses: {
+              include: {
+                master_courses: true,
+                offerings: {
+                  include: {
+                    programs: true,
+                  },
+                },
+              },
+            },
+            offered_course_batches: {
+              include: {
+                batches: true,
+              },
+            },
+            offered_course_slots: true,
+            offered_course_teachers: true,
+          },
+          orderBy: [{ id: "asc" }],
+        },
+      },
+      orderBy: [{ program_id: "asc" }, { id: "asc" }],
+    });
+
+    const flatCourses = offerings.flatMap((offering) =>
+      offering.offered_courses.map((course) => ({
+        id: course.id,
+        offeringId: offering.id,
+        programCode: offering.programs.short_name,
+        programName: offering.programs.name,
+        offeringStatus: offering.status,
+        courseCode: course.master_courses.course_code,
+        courseTitle: course.master_courses.course_title,
+        courseTitleNorm: normalize(course.master_courses.course_title),
+        credit: Number(course.master_courses.credit || 0),
+        section: course.section,
+        primaryOfferedCourseId: course.primary_offered_course_id,
+        isCooffered: Boolean(course.is_cooffered),
+        linkedPrimaryLabel: course.primary_offered_course
+          ? `${course.primary_offered_course.offerings.programs.short_name} | ${course.primary_offered_course.master_courses.course_code} Sec-${course.primary_offered_course.section}`
+          : "",
+        secondaryCount: course.secondary_offered_courses.length,
+        batchCodes: course.offered_course_batches.map(
+          (row) => row.batches.batch_code
+        ),
+        slotCount: course.offered_course_slots.length,
+        teacherCount: course.offered_course_teachers.length,
+        label: `${offering.programs.short_name} | ${course.master_courses.course_code} - ${course.master_courses.course_title} | Sec-${course.section} | ${offering.status}`,
+      }))
+    );
+
+    const candidates: Array<{
+      primaryId: number;
+      secondaryId: number;
+      primaryLabel: string;
+      secondaryLabel: string;
+      score: number;
+      reason: string;
+    }> = [];
+
+    const unlinkedCourses = flatCourses.filter(
+      (course) => !course.primaryOfferedCourseId
+    );
+
+    for (let i = 0; i < unlinkedCourses.length; i += 1) {
+      for (let j = i + 1; j < unlinkedCourses.length; j += 1) {
+        const a = unlinkedCourses[i];
+        const b = unlinkedCourses[j];
+
+        if (a.programCode === b.programCode) continue;
+
+        const sameCredit = Math.abs(a.credit - b.credit) < 0.01;
+        const exactTitle = a.courseTitleNorm === b.courseTitleNorm;
+        const score = titleScore(a.courseTitle, b.courseTitle);
+
+        if (!sameCredit) continue;
+
+        if (exactTitle || score >= 0.45) {
+          candidates.push({
+            primaryId: a.id,
+            secondaryId: b.id,
+            primaryLabel: a.label,
+            secondaryLabel: b.label,
+            score: Number(score.toFixed(2)),
+            reason: exactTitle
+              ? "Exact title + same credit"
+              : "Similar title + same credit",
+          });
+        }
+      }
+    }
+
+    return NextResponse.json({
+      ok: true,
+      termName,
+      diagnostics: {
+        matchedOfferings: offerings.map((offering) => ({
+          offeringId: offering.id,
+          programCode: offering.programs.short_name,
+          programName: offering.programs.name,
+          status: offering.status,
+          courseCount: offering.offered_courses.length,
+        })),
+        totalCoursesScanned: flatCourses.length,
+        totalCandidates: candidates.length,
+      },
+      courses: flatCourses,
+      candidates,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load co-offering decision data.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\admin\co-offering-decision\manual-link\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
+
+const LINK_ALLOWED_STATUSES = [
+  "DRAFT",
+  "BUFFER_READY",
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+];
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await req.json();
+
+    const primaryOfferedCourseId = Number(body.primaryOfferedCourseId);
+    const secondaryOfferedCourseId = Number(body.secondaryOfferedCourseId);
+
+    if (
+      !Number.isFinite(primaryOfferedCourseId) ||
+      primaryOfferedCourseId <= 0 ||
+      !Number.isFinite(secondaryOfferedCourseId) ||
+      secondaryOfferedCourseId <= 0
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Valid primaryOfferedCourseId and secondaryOfferedCourseId are required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (primaryOfferedCourseId === secondaryOfferedCourseId) {
+      return NextResponse.json(
+        { ok: false, error: "A course cannot be linked with itself." },
+        { status: 400 }
+      );
+    }
+
+    const primary = await prisma.offered_courses.findUnique({
+      where: { id: primaryOfferedCourseId },
+      include: {
+        offerings: {
+          include: {
+            academic_terms: true,
+            programs: true,
+          },
+        },
+        master_courses: true,
+      },
+    });
+
+    const secondary = await prisma.offered_courses.findUnique({
+      where: { id: secondaryOfferedCourseId },
+      include: {
+        offerings: {
+          include: {
+            academic_terms: true,
+            programs: true,
+          },
+        },
+        master_courses: true,
+      },
+    });
+
+    if (!primary || !secondary) {
+      return NextResponse.json(
+        { ok: false, error: "Selected course section was not found." },
+        { status: 404 }
+      );
+    }
+
+    if (primary.primary_offered_course_id) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Selected primary course is already a secondary co-offered course.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (secondary.primary_offered_course_id) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Selected secondary course is already linked under another primary.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (
+      primary.offerings.academic_term_id !== secondary.offerings.academic_term_id
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "Both courses must be in the same academic term." },
+        { status: 400 }
+      );
+    }
+
+    if (primary.offerings.program_id === secondary.offerings.program_id) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Co-offering should link courses from different programs.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (
+      primary.offerings.status === "CONFIRMED" ||
+      secondary.offerings.status === "CONFIRMED"
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "One of the selected offerings is CONFIRMED. Reset it before linking.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (
+      !LINK_ALLOWED_STATUSES.includes(primary.offerings.status) ||
+      !LINK_ALLOWED_STATUSES.includes(secondary.offerings.status)
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Co-offering link is allowed only before CONFIRMED status.",
+        },
+        { status: 400 }
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.offered_courses.update({
+        where: { id: secondary.id },
+        data: {
+          primary_offered_course_id: primary.id,
+          is_cooffered: true,
+        },
+      });
+
+      await tx.offered_courses.update({
+        where: { id: primary.id },
+        data: {
+          is_cooffered: true,
+        },
+      });
+    });
+
+    clearReportingCacheWithLog("manual course-level co-offering link created");
+
+    return NextResponse.json({
+      ok: true,
+      message: `${secondary.offerings.programs.short_name} ${secondary.master_courses.course_code} Sec-${secondary.section} linked under ${primary.offerings.programs.short_name} ${primary.master_courses.course_code} Sec-${primary.section}.`,
+    });
+  } catch (error) {
+    clearReportingCacheWithLog("manual course-level co-offering link failed");
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to create manual co-offering link.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\admin\co-offering-decision\unlink\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const { offeredCourseId } = await req.json();
+
+    if (!offeredCourseId) {
+      return NextResponse.json(
+        { ok: false, error: "offeredCourseId required" },
+        { status: 400 }
+      );
+    }
+
+    const course = await prisma.offered_courses.findUnique({
+      where: { id: offeredCourseId },
+      include: {
+        primary_offered_course: true,
+        secondary_offered_courses: true,
+      },
+    });
+
+    if (!course) {
+      return NextResponse.json(
+        { ok: false, error: "Course not found" },
+        { status: 404 }
+      );
+    }
+
+    // CASE 1: This is SECONDARY → unlink from primary
+    if (course.primary_offered_course_id) {
+      await prisma.offered_courses.update({
+        where: { id: course.id },
+        data: {
+          primary_offered_course_id: null,
+          is_cooffered: false,
+        },
+      });
+
+      clearReportingCacheWithLog("co-offering unlinked (secondary)");
+
+      return NextResponse.json({
+        ok: true,
+        message: "Secondary course unlinked successfully",
+      });
+    }
+
+    // CASE 2: This is PRIMARY → unlink ALL secondaries
+    if (course.secondary_offered_courses.length > 0) {
+      await prisma.offered_courses.updateMany({
+        where: {
+          primary_offered_course_id: course.id,
+        },
+        data: {
+          primary_offered_course_id: null,
+          is_cooffered: false,
+        },
+      });
+
+      await prisma.offered_courses.update({
+        where: { id: course.id },
+        data: { is_cooffered: false },
+      });
+
+      clearReportingCacheWithLog("co-offering unlinked (primary)");
+
+      return NextResponse.json({
+        ok: true,
+        message: "Primary and all linked courses reset",
+      });
+    }
+
+    return NextResponse.json({
+      ok: false,
+      error: "Course is not co-offered",
+    });
+
+  } catch (err) {
+    return NextResponse.json(
+      { ok: false, error: "Unlink failed" },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\admin\co-offering-decision\reset-confirmed\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
+
+export async function POST(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await req.json();
+    const offeringId = Number(body.offeringId);
+
+    if (!Number.isFinite(offeringId) || offeringId <= 0) {
+      return NextResponse.json(
+        { ok: false, error: "Valid offeringId is required." },
+        { status: 400 }
+      );
+    }
+
+    const offering = await prisma.offerings.findUnique({
+      where: { id: offeringId },
+      include: {
+        programs: true,
+        academic_terms: true,
+      },
+    });
+
+    if (!offering) {
+      return NextResponse.json(
+        { ok: false, error: "Offering not found." },
+        { status: 404 }
+      );
+    }
+
+    if (offering.status !== "CONFIRMED") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Only CONFIRMED offering can be reset. Current status: ${offering.status}`,
+        },
+        { status: 400 }
+      );
+    }
+
+    await prisma.offerings.update({
+      where: { id: offering.id },
+      data: {
+        status: "FACULTY_CHOICE_FINALIZED",
+      },
+    });
+
+    clearReportingCacheWithLog("co-offering decision reset confirmed offering");
+
+    return NextResponse.json({
+      ok: true,
+      message: `${offering.programs.short_name} ${offering.academic_terms.name} reset from CONFIRMED to FACULTY_CHOICE_FINALIZED.`,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to reset confirmed offering.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\admin\schedule-control\page-client.tsx =====
+
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import AdminLayout from "@/components/admin-layout";
+
+type OfferingOption = {
+  id: number;
+  programCode: string;
+  programName: string;
+  status: string;
+  courseCount: number;
+  canEdit: boolean;
+  canConfirm: boolean;
+};
+
+type SlotRow = {
+  id: number;
+  dayOfWeek: string;
+  startTime: string;
+  endTime: string;
+  roomId: number;
+  roomCode: string;
+  roomType: string;
+  slotType: string;
+};
+
+type TeacherRow = {
+  assignmentId: number;
+  teacherId: number;
+  teacherCode: string;
+  fullName: string;
+  designation: string;
+  assignedCredit: number;
+  loadType: string;
+};
+
+type CourseRow = {
+  offeredCourseId: number;
+  primaryOfferedCourseId: number | null;
+  editableCourseId: number;
+  isSecondary: boolean;
+  programCode: string;
+  programName: string;
+  offeringStatus: string;
+  courseCode: string;
+  courseTitle: string;
+  credit: number;
+  courseType: string;
+  section: string;
+  batchCodes: string[];
+  isSlotOptional: boolean;
+  slots: SlotRow[];
+  teachers: TeacherRow[];
+  facultyText: string;
+  scheduleText: string;
+};
+
+type AvailabilityRoom = {
+  id: number;
+  roomCode: string;
+  roomType: string;
+  capacity: number | null;
+};
+
+type AvailabilityTeacher = {
+  id: number;
+  teacherCode: string;
+  fullName: string;
+  designation: string;
+  email: string;
+  phone: string;
+  seniorityLevel: number | null;
+};
+
+type ConflictItem = {
+  type: string;
+  dayOfWeek: string;
+  startTime: string;
+  endTime: string;
+  conflictWithStartTime: string;
+  conflictWithEndTime: string;
+  roomCode: string;
+  batchCodes: string[];
+  teacherCodes: string[];
+  first: {
+    programCode: string;
+    courseCode: string;
+    courseTitle: string;
+    section: string;
+  };
+  second: {
+    programCode: string;
+    courseCode: string;
+    courseTitle: string;
+    section: string;
+  };
+};
+
+const DAYS = ["THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY", "MONDAY"];
+
+const DURATIONS = [
+  { value: 60, label: "1 Hour" },
+  { value: 90, label: "1.5 Hours" },
+  { value: 120, label: "2 Hours" },
+  { value: 180, label: "3 Hours" },
+];
+
+function addMinutes(startTime: string, minutes: number) {
+  const [hh, mm] = startTime.split(":").map(Number);
+  const total = hh * 60 + mm + minutes;
+  const h = Math.floor(total / 60) % 24;
+  const m = total % 60;
+
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function durationFromTimes(startTime: string, endTime: string) {
+  const [sh, sm] = startTime.split(":").map(Number);
+  const [eh, em] = endTime.split(":").map(Number);
+  return Math.max(60, eh * 60 + em - (sh * 60 + sm));
+}
+
+export default function ScheduleControlPageClient() {
+  const [terms, setTerms] = useState<string[]>([]);
+  const [termName, setTermName] = useState("");
+  const [offerings, setOfferings] = useState<OfferingOption[]>([]);
+  const [offeringId, setOfferingId] = useState("");
+  const [courses, setCourses] = useState<CourseRow[]>([]);
+
+  const [loading, setLoading] = useState(false);
+  const [loadingCourses, setLoadingCourses] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const [editingCourse, setEditingCourse] = useState<CourseRow | null>(null);
+  const [editingSlot, setEditingSlot] = useState<SlotRow | null>(null);
+
+  const [dayOfWeek, setDayOfWeek] = useState("THURSDAY");
+  const [startTime, setStartTime] = useState("09:00");
+  const [durationMinutes, setDurationMinutes] = useState(60);
+  const [roomId, setRoomId] = useState("");
+
+  const [availableRooms, setAvailableRooms] = useState<AvailabilityRoom[]>([]);
+  const [availableTeachers, setAvailableTeachers] = useState<AvailabilityTeacher[]>([]);
+  const [teacherId, setTeacherId] = useState("");
+
+  const [loadingAvailability, setLoadingAvailability] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const [conflicts, setConflicts] = useState<ConflictItem[]>([]);
+  const [checkingConflicts, setCheckingConflicts] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  const selectedOffering = useMemo(
+    () => offerings.find((item) => String(item.id) === offeringId) || null,
+    [offerings, offeringId]
+  );
+
+  async function loadTerms() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch("/api/admin/schedule-control", {
+        cache: "no-store",
+      });
+      const json = await res.json();
+
+      if (!res.ok) throw new Error(json.error || "Failed to load terms.");
+
+      setTerms(json.terms || []);
+
+      if (!termName && json.terms?.length) {
+        setTermName(json.terms[0]);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load terms.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadOfferings(activeTerm = termName) {
+    if (!activeTerm) return;
+
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const qs = new URLSearchParams({ termName: activeTerm });
+
+      const res = await fetch(`/api/admin/schedule-control?${qs.toString()}`, {
+        cache: "no-store",
+      });
+      const json = await res.json();
+
+      if (!res.ok) throw new Error(json.error || "Failed to load offerings.");
+
+      setOfferings(json.offerings || []);
+
+      if (!offeringId && json.offerings?.length) {
+        setOfferingId(String(json.offerings[0].id));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load offerings.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadCourses() {
+    if (!termName || !offeringId) return;
+
+    setLoadingCourses(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const qs = new URLSearchParams({
+        termName,
+        offeringId,
+      });
+
+      const res = await fetch(`/api/admin/schedule-control?${qs.toString()}`, {
+        cache: "no-store",
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) throw new Error(json.error || "Failed to load courses.");
+
+      setOfferings(json.offerings || []);
+      setCourses(json.courses || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load courses.");
+      setCourses([]);
+    } finally {
+      setLoadingCourses(false);
+    }
+  }
+
+  async function loadAvailability(course: CourseRow, slot: SlotRow | null) {
+    const endTime = addMinutes(startTime, durationMinutes);
+
+    setLoadingAvailability(true);
+    setError("");
+
+    try {
+      const qs = new URLSearchParams({
+        offeredCourseId: String(course.editableCourseId),
+        dayOfWeek,
+        startTime,
+        endTime,
+      });
+
+      if (slot?.id) qs.set("slotId", String(slot.id));
+
+      const res = await fetch(
+        `/api/admin/schedule-control/availability?${qs.toString()}`,
+        { cache: "no-store" }
+      );
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load availability.");
+      }
+
+      setAvailableRooms(json.rooms || []);
+      setAvailableTeachers(json.teachers || []);
+
+      if (json.rooms?.length) {
+        const currentRoomStillAvailable = json.rooms.some(
+          (room: AvailabilityRoom) => String(room.id) === roomId
+        );
+
+        if (!currentRoomStillAvailable) {
+          setRoomId(String(json.rooms[0].id));
+        }
+      } else {
+        setRoomId("");
+      }
+
+      if (json.teachers?.length) {
+        const currentTeacherStillAvailable = json.teachers.some(
+          (teacher: AvailabilityTeacher) => String(teacher.id) === teacherId
+        );
+
+        if (!currentTeacherStillAvailable) {
+          setTeacherId(String(json.teachers[0].id));
+        }
+      } else {
+        setTeacherId("");
+      }
+    } catch (err) {
+      setAvailableRooms([]);
+      setAvailableTeachers([]);
+      setError(err instanceof Error ? err.message : "Failed to load availability.");
+    } finally {
+      setLoadingAvailability(false);
+    }
+  }
+
+  function openEditor(course: CourseRow, slot?: SlotRow) {
+    if (course.offeringStatus === "CONFIRMED") {
+      setError("This offering is already CONFIRMED. Editing is blocked.");
+      return;
+    }
+
+    const selectedSlot = slot || course.slots[0] || null;
+
+    setEditingCourse(course);
+    setEditingSlot(selectedSlot);
+    setDayOfWeek(selectedSlot?.dayOfWeek || "THURSDAY");
+    setStartTime(selectedSlot?.startTime || "09:00");
+    setDurationMinutes(
+      selectedSlot ? durationFromTimes(selectedSlot.startTime, selectedSlot.endTime) : 60
+    );
+    setRoomId(selectedSlot?.roomId ? String(selectedSlot.roomId) : "");
+    setTeacherId(
+      course.teachers[0]?.teacherId ? String(course.teachers[0].teacherId) : ""
+    );
+    setAvailableRooms([]);
+    setAvailableTeachers([]);
+  }
+
+  function closeEditor() {
+    setEditingCourse(null);
+    setEditingSlot(null);
+    setAvailableRooms([]);
+    setAvailableTeachers([]);
+    setRoomId("");
+    setTeacherId("");
+  }
+
+  async function saveSlot() {
+    if (!editingCourse) return;
+
+    if (!roomId) {
+      setError("Please select an available room.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const endTime = addMinutes(startTime, durationMinutes);
+
+      const res = await fetch("/api/admin/schedule-control/apply", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "UPSERT_SLOT",
+          offeredCourseId: editingCourse.editableCourseId,
+          slotId: editingSlot?.id || null,
+          dayOfWeek,
+          startTime,
+          endTime,
+          roomId: Number(roomId),
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) throw new Error(json.error || "Failed to save slot.");
+
+      setMessage(json.message || "Slot saved.");
+      await loadCourses();
+      closeEditor();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save slot.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveFaculty() {
+    if (!editingCourse) return;
+
+    if (!teacherId) {
+      setError("Please select an available faculty member.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/schedule-control/apply", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "ASSIGN_FACULTY",
+          offeredCourseId: editingCourse.editableCourseId,
+          teacherId: Number(teacherId),
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) throw new Error(json.error || "Failed to assign faculty.");
+
+      setMessage(json.message || "Faculty updated.");
+      await loadCourses();
+      closeEditor();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to assign faculty.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function runConflictCheck() {
+    if (!termName || !offeringId) return;
+
+    setCheckingConflicts(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const qs = new URLSearchParams({
+        termName,
+        offeringId,
+      });
+
+      const res = await fetch(`/api/admin/conflicts/run-check?${qs.toString()}`, {
+        cache: "no-store",
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) throw new Error(json.error || "Failed to run conflict check.");
+
+      setConflicts(json.conflicts || []);
+
+      if ((json.conflicts || []).length === 0) {
+        setMessage("No conflicts found. This offering is ready for confirmation.");
+      } else {
+        setError(`${json.conflicts.length} conflict(s) found. Please resolve them.`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to run conflict check.");
+    } finally {
+      setCheckingConflicts(false);
+    }
+  }
+
+  async function confirmOffering() {
+    if (!offeringId) return;
+
+    const ok = window.confirm(
+      "Confirm this offering? After confirmation, slot/faculty edits will be locked."
+    );
+
+    if (!ok) return;
+
+    setConfirming(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/schedule-control/confirm", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          offeringId: Number(offeringId),
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        const blockers =
+          Array.isArray(json.blockers) && json.blockers.length
+            ? `\n\nBlockers:\n- ${json.blockers.join("\n- ")}`
+            : "";
+
+        throw new Error((json.error || "Failed to confirm offering.") + blockers);
+      }
+
+      setMessage(
+        `${json.message || "Offering confirmed."} Reports and public schedule can now be checked.`
+      );
+
+      await loadOfferings(termName);
+      await loadCourses();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to confirm offering."
+      );
+    } finally {
+      setConfirming(false);
+    }
+  }
+
+  useEffect(() => {
+    loadTerms();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (termName) {
+      setOfferingId("");
+      setCourses([]);
+      setConflicts([]);
+      void loadOfferings(termName);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [termName]);
+
+  useEffect(() => {
+    if (termName && offeringId) {
+      setConflicts([]);
+      void loadCourses();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offeringId]);
+
+  useEffect(() => {
+    if (editingCourse) {
+      void loadAvailability(editingCourse, editingSlot);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingCourse?.editableCourseId, editingSlot?.id, dayOfWeek, startTime, durationMinutes]);
+
+  return (
+    <AdminLayout title="Final Schedule Control Center">
+      <div className="space-y-6">
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-bold text-slate-900">
+            Final Schedule Control Center
+          </h2>
+          <p className="mt-2 text-sm text-slate-600">
+            Review all offered courses, adjust slots, rooms and faculty using
+            availability-aware dropdowns, run the final conflict check, then confirm
+            the offering for reports and the public schedule.
+          </p>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div>
+              <label className="mb-2 block text-sm font-medium">Academic Term</label>
+              <select
+                value={termName}
+                onChange={(e) => setTermName(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+                disabled={loading}
+              >
+                <option value="">Select Term</option>
+                {terms.map((term) => (
+                  <option key={term} value={term}>
+                    {term}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="xl:col-span-2">
+              <label className="mb-2 block text-sm font-medium">Offering</label>
+              <select
+                value={offeringId}
+                onChange={(e) => setOfferingId(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+                disabled={!termName || loading}
+              >
+                <option value="">Select Offering</option>
+                {offerings.map((offering) => (
+                  <option key={offering.id} value={offering.id}>
+                    #{offering.id} | {offering.programCode} | {offering.status} |{" "}
+                    {offering.courseCount} courses
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-end gap-2">
+              <button
+                type="button"
+                onClick={runConflictCheck}
+                disabled={!offeringId || checkingConflicts}
+                className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+              >
+                {checkingConflicts ? "Checking..." : "Run Conflict Check"}
+              </button>
+            </div>
+          </div>
+
+          {selectedOffering ? (
+            <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800">
+              Selected:{" "}
+              <span className="font-semibold">
+                {selectedOffering.programCode} — {selectedOffering.programName}
+              </span>{" "}
+              | Status: <span className="font-semibold">{selectedOffering.status}</span>
+            </div>
+          ) : null}
+        </section>
+
+        {message ? (
+          <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {message}
+          </div>
+        ) : null}
+
+        {error ? (
+          <div className="whitespace-pre-wrap rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        ) : null}
+
+        {conflicts.length > 0 ? (
+          <section className="rounded-3xl border border-red-200 bg-white p-6 shadow-sm">
+            <h3 className="text-lg font-bold text-red-700">
+              Conflict Review ({conflicts.length})
+            </h3>
+
+            <div className="mt-4 overflow-x-auto rounded-2xl border">
+              <table className="min-w-full text-sm">
+                <thead className="bg-red-50">
+                  <tr>
+                    <th className="border-b px-3 py-3 text-left">Type</th>
+                    <th className="border-b px-3 py-3 text-left">Time</th>
+                    <th className="border-b px-3 py-3 text-left">Room/Batch/Faculty</th>
+                    <th className="border-b px-3 py-3 text-left">First Course</th>
+                    <th className="border-b px-3 py-3 text-left">Conflicts With</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {conflicts.map((conflict, index) => (
+                    <tr key={index}>
+                      <td className="border-b px-3 py-2 font-semibold">
+                        {conflict.type}
+                      </td>
+                      <td className="border-b px-3 py-2">
+                        {conflict.dayOfWeek} {conflict.startTime}-{conflict.endTime}
+                      </td>
+                      <td className="border-b px-3 py-2">
+                        Room: {conflict.roomCode || "-"}
+                        <br />
+                        Batch: {conflict.batchCodes?.join(", ") || "-"}
+                        <br />
+                        Faculty: {conflict.teacherCodes?.join(", ") || "-"}
+                      </td>
+                      <td className="border-b px-3 py-2">
+                        {conflict.first.programCode} | {conflict.first.courseCode}{" "}
+                        Sec-{conflict.first.section}
+                      </td>
+                      <td className="border-b px-3 py-2">
+                        {conflict.second.programCode} | {conflict.second.courseCode}{" "}
+                        Sec-{conflict.second.section}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">
+                Course Slot / Room / Faculty Control
+              </h3>
+              <p className="mt-1 text-sm text-slate-600">
+                Each course can be edited before confirmation. For co-offered
+                secondary rows, edit the primary operational section.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={confirmOffering}
+              disabled={!offeringId || confirming || selectedOffering?.status === "CONFIRMED"}
+              className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {confirming
+                ? "Confirming..."
+                : selectedOffering?.status === "CONFIRMED"
+                  ? "Already Confirmed"
+                  : "Confirm Offering"}
+            </button>
+          </div>
+
+          <div className="mt-5 overflow-x-auto rounded-2xl border">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="border-b px-3 py-3 text-left">Course</th>
+                  <th className="border-b px-3 py-3 text-left">Batch</th>
+                  <th className="border-b px-3 py-3 text-left">Schedule</th>
+                  <th className="border-b px-3 py-3 text-left">Faculty</th>
+                  <th className="border-b px-3 py-3 text-left">Action</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {courses.map((course) => (
+                  <tr key={course.offeredCourseId}>
+                    <td className="border-b px-3 py-3 align-top">
+                      <div className="font-semibold">
+                        {course.courseCode} — Sec {course.section}
+                      </div>
+                      <div className="text-xs text-slate-600">
+                        {course.courseTitle}
+                      </div>
+                      {course.isSecondary ? (
+                        <div className="mt-1 rounded-full bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700">
+                          Secondary co-offered row
+                        </div>
+                      ) : null}
+                    </td>
+
+                    <td className="border-b px-3 py-3 align-top">
+                      {course.batchCodes.join(", ") || "-"}
+                    </td>
+
+                    <td className="border-b px-3 py-3 align-top">
+                      {course.slots.length === 0 ? (
+                        course.isSlotOptional ? (
+                          <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">
+                            Slot optional
+                          </span>
+                        ) : (
+                          <span className="text-red-600">No slot</span>
+                        )
+                      ) : (
+                        <div className="space-y-2">
+                          {course.slots.map((slot) => (
+                            <div key={slot.id} className="rounded-xl border p-2">
+                              <div>
+                                {slot.dayOfWeek} {slot.startTime}-{slot.endTime}
+                              </div>
+                              <div className="text-xs text-slate-600">
+                                {slot.roomCode}
+                              </div>
+                              {course.offeringStatus !== "CONFIRMED" ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openEditor(course, slot)}
+                                  className="mt-2 rounded-lg bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700"
+                                >
+                                  Edit This Slot
+                                </button>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="border-b px-3 py-3 align-top">
+                      {course.facultyText}
+                    </td>
+
+                    <td className="border-b px-3 py-3 align-top">
+                      {course.offeringStatus === "CONFIRMED" ? (
+                        <span className="text-xs font-semibold text-slate-500">
+                          Locked
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openEditor(course)}
+                          className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+                        >
+                          Edit Slot / Room / Faculty
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+
+                {!loadingCourses && courses.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                      No courses loaded.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {editingCourse ? (
+          <section className="rounded-3xl border border-blue-200 bg-white p-6 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">
+                  Edit: {editingCourse.courseCode} Sec-{editingCourse.section}
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  {editingCourse.courseTitle}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeEditor}
+                className="rounded-xl bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-300"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-5">
+              <div>
+                <label className="mb-2 block text-sm font-medium">Day</label>
+                <select
+                  value={dayOfWeek}
+                  onChange={(e) => setDayOfWeek(e.target.value)}
+                  className="w-full rounded-xl border px-4 py-3"
+                >
+                  {DAYS.map((day) => (
+                    <option key={day} value={day}>
+                      {day}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium">Start Time</label>
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="w-full rounded-xl border px-4 py-3"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium">Duration</label>
+                <select
+                  value={durationMinutes}
+                  onChange={(e) => setDurationMinutes(Number(e.target.value))}
+                  className="w-full rounded-xl border px-4 py-3"
+                >
+                  {DURATIONS.map((duration) => (
+                    <option key={duration.value} value={duration.value}>
+                      {duration.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium">End Time</label>
+                <input
+                  value={addMinutes(startTime, durationMinutes)}
+                  readOnly
+                  className="w-full rounded-xl border bg-slate-100 px-4 py-3"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium">
+                  Available Room
+                </label>
+                <select
+                  value={roomId}
+                  onChange={(e) => setRoomId(e.target.value)}
+                  className="w-full rounded-xl border px-4 py-3"
+                  disabled={loadingAvailability || availableRooms.length === 0}
+                >
+                  {availableRooms.length === 0 ? (
+                    <option value="">
+                      {loadingAvailability ? "Checking..." : "No room available"}
+                    </option>
+                  ) : (
+                    availableRooms.map((room) => (
+                      <option key={room.id} value={room.id}>
+                        {room.roomCode} | {room.roomType}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-xl border bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              {loadingAvailability
+                ? "Checking room and faculty availability..."
+                : `${availableRooms.length} available room(s), ${availableTeachers.length} available faculty member(s) found.`}
+            </div>
+
+            <div className="mt-5">
+              <label className="mb-2 block text-sm font-medium">
+                Available Faculty
+              </label>
+              <select
+                value={teacherId}
+                onChange={(e) => setTeacherId(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+                disabled={loadingAvailability || availableTeachers.length === 0}
+              >
+                {availableTeachers.length === 0 ? (
+                  <option value="">
+                    {loadingAvailability ? "Checking..." : "No faculty available"}
+                  </option>
+                ) : (
+                  availableTeachers.map((teacher) => (
+                    <option key={teacher.id} value={teacher.id}>
+                      {teacher.teacherCode} - {teacher.fullName} |{" "}
+                      {teacher.designation}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={saveSlot}
+                disabled={saving || !roomId}
+                className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {saving ? "Saving..." : editingSlot ? "Update Slot / Room" : "Add Slot / Room"}
+              </button>
+
+              <button
+                type="button"
+                onClick={saveFaculty}
+                disabled={saving || !teacherId}
+                className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {saving ? "Saving..." : "Update Faculty"}
+              </button>
+            </div>
+          </section>
+        ) : null}
+      </div>
+    </AdminLayout>
+  );
+}
+
+
+===== FILE: src\app\api\admin\schedule-control\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import {
+  REPORT_VISIBLE_OFFERING_STATUSES,
+  SCHEDULE_CONFLICT_STATUSES,
+  isSlotOptionalCourse,
+} from "@/lib/course-schedule-policy";
+
+function normalizeText(value: unknown) {
+  return String(value || "").replace(/\s+/g, " ").trim().toUpperCase();
+}
+
+function unique(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort();
+}
+
+function scheduleText(slots: any[]) {
+  if (!slots.length) return "-";
+
+  return slots
+    .map(
+      (slot) =>
+        `${slot.day_of_week} ${slot.start_time}-${slot.end_time} ${
+          slot.rooms?.room_code || "-"
+        }`
+    )
+    .join("; ");
+}
+
+export async function GET(request: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const { searchParams } = new URL(request.url);
+    const termName = normalizeText(searchParams.get("termName"));
+    const offeringId = Number(searchParams.get("offeringId") || 0);
+
+    if (!termName) {
+      const terms = await prisma.offerings.findMany({
+        where: {
+          status: {
+            in: REPORT_VISIBLE_OFFERING_STATUSES,
+          },
+        },
+        select: {
+          academic_terms: {
+            select: {
+              name: true,
+            },
+          },
+        },
+        distinct: ["academic_term_id"],
+      });
+
+      return NextResponse.json({
+        ok: true,
+        terms: unique(terms.map((item) => item.academic_terms.name)),
+        offerings: [],
+        courses: [],
+      });
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: {
+        name: termName,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { ok: false, error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const offerings = await prisma.offerings.findMany({
+      where: {
+        academic_term_id: term.id,
+        status: {
+          in: SCHEDULE_CONFLICT_STATUSES,
+        },
+      },
+      include: {
+        programs: true,
+        _count: {
+          select: {
+            offered_courses: true,
+          },
+        },
+      },
+      orderBy: [{ program_id: "asc" }, { id: "asc" }],
+    });
+
+    if (!offeringId) {
+      return NextResponse.json({
+        ok: true,
+        termName: term.name,
+        terms: [],
+        offerings: offerings.map((offering) => ({
+          id: offering.id,
+          programCode: offering.programs.short_name,
+          programName: offering.programs.name,
+          status: offering.status,
+          courseCount: offering._count.offered_courses,
+          canEdit: offering.status !== "CONFIRMED",
+          canConfirm: offering.status !== "CONFIRMED",
+        })),
+        courses: [],
+      });
+    }
+
+    const offering = await prisma.offerings.findFirst({
+      where: {
+        id: offeringId,
+        academic_term_id: term.id,
+      },
+      include: {
+        programs: true,
+      },
+    });
+
+    if (!offering) {
+      return NextResponse.json(
+        { ok: false, error: "Offering not found for selected term." },
+        { status: 404 }
+      );
+    }
+
+    const offeredCourses = await prisma.offered_courses.findMany({
+      where: {
+        offering_id: offering.id,
+      },
+      include: {
+        master_courses: true,
+        offered_course_batches: {
+          include: {
+            batches: true,
+          },
+        },
+        offered_course_slots: {
+          include: {
+            rooms: true,
+          },
+          orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+        },
+        offered_course_teachers: {
+          include: {
+            teachers: true,
+          },
+        },
+        primary_offered_course: {
+          include: {
+            offered_course_slots: {
+              include: {
+                rooms: true,
+              },
+              orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+            },
+            offered_course_teachers: {
+              include: {
+                teachers: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ id: "asc" }],
+    });
+
+    const courses = offeredCourses.map((course) => {
+      const isSecondary = Boolean(course.primary_offered_course_id);
+      const effectiveSlots =
+        course.primary_offered_course?.offered_course_slots.length
+          ? course.primary_offered_course.offered_course_slots
+          : course.offered_course_slots;
+
+      const effectiveTeachers =
+        course.primary_offered_course?.offered_course_teachers.length
+          ? course.primary_offered_course.offered_course_teachers
+          : course.offered_course_teachers;
+
+      const batchCodes = unique(
+        course.offered_course_batches.map((row) => row.batches.batch_code)
+      );
+
+      return {
+        offeredCourseId: course.id,
+        primaryOfferedCourseId: course.primary_offered_course_id,
+        isSecondary,
+        editableCourseId: course.primary_offered_course_id || course.id,
+        programCode: offering.programs.short_name,
+        programName: offering.programs.name,
+        offeringStatus: offering.status,
+        courseCode: course.master_courses.course_code,
+        courseTitle: course.master_courses.course_title,
+        credit: course.master_courses.credit,
+        courseType: course.master_courses.course_type,
+        section: course.section,
+        batchCodes,
+        isSlotOptional: isSlotOptionalCourse({
+          course_code: course.master_courses.course_code,
+          course_title: course.master_courses.course_title,
+          course_type: course.master_courses.course_type,
+        }),
+        slots: effectiveSlots.map((slot) => ({
+          id: slot.id,
+          dayOfWeek: slot.day_of_week,
+          startTime: slot.start_time,
+          endTime: slot.end_time,
+          roomId: slot.room_id,
+          roomCode: slot.rooms?.room_code || "-",
+          roomType: slot.rooms?.room_type || "-",
+          slotType: slot.slot_type,
+        })),
+        teachers: effectiveTeachers.map((row) => ({
+          assignmentId: row.id,
+          teacherId: row.teacher_id,
+          teacherCode: row.teachers.teacher_code,
+          fullName: row.teachers.full_name,
+          designation: row.teachers.designation || "-",
+          assignedCredit: row.assigned_credit,
+          loadType: row.load_type,
+        })),
+        facultyText: effectiveTeachers.length
+          ? effectiveTeachers
+              .map((row) => `${row.teachers.teacher_code} - ${row.teachers.full_name}`)
+              .join(", ")
+          : "-",
+        scheduleText: scheduleText(effectiveSlots),
+      };
+    });
+
+    return NextResponse.json({
+      ok: true,
+      termName: term.name,
+      offering: {
+        id: offering.id,
+        programCode: offering.programs.short_name,
+        programName: offering.programs.name,
+        status: offering.status,
+        canEdit: offering.status !== "CONFIRMED",
+        canConfirm: offering.status !== "CONFIRMED",
+      },
+      offerings: offerings.map((item) => ({
+        id: item.id,
+        programCode: item.programs.short_name,
+        programName: item.programs.name,
+        status: item.status,
+        courseCount: item._count.offered_courses,
+        canEdit: item.status !== "CONFIRMED",
+        canConfirm: item.status !== "CONFIRMED",
+      })),
+      courses,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load schedule control data.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\admin\schedule-control\confirm\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
+import { isSlotOptionalCourse } from "@/lib/course-schedule-policy";
+import { scanScheduleConflicts } from "@/lib/schedule-conflict-scanner";
+
+export async function POST(request: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+  if (guard instanceof Response) return guard;
+
+  try {
+    const body = await request.json();
+    const offeringId = Number(body.offeringId);
+
+    if (!offeringId) {
+      return NextResponse.json(
+        { ok: false, error: "Valid offeringId is required." },
+        { status: 400 }
+      );
+    }
+
+    const offering = await prisma.offerings.findUnique({
+      where: {
+        id: offeringId,
+      },
+      include: {
+        programs: true,
+        academic_terms: true,
+        offered_courses: {
+          include: {
+            master_courses: true,
+            offered_course_batches: true,
+            offered_course_slots: true,
+            offered_course_teachers: {
+              include: {
+                teachers: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!offering) {
+      return NextResponse.json(
+        { ok: false, error: "Offering not found." },
+        { status: 404 }
+      );
+    }
+
+    if (offering.status === "CONFIRMED") {
+      return NextResponse.json({
+        ok: true,
+        message: "Offering is already CONFIRMED.",
+      });
+    }
+
+    const blockers: string[] = [];
+
+    for (const course of offering.offered_courses) {
+      const isPrimary = !course.primary_offered_course_id;
+
+      if (course.offered_course_batches.length === 0) {
+        blockers.push(
+          `${course.master_courses.course_code} Sec-${course.section}: no batch assigned.`
+        );
+      }
+
+      if (!isPrimary) continue;
+
+      const optional = isSlotOptionalCourse({
+        course_code: course.master_courses.course_code,
+        course_title: course.master_courses.course_title,
+        course_type: course.master_courses.course_type,
+      });
+
+      if (!optional && course.offered_course_slots.length === 0) {
+        blockers.push(
+          `${course.master_courses.course_code} Sec-${course.section}: no slot assigned.`
+        );
+      }
+
+      if (course.offered_course_teachers.length === 0) {
+        blockers.push(
+          `${course.master_courses.course_code} Sec-${course.section}: no faculty assigned.`
+        );
+      }
+
+      if (course.offered_course_teachers.length > 1) {
+        blockers.push(
+          `${course.master_courses.course_code} Sec-${course.section}: multiple faculty assignments found.`
+        );
+      }
+
+      const inactive = course.offered_course_teachers.find(
+        (row) => row.teachers.is_active === false
+      );
+
+      if (inactive) {
+        blockers.push(
+          `${course.master_courses.course_code} Sec-${course.section}: assigned faculty is inactive.`
+        );
+      }
+    }
+
+    const conflictResult = await scanScheduleConflicts({
+      termId: offering.academic_term_id,
+      offeringId: offering.id,
+    });
+
+    if (conflictResult.ok && conflictResult.conflicts.length > 0) {
+      blockers.push(
+        `${conflictResult.summary.total} conflict(s) found. Resolve all conflicts before confirmation.`
+      );
+    }
+
+    if (blockers.length > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Offering confirmation blocked.",
+          blockers,
+          conflicts: conflictResult.ok ? conflictResult.conflicts : [],
+          summary: conflictResult.ok ? conflictResult.summary : null,
+        },
+        { status: 400 }
+      );
+    }
+
+    await prisma.offerings.update({
+      where: {
+        id: offering.id,
+      },
+      data: {
+        status: "CONFIRMED",
+      },
+    });
+
+    clearReportingCacheWithLog("schedule-control confirmed offering");
+
+    return NextResponse.json({
+      ok: true,
+      message: `${offering.programs.short_name} ${offering.academic_terms.name} confirmed successfully.`,
+      reportUrl: `/admin/reports?termName=${encodeURIComponent(offering.academic_terms.name)}&programCode=${encodeURIComponent(offering.programs.short_name)}`,
+      publicScheduleUrl: `/schedule`,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to confirm offering.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\offerings\drafts\attach-batches\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { getCatalogProgramByCode } from "@/lib/academic-catalog";
+import { resolveCanonicalProgram } from "@/lib/canonical-program";
+import { canEditStructure } from "@/lib/offering-status";
+import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
+
+type ProgramCandidate = {
+  id: number;
+  short_name: string;
+  name: string;
+  source:
+    | "EXACT_PROGRAM_CODE"
+    | "CANONICAL_PROGRAM"
+    | "CURRICULUM_RELATED_PROGRAM";
+};
+
+function uniqueById<T extends { id: number }>(rows: T[]): T[] {
+  const seen = new Set<number>();
+  const out: T[] = [];
+
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+
+  return out;
+}
+
+function toMinutes(value: string) {
+  const raw = String(value || "").trim();
+  const m = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return -1;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function overlaps(aStart: string, aEnd: string, bStart: string, bEnd: string) {
+  const a1 = toMinutes(aStart);
+  const a2 = toMinutes(aEnd);
+  const b1 = toMinutes(bStart);
+  const b2 = toMinutes(bEnd);
+
+  if (a1 < 0 || a2 < 0 || b1 < 0 || b2 < 0) return false;
+  return a1 < b2 && b1 < a2;
+}
+
+async function getProgramCandidates(programCode: string): Promise<ProgramCandidate[]> {
+  const normalizedProgramCode = String(programCode || "").trim().toUpperCase();
+
+  if (!normalizedProgramCode) {
+    throw new Error("programCode is required.");
+  }
+
+  const staticCatalog = getCatalogProgramByCode(normalizedProgramCode);
+  if (!staticCatalog) {
+    throw new Error("Invalid academic identity programCode.");
+  }
+
+  const catalogEntry = await prisma.academic_catalog_entries.findUnique({
+    where: {
+      program_code: normalizedProgramCode,
+    },
+    select: {
+      curriculum_key: true,
+      department_code: true,
+      department_name: true,
+      program_title: true,
+      study_shift: true,
+    },
+  });
+
+  const candidates: ProgramCandidate[] = [];
+
+  const exactProgram = await prisma.programs.findFirst({
+    where: {
+      short_name: normalizedProgramCode,
+    },
+    select: {
+      id: true,
+      short_name: true,
+      name: true,
+    },
+  });
+
+  if (exactProgram) {
+    candidates.push({
+      ...exactProgram,
+      source: "EXACT_PROGRAM_CODE",
+    });
+  }
+
+  const canonicalProgram = await resolveCanonicalProgram({
+    department_code: catalogEntry?.department_code || staticCatalog.departmentCode,
+    department_name: catalogEntry?.department_name || staticCatalog.departmentName,
+    program_code: normalizedProgramCode,
+    program_title: catalogEntry?.program_title || staticCatalog.programTitle,
+    study_shift: catalogEntry?.study_shift || staticCatalog.studyShift,
+  });
+
+  if (!candidates.some((item) => item.id === canonicalProgram.id)) {
+    candidates.push({
+      id: canonicalProgram.id,
+      short_name: canonicalProgram.short_name,
+      name: canonicalProgram.name,
+      source: "CANONICAL_PROGRAM",
+    });
+  }
+
+  const curriculumKey = catalogEntry?.curriculum_key || null;
+
+  if (curriculumKey) {
+    const relatedCatalogEntries = await prisma.academic_catalog_entries.findMany({
+      where: {
+        curriculum_key: curriculumKey,
+        is_active: true,
+      },
+      select: {
+        program_code: true,
+      },
+    });
+
+    const relatedProgramCodes = relatedCatalogEntries
+      .map((item) => item.program_code)
+      .filter(Boolean);
+
+    if (relatedProgramCodes.length > 0) {
+      const relatedPrograms = await prisma.programs.findMany({
+        where: {
+          short_name: {
+            in: relatedProgramCodes,
+          },
+        },
+        select: {
+          id: true,
+          short_name: true,
+          name: true,
+        },
+      });
+
+      for (const item of relatedPrograms) {
+        if (!candidates.some((row) => row.id === item.id)) {
+          candidates.push({
+            ...item,
+            source: "CURRICULUM_RELATED_PROGRAM",
+          });
+        }
+      }
+    }
+  }
+
+  return uniqueById(candidates);
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    await requireCoordinatorOrAdminApi();
+
+    const body = await req.json();
+
+    const offeredCourseId = Number(body.offeredCourseId);
+    const programCode = String(body.programCode || "").trim().toUpperCase();
+    const batchCode = String(body.batchCode || "").trim();
+
+    if (!Number.isFinite(offeredCourseId) || offeredCourseId <= 0) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "Valid offeredCourseId is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!programCode) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "programCode is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!batchCode) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "batchCode is required." },
+        { status: 400 }
+      );
+    }
+
+    const offeredCourse = await prisma.offered_courses.findUnique({
+      where: {
+        id: offeredCourseId,
+      },
+      include: {
+        offerings: true,
+        master_courses: {
+          include: {
+            program: true,
+          },
+        },
+        offered_course_batches: {
+          include: {
+            batches: true,
+          },
+        },
+        offered_course_slots: true,
+      },
+    });
+
+    if (!offeredCourse) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        { ok: false, error: "Offered course not found." },
+        { status: 404 }
+      );
+    }
+
+    if (!canEditStructure(offeredCourse.offerings.status)) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Only structure-editable offered courses can accept new batches.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const candidates = await getProgramCandidates(programCode);
+    const candidateProgramIds = candidates.map((item) => item.id);
+
+    const targetBatch = await prisma.batches.findFirst({
+      where: {
+        batch_code: batchCode,
+        program_id: {
+          in: candidateProgramIds,
+        },
+      },
+      include: {
+        programs: true,
+      },
+    });
+
+    if (!targetBatch) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Batch ${batchCode} was not found under ${programCode}.`,
+        },
+        { status: 404 }
+      );
+    }
+
+    const alreadyAttached = offeredCourse.offered_course_batches.some(
+      (item) => item.batch_id === targetBatch.id
+    );
+
+    if (alreadyAttached) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Batch ${targetBatch.batch_code} is already attached to this section row.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    const duplicateElsewhereInSameTerm = await prisma.offered_course_batches.findFirst({
+      where: {
+        batch_id: targetBatch.id,
+        offered_courses: {
+          id: {
+            not: offeredCourse.id,
+          },
+          master_course_id: offeredCourse.master_course_id,
+          offerings: {
+            academic_term_id: offeredCourse.offerings.academic_term_id,
+            status: {
+              in: ["DRAFT", "CONFIRMED"],
+            },
+          },
+        },
+      },
+      include: {
+        offered_courses: {
+          include: {
+            offerings: {
+              include: {
+                academic_terms: true,
+              },
+            },
+            master_courses: true,
+          },
+        },
+      },
+    });
+
+    if (duplicateElsewhereInSameTerm) {
+      clearReportingCacheWithLog("offering/reporting data changed");
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            `${offeredCourse.master_courses.course_code} is already offered for batch ${targetBatch.batch_code} ` +
+            `in ${duplicateElsewhereInSameTerm.offered_courses.offerings.academic_terms.name}.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (offeredCourse.offered_course_slots.length > 0) {
+      for (const slot of offeredCourse.offered_course_slots) {
+        const sameDayBatchSlots = await prisma.offered_course_slots.findMany({
+          where: {
+            day_of_week: slot.day_of_week,
+            offered_course_id: {
+              not: offeredCourse.id,
+            },
+            offered_courses: {
+              offerings: {
+                academic_term_id: offeredCourse.offerings.academic_term_id,
+                status: {
+                  in: ["DRAFT", "CONFIRMED"],
+                },
+              },
+              offered_course_batches: {
+                some: {
+                  batch_id: targetBatch.id,
+                },
+              },
+            },
+          },
+          include: {
+            offered_courses: {
+              include: {
+                master_courses: true,
+              },
+            },
+          },
+        });
+
+        const conflict = sameDayBatchSlots.find((item) =>
+          overlaps(slot.start_time, slot.end_time, item.start_time, item.end_time)
+        );
+
+        if (conflict) {
+          clearReportingCacheWithLog("offering/reporting data changed");
+          return NextResponse.json(
+            {
+              ok: false,
+              error:
+                `Batch ${targetBatch.batch_code} has a schedule conflict with ` +
+                `${conflict.offered_courses.master_courses.course_code} section ${conflict.offered_courses.section}.`,
+            },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
+    await prisma.offered_course_batches.create({
+      data: {
+        offered_course_id: offeredCourse.id,
+        batch_id: targetBatch.id,
+      },
+    });
+
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json({
+      ok: true,
+      message: "Batch attached successfully.",
+      batch: {
+        id: targetBatch.id,
+        batchCode: targetBatch.batch_code,
+        programCode: targetBatch.programs.short_name,
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to attach batch.";
+
+    clearReportingCacheWithLog("offering/reporting data changed");
+    return NextResponse.json(
+      {
+        ok: false,
+        error: message,
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\offerings\drafts\batches\route.ts =====
+
+NOT PRESENT
+
+
+===== FILE: src\app\api\offerings\drafts\batches\[id]\route.ts =====
+
+NOT PRESENT
+
+
+===== FILE: src\app\api\public\schedule\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import {
+  compareDayTime,
+  REPORT_VISIBLE_OFFERING_STATUSES,
+  uniqueStrings,
+} from "@/lib/report-visible-statuses";
+
+const PUBLIC_PROGRAMS = [
+  "BSC-EEE-EVE-NEW",
+  "BSC-EEE-REG-NEW",
+  "BSC-RAE-REG-NEW",
+];
+
+type FacultyDetail = {
+  id: number;
+  teacherCode: string;
+  fullName: string;
+  designation: string;
+  phone: string;
+  email: string;
+};
+
+type PublicRoutineRow = {
+  batchCode: string;
+  programCode: string;
+  programName: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  facultyText: string;
+  facultyDetails: FacultyDetail[];
+  dayOfWeek: string;
+  startTime: string;
+  endTime: string;
+  roomCode: string;
+  scheduleKind: string;
+  offeringStatus: string;
+};
+
+function normalizeUpper(value: unknown) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function buildFacultyText(facultyDetails: FacultyDetail[]) {
+  if (facultyDetails.length === 0) return "-";
+
+  return uniqueStrings(
+    facultyDetails.map(
+      (faculty) => `${faculty.teacherCode} - ${faculty.fullName}`
+    )
+  ).join(", ");
+}
+
+function uniqueFaculty(rows: FacultyDetail[]) {
+  const map = new Map<number, FacultyDetail>();
+
+  for (const row of rows) {
+    if (!map.has(row.id)) {
+      map.set(row.id, row);
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) =>
+    a.teacherCode.localeCompare(b.teacherCode)
+  );
+}
+
+function detectScheduleKind(
+  slotType: string | null | undefined,
+  course: {
+    course_title?: string | null;
+    course_type?: string | null;
+  }
+) {
+  const text = `${slotType || ""} ${course.course_title || ""} ${
+    course.course_type || ""
+  }`.toUpperCase();
+
+  if (
+    text.includes("LAB") ||
+    text.includes("SESSIONAL") ||
+    text.includes("PRACTICAL") ||
+    text.includes("WORKSHOP")
+  ) {
+    return "LAB";
+  }
+
+  if (
+    text.includes("PROJECT") ||
+    text.includes("FYDP") ||
+    text.includes("THESIS") ||
+    text.includes("INTERNSHIP") ||
+    text.includes("VIVA")
+  ) {
+    return "PROJECT";
+  }
+
+  return "CLASS";
+}
+
+async function buildRows(params: {
+  termId: number;
+  programCode?: string;
+  batchCode?: string;
+  dayOfWeek?: string;
+}) {
+  const courses = await prisma.offered_courses.findMany({
+    where: {
+      offerings: {
+        academic_term_id: params.termId,
+        status: {
+          in: REPORT_VISIBLE_OFFERING_STATUSES,
+        },
+        programs: {
+          short_name: params.programCode
+            ? params.programCode
+            : {
+                in: PUBLIC_PROGRAMS,
+              },
+        },
+      },
+      offered_course_batches: params.batchCode
+        ? {
+            some: {
+              batches: {
+                batch_code: params.batchCode,
+              },
+            },
+          }
+        : undefined,
+    },
+    include: {
+      offerings: {
+        include: {
+          programs: true,
+        },
+      },
+      master_courses: true,
+      offered_course_batches: {
+        include: {
+          batches: true,
+        },
+      },
+      offered_course_slots: {
+        include: {
+          rooms: true,
+        },
+        orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+      },
+      offered_course_teachers: {
+        include: {
+          teachers: true,
+        },
+      },
+      primary_offered_course: {
+        include: {
+          offered_course_slots: {
+            include: {
+              rooms: true,
+            },
+            orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+          },
+          offered_course_teachers: {
+            include: {
+              teachers: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: [{ offering_id: "asc" }, { id: "asc" }],
+  });
+
+  const rows: PublicRoutineRow[] = [];
+
+  for (const course of courses) {
+    const effectiveSlots =
+      course.primary_offered_course?.offered_course_slots.length
+        ? course.primary_offered_course.offered_course_slots
+        : course.offered_course_slots;
+
+    const effectiveTeachers =
+      course.primary_offered_course?.offered_course_teachers.length
+        ? course.primary_offered_course.offered_course_teachers
+        : course.offered_course_teachers;
+
+    const facultyDetails = uniqueFaculty(
+      effectiveTeachers.map((item) => ({
+        id: item.teachers.id,
+        teacherCode: item.teachers.teacher_code || "-",
+        fullName: item.teachers.full_name || "-",
+        designation: item.teachers.designation || "-",
+        phone: item.teachers.phone || "-",
+        email: item.teachers.email || "-",
+      }))
+    );
+
+    const facultyText = buildFacultyText(facultyDetails);
+
+    const courseBatchCodes = uniqueStrings(
+      course.offered_course_batches.map((item) => item.batches.batch_code)
+    );
+
+    const visibleBatchCodes = params.batchCode
+      ? courseBatchCodes.filter((item) => item === params.batchCode)
+      : courseBatchCodes;
+
+    const publicProgramCode = course.offerings.programs.short_name;
+    const publicProgramName = course.offerings.programs.name;
+
+    if (effectiveSlots.length === 0) {
+      for (const itemBatchCode of visibleBatchCodes) {
+        rows.push({
+          batchCode: itemBatchCode,
+          programCode: publicProgramCode,
+          programName: publicProgramName,
+          courseCode: course.master_courses.course_code,
+          courseTitle: course.master_courses.course_title,
+          section: course.section,
+          facultyText,
+          facultyDetails,
+          dayOfWeek: "-",
+          startTime: "-",
+          endTime: "-",
+          roomCode: "-",
+          scheduleKind: detectScheduleKind(null, {
+            course_title: course.master_courses.course_title,
+            course_type: course.master_courses.course_type,
+          }),
+          offeringStatus: course.offerings.status,
+        });
+      }
+
+      continue;
+    }
+
+    for (const slot of effectiveSlots) {
+      if (
+        params.dayOfWeek &&
+        normalizeUpper(slot.day_of_week) !== params.dayOfWeek
+      ) {
+        continue;
+      }
+
+      for (const itemBatchCode of visibleBatchCodes) {
+        rows.push({
+          batchCode: itemBatchCode,
+          programCode: publicProgramCode,
+          programName: publicProgramName,
+          courseCode: course.master_courses.course_code,
+          courseTitle: course.master_courses.course_title,
+          section: course.section,
+          facultyText,
+          facultyDetails,
+          dayOfWeek: slot.day_of_week,
+          startTime: slot.start_time,
+          endTime: slot.end_time,
+          roomCode: slot.rooms?.room_code || "-",
+          scheduleKind: detectScheduleKind(slot.slot_type, {
+            course_title: course.master_courses.course_title,
+            course_type: course.master_courses.course_type,
+          }),
+          offeringStatus: course.offerings.status,
+        });
+      }
+    }
+  }
+
+  rows.sort((a, b) => {
+    if (a.programCode !== b.programCode) {
+      return a.programCode.localeCompare(b.programCode);
+    }
+
+    if (a.batchCode !== b.batchCode) {
+      return a.batchCode.localeCompare(b.batchCode);
+    }
+
+    return compareDayTime(a, b);
+  });
+
+  return rows;
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+
+    const termName = normalizeUpper(searchParams.get("termName"));
+    const programCode = normalizeUpper(searchParams.get("programCode"));
+    const batchCode = normalizeUpper(searchParams.get("batchCode"));
+    const dayOfWeek = normalizeUpper(searchParams.get("dayOfWeek"));
+
+    if (!termName) {
+      const terms = await prisma.offerings.findMany({
+        where: {
+          status: {
+            in: REPORT_VISIBLE_OFFERING_STATUSES,
+          },
+          programs: {
+            short_name: {
+              in: PUBLIC_PROGRAMS,
+            },
+          },
+        },
+        select: {
+          academic_terms: {
+            select: {
+              name: true,
+            },
+          },
+        },
+        distinct: ["academic_term_id"],
+      });
+
+      return NextResponse.json({
+        success: true,
+        terms: uniqueStrings(terms.map((item) => item.academic_terms.name)).sort(),
+        filters: {
+          programs: PUBLIC_PROGRAMS,
+          batches: [],
+          days: [],
+        },
+        rows: [],
+      });
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: {
+        name: termName,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const rowsBeforeBatchFilter = await buildRows({
+      termId: term.id,
+      programCode: programCode || undefined,
+      dayOfWeek: undefined,
+    });
+
+    const rows = await buildRows({
+      termId: term.id,
+      programCode: programCode || undefined,
+      batchCode: batchCode || undefined,
+      dayOfWeek: dayOfWeek || undefined,
+    });
+
+    return NextResponse.json({
+      success: true,
+      termName: term.name,
+      filters: {
+        programs: PUBLIC_PROGRAMS,
+        batches: programCode
+          ? uniqueStrings(rowsBeforeBatchFilter.map((item) => item.batchCode)).sort()
+          : [],
+        days: uniqueStrings(rows.map((item) => item.dayOfWeek))
+          .filter((item) => item !== "-")
+          .sort(),
+      },
+      rows,
+    });
+  } catch (error) {
+    console.error("Public schedule failed:", error);
+
+    return NextResponse.json(
+      { error: "Failed to load public schedule." },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\app\api\public\faculty-schedule\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+
+type FacultyDetail = {
+  id: number;
+  teacherCode: string;
+  fullName: string;
+  designation: string;
+  phone: string;
+  email: string;
+};
+
+type FacultyRoutineRow = {
+  faculty: FacultyDetail;
+  programCode: string;
+  programName: string;
+  batchCodes: string[];
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  dayOfWeek: string;
+  startTime: string;
+  endTime: string;
+  roomCode: string;
+  scheduleKind: string;
+};
+
+const DAY_ORDER = [
+  "SATURDAY",
+  "SUNDAY",
+  "MONDAY",
+  "TUESDAY",
+  "WEDNESDAY",
+  "THURSDAY",
+  "FRIDAY",
+];
+
+function normalize(value: unknown) {
+  return String(value || "").replace(/\s+/g, " ").trim().toUpperCase();
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort();
+}
+
+function uniqueFaculty(rows: FacultyDetail[]) {
+  const map = new Map<number, FacultyDetail>();
+
+  for (const row of rows) {
+    if (!map.has(row.id)) {
+      map.set(row.id, row);
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) =>
+    a.teacherCode.localeCompare(b.teacherCode)
+  );
+}
+
+function detectScheduleKind(slotType: string | null | undefined, title: string) {
+  const text = `${slotType || ""} ${title || ""}`.toUpperCase();
+
+  if (
+    text.includes("LAB") ||
+    text.includes("SESSIONAL") ||
+    text.includes("PRACTICAL")
+  ) {
+    return "LAB";
+  }
+
+  if (
+    text.includes("PROJECT") ||
+    text.includes("FYDP") ||
+    text.includes("THESIS") ||
+    text.includes("INTERNSHIP") ||
+    text.includes("VIVA")
+  ) {
+    return "PROJECT";
+  }
+
+  return "CLASS";
+}
+
+function compareRows(a: FacultyRoutineRow, b: FacultyRoutineRow) {
+  if (a.faculty.teacherCode !== b.faculty.teacherCode) {
+    return a.faculty.teacherCode.localeCompare(b.faculty.teacherCode);
+  }
+
+  const dayA = DAY_ORDER.indexOf(normalize(a.dayOfWeek));
+  const dayB = DAY_ORDER.indexOf(normalize(b.dayOfWeek));
+
+  if (dayA !== dayB) {
+    return (dayA === -1 ? 999 : dayA) - (dayB === -1 ? 999 : dayB);
+  }
+
+  if (a.startTime !== b.startTime) {
+    return a.startTime.localeCompare(b.startTime);
+  }
+
+  return a.courseCode.localeCompare(b.courseCode);
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+
+    const termName = normalize(searchParams.get("termName"));
+    const teacherIdRaw = searchParams.get("teacherId");
+    const teacherId = teacherIdRaw ? Number(teacherIdRaw) : 0;
+    const dayOfWeek = normalize(searchParams.get("dayOfWeek"));
+
+    if (!termName) {
+      const terms = await prisma.offerings.findMany({
+        where: {
+          status: "CONFIRMED",
+        },
+        select: {
+          academic_terms: {
+            select: {
+              name: true,
+            },
+          },
+        },
+        distinct: ["academic_term_id"],
+      });
+
+      return NextResponse.json({
+        success: true,
+        terms: uniqueStrings(terms.map((item) => item.academic_terms.name)),
+        facultyOptions: [],
+        dayOptions: [],
+        rows: [],
+      });
+    }
+
+    const term = await prisma.academic_terms.findFirst({
+      where: {
+        name: termName,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    if (!term) {
+      return NextResponse.json(
+        { error: "Academic term not found." },
+        { status: 404 }
+      );
+    }
+
+    const offeredCourses = await prisma.offered_courses.findMany({
+      where: {
+        offerings: {
+          academic_term_id: term.id,
+          status: "CONFIRMED",
+        },
+      },
+      include: {
+        offerings: {
+          include: {
+            programs: true,
+            academic_terms: true,
+          },
+        },
+        master_courses: true,
+        offered_course_batches: {
+          include: {
+            batches: true,
+          },
+        },
+        offered_course_slots: {
+          include: {
+            rooms: true,
+          },
+          orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+        },
+        offered_course_teachers: {
+          include: {
+            teachers: true,
+          },
+        },
+        primary_offered_course: {
+          include: {
+            offered_course_slots: {
+              include: {
+                rooms: true,
+              },
+              orderBy: [{ day_of_week: "asc" }, { start_time: "asc" }],
+            },
+            offered_course_teachers: {
+              include: {
+                teachers: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ offering_id: "asc" }, { id: "asc" }],
+    });
+
+    const allRows: FacultyRoutineRow[] = [];
+    const facultyPool: FacultyDetail[] = [];
+
+    for (const course of offeredCourses) {
+      const effectiveSlots =
+        course.primary_offered_course?.offered_course_slots.length
+          ? course.primary_offered_course.offered_course_slots
+          : course.offered_course_slots;
+
+      const effectiveTeachers =
+        course.primary_offered_course?.offered_course_teachers.length
+          ? course.primary_offered_course.offered_course_teachers
+          : course.offered_course_teachers;
+
+      const facultyDetails = uniqueFaculty(
+        effectiveTeachers.map((item) => ({
+          id: item.teachers.id,
+          teacherCode: item.teachers.teacher_code || "-",
+          fullName: item.teachers.full_name || "-",
+          designation: item.teachers.designation || "-",
+          phone: item.teachers.phone || "-",
+          email: item.teachers.email || "-",
+        }))
+      );
+
+      facultyPool.push(...facultyDetails);
+
+      const batchCodes = uniqueStrings(
+        course.offered_course_batches.map((item) => item.batches.batch_code)
+      );
+
+      for (const faculty of facultyDetails) {
+        if (teacherId && faculty.id !== teacherId) {
+          continue;
+        }
+
+        for (const slot of effectiveSlots) {
+          if (dayOfWeek && normalize(slot.day_of_week) !== dayOfWeek) {
+            continue;
+          }
+
+          allRows.push({
+            faculty,
+            programCode: course.offerings.programs.short_name,
+            programName: course.offerings.programs.name,
+            batchCodes,
+            courseCode: course.master_courses.course_code,
+            courseTitle: course.master_courses.course_title,
+            section: course.section,
+            dayOfWeek: slot.day_of_week,
+            startTime: slot.start_time,
+            endTime: slot.end_time,
+            roomCode: slot.rooms?.room_code || "-",
+            scheduleKind: detectScheduleKind(
+              slot.slot_type,
+              course.master_courses.course_title
+            ),
+          });
+        }
+      }
+    }
+
+    const facultyOptions = uniqueFaculty(facultyPool);
+    const rows = allRows.sort(compareRows);
+
+    return NextResponse.json({
+      success: true,
+      termName: term.name,
+      facultyOptions,
+      dayOptions: uniqueStrings(rows.map((row) => row.dayOfWeek)),
+      rows,
+    });
+  } catch (error) {
+    console.error("Public faculty schedule failed:", error);
+
+    return NextResponse.json(
+      { error: "Failed to load faculty-wise public schedule." },
+      { status: 500 }
+    );
+  }
+}
+
+
+===== FILE: src\lib\schedule-conflict-scanner.ts =====
+
+import { prisma } from "@/lib/prisma";
+import { SCHEDULE_CONFLICT_STATUSES } from "@/lib/course-schedule-policy";
+
+export type ScheduleConflictType =
+  | "ROOM_CONFLICT"
+  | "BATCH_CONFLICT"
+  | "FACULTY_CONFLICT";
+
+export type ScheduleConflictItem = {
+  type: ScheduleConflictType;
+  severity: "BLOCKER";
+  termName: string;
+  dayOfWeek: string;
+  startTime: string;
+  endTime: string;
+  conflictWithStartTime: string;
+  conflictWithEndTime: string;
+  roomCode: string;
+  batchCodes: string[];
+  teacherCodes: string[];
+  first: {
+    offeringId: number;
+    offeredCourseId: number;
+    programCode: string;
+    courseCode: string;
+    courseTitle: string;
+    section: string;
+    status: string;
+  };
+  second: {
+    offeringId: number;
+    offeredCourseId: number;
+    programCode: string;
+    courseCode: string;
+    courseTitle: string;
+    section: string;
+    status: string;
+  };
+};
+
+type OperationalGroup = {
+  groupId: number;
+  offeringId: number;
+  termName: string;
+  programCode: string;
+  status: string;
+  offeredCourseId: number;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  slots: {
+    id: number;
+    dayOfWeek: string;
+    startTime: string;
+    endTime: string;
+    roomId: number;
+    roomCode: string;
+  }[];
+  batchCodes: string[];
+  teacherCodes: string[];
+};
+
+function timeToMinutes(value: string) {
+  const [hour, minute] = String(value || "00:00")
+    .split(":")
+    .map((part) => Number(part));
+
+  return hour * 60 + minute;
+}
+
+function overlaps(aStart: string, aEnd: string, bStart: string, bEnd: string) {
+  return (
+    timeToMinutes(aStart) < timeToMinutes(bEnd) &&
+    timeToMinutes(aEnd) > timeToMinutes(bStart)
+  );
+}
+
+function unique(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort();
+}
+
+function intersection(left: string[], right: string[]) {
+  const rightSet = new Set(right);
+  return left.filter((item) => rightSet.has(item));
+}
+
+function label(group: OperationalGroup) {
+  return {
+    offeringId: group.offeringId,
+    offeredCourseId: group.offeredCourseId,
+    programCode: group.programCode,
+    courseCode: group.courseCode,
+    courseTitle: group.courseTitle,
+    section: group.section,
+    status: group.status,
+  };
+}
+
+export async function scanScheduleConflicts(options: {
+  termName?: string;
+  termId?: number;
+  offeringId?: number;
+}) {
+  const term =
+    options.termId || options.termName
+      ? await prisma.academic_terms.findFirst({
+          where: {
+            ...(options.termId ? { id: options.termId } : {}),
+            ...(options.termName
+              ? {
+                  name: String(options.termName).trim().toUpperCase(),
+                }
+              : {}),
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        })
+      : null;
+
+  if ((options.termId || options.termName) && !term) {
+    return {
+      ok: false,
+      error: "Academic term not found.",
+      conflicts: [] as ScheduleConflictItem[],
+      summary: {
+        total: 0,
+        roomConflicts: 0,
+        batchConflicts: 0,
+        facultyConflicts: 0,
+      },
+    };
+  }
+
+  /*
+    IMPORTANT:
+    We scan only PRIMARY operational sections.
+
+    If a course is secondary co-offered:
+    - its old/imported slots are ignored for conflict checking
+    - it inherits primary slot/faculty
+    - its batches are added to the primary operational group
+
+    This prevents false conflicts after co-offering.
+  */
+  const primaryCourses = await prisma.offered_courses.findMany({
+    where: {
+      primary_offered_course_id: null,
+      ...(options.offeringId
+        ? {
+            OR: [
+              { offering_id: options.offeringId },
+              {
+                secondary_offered_courses: {
+                  some: {
+                    offering_id: options.offeringId,
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+      offerings: {
+        ...(term?.id ? { academic_term_id: term.id } : {}),
+        status: {
+          in: SCHEDULE_CONFLICT_STATUSES,
+        },
+      },
+    },
+    include: {
+      offerings: {
+        include: {
+          academic_terms: true,
+          programs: true,
+        },
+      },
+      master_courses: true,
+      offered_course_slots: {
+        include: {
+          rooms: true,
+        },
+      },
+      offered_course_batches: {
+        include: {
+          batches: true,
+        },
+      },
+      offered_course_teachers: {
+        include: {
+          teachers: true,
+        },
+      },
+      secondary_offered_courses: {
+        include: {
+          offerings: {
+            include: {
+              programs: true,
+              academic_terms: true,
+            },
+          },
+          master_courses: true,
+          offered_course_batches: {
+            include: {
+              batches: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: [{ offering_id: "asc" }, { id: "asc" }],
+  });
+
+  const groups: OperationalGroup[] = primaryCourses
+    .filter((course) => course.offered_course_slots.length > 0)
+    .map((course) => {
+      const primaryBatches = course.offered_course_batches.map(
+        (row) => row.batches.batch_code
+      );
+
+      const secondaryBatches = course.secondary_offered_courses.flatMap(
+        (secondary) =>
+          secondary.offered_course_batches.map((row) => row.batches.batch_code)
+      );
+
+      return {
+        groupId: course.id,
+        offeringId: course.offering_id,
+        termName: course.offerings.academic_terms.name,
+        programCode: course.offerings.programs.short_name,
+        status: course.offerings.status,
+        offeredCourseId: course.id,
+        courseCode: course.master_courses.course_code,
+        courseTitle: course.master_courses.course_title,
+        section: course.section,
+        slots: course.offered_course_slots.map((slot) => ({
+          id: slot.id,
+          dayOfWeek: slot.day_of_week,
+          startTime: slot.start_time,
+          endTime: slot.end_time,
+          roomId: slot.room_id,
+          roomCode: slot.rooms?.room_code || "-",
+        })),
+        batchCodes: unique([...primaryBatches, ...secondaryBatches]),
+        teacherCodes: unique(
+          course.offered_course_teachers.map(
+            (row) => row.teachers.teacher_code
+          )
+        ),
+      };
+    });
+
+  const conflicts: ScheduleConflictItem[] = [];
+  const seen = new Set<string>();
+
+  for (let i = 0; i < groups.length; i += 1) {
+    const first = groups[i];
+
+    for (let j = i + 1; j < groups.length; j += 1) {
+      const second = groups[j];
+
+      if (first.groupId === second.groupId) continue;
+
+      for (const firstSlot of first.slots) {
+        for (const secondSlot of second.slots) {
+          if (firstSlot.dayOfWeek !== secondSlot.dayOfWeek) continue;
+
+          if (
+            !overlaps(
+              firstSlot.startTime,
+              firstSlot.endTime,
+              secondSlot.startTime,
+              secondSlot.endTime
+            )
+          ) {
+            continue;
+          }
+
+          const sameRoom = firstSlot.roomId === secondSlot.roomId;
+          const commonBatches = intersection(first.batchCodes, second.batchCodes);
+          const commonTeachers = intersection(
+            first.teacherCodes,
+            second.teacherCodes
+          );
+
+          const pushConflict = (
+            type: ScheduleConflictType,
+            batchCodes: string[],
+            teacherCodes: string[]
+          ) => {
+            const key = [
+              type,
+              first.groupId,
+              second.groupId,
+              firstSlot.id,
+              secondSlot.id,
+              batchCodes.join(","),
+              teacherCodes.join(","),
+            ].join("|");
+
+            if (seen.has(key)) return;
+            seen.add(key);
+
+            conflicts.push({
+              type,
+              severity: "BLOCKER",
+              termName: first.termName,
+              dayOfWeek: firstSlot.dayOfWeek,
+              startTime: firstSlot.startTime,
+              endTime: firstSlot.endTime,
+              conflictWithStartTime: secondSlot.startTime,
+              conflictWithEndTime: secondSlot.endTime,
+              roomCode: sameRoom ? firstSlot.roomCode : "-",
+              batchCodes,
+              teacherCodes,
+              first: label(first),
+              second: label(second),
+            });
+          };
+
+          if (sameRoom) {
+            pushConflict("ROOM_CONFLICT", [], []);
+          }
+
+          if (commonBatches.length > 0) {
+            pushConflict("BATCH_CONFLICT", commonBatches, []);
+          }
+
+          if (commonTeachers.length > 0) {
+            pushConflict("FACULTY_CONFLICT", [], commonTeachers);
+          }
+        }
+      }
+    }
+  }
+
+  const offeringFilteredConflicts = options.offeringId
+    ? conflicts.filter(
+        (conflict) =>
+          conflict.first.offeringId === options.offeringId ||
+          conflict.second.offeringId === options.offeringId
+      )
+    : conflicts;
+
+  return {
+    ok: true,
+    conflicts: offeringFilteredConflicts,
+    summary: {
+      total: offeringFilteredConflicts.length,
+      roomConflicts: offeringFilteredConflicts.filter(
+        (item) => item.type === "ROOM_CONFLICT"
+      ).length,
+      batchConflicts: offeringFilteredConflicts.filter(
+        (item) => item.type === "BATCH_CONFLICT"
+      ).length,
+      facultyConflicts: offeringFilteredConflicts.filter(
+        (item) => item.type === "FACULTY_CONFLICT"
+      ).length,
+    },
+  };
+}
+
+
+===== FILE: src\lib\course-schedule-policy.ts =====
+
+export const SLOT_OPTIONAL_COURSE_CODES = ["EEE4139", "EEE4239", "EEE4339"];
+
+export const SCHEDULE_CONFLICT_STATUSES = [
+  "DRAFT",
+  "BUFFER_READY",
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export const REPORT_VISIBLE_OFFERING_STATUSES = [
+  "FACULTY_CHOICE_BUFFER",
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export const FINALIZED_REPORT_STATUSES = [
+  "FACULTY_CHOICE_FINALIZED",
+  "CONFIRMED",
+];
+
+export function normalizeCourseCode(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, "").trim().toUpperCase();
+}
+
+export function normalizePolicyText(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().toUpperCase();
+}
+
+export function isSlotOptionalCourse(course: {
+  course_code?: string | null;
+  course_title?: string | null;
+  course_type?: string | null;
+}) {
+  const code = normalizeCourseCode(course.course_code);
+  const title = normalizePolicyText(course.course_title);
+  const type = normalizePolicyText(course.course_type);
+
+  if (SLOT_OPTIONAL_COURSE_CODES.includes(code)) return true;
+
+  return (
+    type.includes("PROJECT") ||
+    type.includes("INTERNSHIP") ||
+    type.includes("THESIS") ||
+    type.includes("VIVA") ||
+    title.includes("FINAL YEAR DESIGN PROJECT") ||
+    title.includes("FYDP") ||
+    title.includes("PROJECT") ||
+    title.includes("INTERNSHIP") ||
+    title.includes("THESIS") ||
+    title.includes("VIVA")
+  );
+}
+
+
+===== FILE: prisma\schema.prisma =====
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model academic_terms {
+  id                          Int                           @id @default(autoincrement())
+  name                        String                        @unique @db.VarChar(100)
+  year                        Int
+  term_type                   String                        @db.VarChar(30)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  faculty_course_selections   faculty_course_selections[]
+  offerings                   offerings[]
+}
+
+model batch_completed_courses {
+  id                Int             @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int?
+  course_code       String          @db.VarChar(100)
+  course_title      String          @db.VarChar(300)
+  normalized_title  String          @db.VarChar(300)
+  credit            Float
+  grade             String?         @db.VarChar(20)
+  source_student_id String?         @db.VarChar(100)
+  source_file_name  String?         @db.VarChar(300)
+  academic_terms    academic_terms? @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batch_current_registrations {
+  id                Int            @id @default(autoincrement())
+  batch_id          Int
+  academic_term_id  Int
+  course_code       String         @db.VarChar(100)
+  course_title      String         @db.VarChar(300)
+  normalized_title  String         @db.VarChar(300)
+  credit            Float
+  source_student_id String?        @db.VarChar(100)
+  source_file_name  String?        @db.VarChar(300)
+  academic_terms    academic_terms @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches           batches        @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model batches {
+  id                          Int                           @id @default(autoincrement())
+  program_id                  Int
+  batch_code                  String                        @db.VarChar(100)
+  admission_term              String?                       @db.VarChar(100)
+  is_active                   Boolean?
+  batch_completed_courses     batch_completed_courses[]
+  batch_current_registrations batch_current_registrations[]
+  programs                    programs                      @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_course_batches      offered_course_batches[]
+
+  @@unique([program_id, batch_code], map: "uq_program_batch")
+}
+
+model departments {
+  id         Int        @id @default(autoincrement())
+  name       String     @unique @db.VarChar(200)
+  short_name String     @unique @db.VarChar(50)
+  programs   programs[]
+  teachers   teachers[]
+}
+
+model master_courses {
+  id               Int               @id @default(autoincrement())
+  program_id       Int
+  course_code      String
+  course_title     String
+  normalized_title String
+  credit           Float
+  course_type      String
+  level_term       String?
+  group_name       String?
+  is_active        Boolean           @default(true)
+  created_at       DateTime          @default(now())
+  curriculum_key   String?
+  updated_at       DateTime          @default(now()) @updatedAt
+  program          programs          @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  offered_courses  offered_courses[]
+
+  @@unique([program_id, course_code])
+  @@unique([curriculum_key, course_code])
+  @@index([curriculum_key])
+}
+
+model offered_course_batches {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  batch_id          Int
+  batches           batches         @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_slots {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  day_of_week       String          @db.VarChar(20)
+  start_time        String          @db.VarChar(10)
+  end_time          String          @db.VarChar(10)
+  room_id           Int
+  slot_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rooms             rooms           @relation(fields: [room_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_course_teachers {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  assigned_credit   Float
+  load_type         String          @db.VarChar(20)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model offered_courses {
+  id                        Int                         @id @default(autoincrement())
+  offering_id               Int
+  master_course_id          Int
+  section                   String                      @db.VarChar(20)
+  is_cooffered              Boolean?                    @default(false)
+  primary_offered_course_id Int?
+  notes                     String?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_batches    offered_course_batches[]
+  offered_course_slots      offered_course_slots[]
+  offered_course_teachers   offered_course_teachers[]
+  master_courses            master_courses              @relation(fields: [master_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offerings                 offerings                   @relation(fields: [offering_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+    offered_course_manual_cooffers offered_course_manual_cooffers[]
+  primary_offered_course    offered_courses?            @relation("offered_course_cooffer_links", fields: [primary_offered_course_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  secondary_offered_courses offered_courses[]           @relation("offered_course_cooffer_links")
+
+  @@index([offering_id, section], map: "ix_offered_courses_offering_section")
+  @@index([primary_offered_course_id], map: "ix_offered_courses_primary_offered_course_id")
+}
+
+model offerings {
+  id                  Int               @id @default(autoincrement())
+  academic_term_id    Int
+  program_id          Int
+  prepared_by_user_id Int
+  status              String            @db.VarChar(30)
+  created_at          DateTime?         @default(now()) @db.Timestamptz(6)
+  offered_courses     offered_courses[]
+  academic_terms      academic_terms    @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users               users             @relation(fields: [prepared_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  programs            programs          @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_course_selections {
+  id                Int             @id @default(autoincrement())
+  offered_course_id Int
+  teacher_id        Int
+  academic_term_id  Int
+  priority_order    Int?
+  status            String          @db.VarChar(30)
+  selected_at       DateTime?       @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?       @default(now()) @updatedAt @db.Timestamptz(6)
+  confirmed_at      DateTime?       @db.Timestamptz(6)
+  academic_terms    academic_terms  @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_courses   offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  teachers          teachers        @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([offered_course_id, teacher_id], map: "uq_faculty_course_selection")
+  @@index([teacher_id], map: "ix_faculty_course_selections_teacher_id")
+  @@index([academic_term_id], map: "ix_faculty_course_selections_term_id")
+  @@index([status], map: "ix_faculty_course_selections_status")
+  @@index([teacher_id, academic_term_id], map: "ix_faculty_course_selections_teacher_term")
+}
+
+model programs {
+  id             Int              @id @default(autoincrement())
+  department_id  Int
+  name           String           @db.VarChar(200)
+  short_name     String           @db.VarChar(50)
+  batches        batches[]
+  master_courses master_courses[]
+  offerings      offerings[]
+  departments    departments      @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([department_id, name], map: "uq_program_department_name")
+}
+
+model rooms {
+  id                   Int                    @id @default(autoincrement())
+  room_code            String                 @unique @db.VarChar(100)
+  room_type            String                 @db.VarChar(50)
+  capacity             Int?
+  is_active            Boolean?
+  offered_course_slots offered_course_slots[]
+}
+
+model student_report_logs {
+  id                        Int       @id @default(autoincrement())
+  student_id                String    @db.VarChar(100)
+  student_name              String?   @db.VarChar(200)
+  uploaded_by_user_id       Int
+  transcript_filename       String?   @db.VarChar(300)
+  registration_filename     String?   @db.VarChar(300)
+  latest_completed_semester String?   @db.VarChar(100)
+  registration_semester     String?   @db.VarChar(100)
+  total_earned_credits      Float?
+  gpa                       Float?
+  generated_excel_path      String?   @db.VarChar(500)
+  created_at                DateTime? @default(now()) @db.Timestamptz(6)
+  users                     users     @relation(fields: [uploaded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([id], map: "ix_student_report_logs_id")
+  @@index([student_id], map: "ix_student_report_logs_student_id")
+}
+
+model teachers {
+  id                        Int                         @id @default(autoincrement())
+  department_id             Int
+  teacher_code              String                      @unique @db.VarChar(100)
+  full_name                 String                      @db.VarChar(200)
+  designation               String?                     @db.VarChar(150)
+  email                     String?                     @db.VarChar(200)
+  phone                     String?                     @db.VarChar(50)
+  seniority_level           Int?
+  is_active                 Boolean?
+  faculty_course_selections faculty_course_selections[]
+  offered_course_teachers   offered_course_teachers[]
+  departments               departments                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                     users[]
+
+  @@index([department_id], map: "ix_teachers_department_id")
+  @@index([seniority_level], map: "ix_teachers_seniority_level")
+}
+
+model users {
+  id                  Int                   @id @default(autoincrement())
+  username            String                @unique(map: "ix_users_username") @db.VarChar(100)
+  full_name           String                @db.VarChar(200)
+  password_hash       String
+  role                String                @db.VarChar(50)
+  is_active           Boolean?
+  teacher_id          Int?
+  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  offerings           offerings[]
+  student_report_logs student_report_logs[]
+  teachers            teachers?             @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  // ✅ ADD THIS LINE ONLY
+  faculty_login_sessions FacultyLoginSession[]
+
+  @@index([id], map: "ix_users_id")
+}
+
+model academic_catalog_entries {
+  id                 Int      @id @default(autoincrement())
+  department_code    String
+  department_name    String
+  program_code       String   @unique
+  program_title      String
+  program_type       String
+  study_shift        String
+  curriculum_version String
+  student_id_suffix  String?  @unique
+  display_label      String
+  is_active          Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @default(now()) @updatedAt
+  curriculum_key     String?
+
+  @@index([department_code])
+  @@index([program_type])
+  @@index([study_shift])
+  @@index([curriculum_version])
+  @@index([curriculum_key])
+}
+model SystemSetting {
+  id               Int      @id @default(autoincrement())
+  settingKey       String   @unique
+  settingValue     String
+  updatedByUserId  Int?
+  updatedAt        DateTime @updatedAt
+}
+
+model FacultyLoginSession {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  sessionToken  String   @unique
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+
+  user          users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model offered_course_manual_cooffers {
+  id                  Int             @id @default(autoincrement())
+  offered_course_id   Int
+  target_program_code String?         @db.VarChar(100)
+  manual_course_code  String          @db.VarChar(100)
+  note                String?         @db.VarChar(300)
+  created_at          DateTime        @default(now())
+  offered_courses     offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([offered_course_id], map: "ix_offered_course_manual_cooffers_offered_course_id")
+  @@index([target_program_code], map: "ix_offered_course_manual_cooffers_target_program_code")
+}
+model faculty_login_sessions {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  teacher_id    Int?
+  session_token String   @unique @db.VarChar(191)
+  created_at    DateTime @default(now())
+  expires_at    DateTime
+  warned_at     DateTime?
+  revoked_at    DateTime?
+
+  @@index([user_id], map: "ix_faculty_login_sessions_user_id")
+  @@index([teacher_id], map: "ix_faculty_login_sessions_teacher_id")
+  @@index([expires_at], map: "ix_faculty_login_sessions_expires_at")
+}
+
+model notifications {
+  id                Int      @id @default(autoincrement())
+  recipient_user_id Int?
+  recipient_teacher_id Int?
+  event_type        String   @db.VarChar(100)
+  title             String   @db.VarChar(200)
+  message           String   @db.Text
+  is_read           Boolean  @default(false)
+  created_by_user_id Int?
+  created_at        DateTime @default(now())
+  read_at           DateTime?
+
+  @@index([recipient_user_id], map: "ix_notifications_recipient_user_id")
+  @@index([recipient_teacher_id], map: "ix_notifications_recipient_teacher_id")
+  @@index([event_type], map: "ix_notifications_event_type")
+  @@index([is_read], map: "ix_notifications_is_read")
+}
