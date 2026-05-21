@@ -44,9 +44,12 @@ type BatchOption = {
   batchCode: string;
   programCode: string;
   isAttached?: boolean;
+  isUsedInThisOffering?: boolean;
   hasConflict?: boolean;
   conflictReason?: string;
   isInactive?: boolean;
+  isProgramMismatch?: boolean;
+  warning?: string;
 };
 
 type BatchEditorCourse = {
@@ -79,7 +82,7 @@ export default function Page() {
   const [batchEditorCourse, setBatchEditorCourse] =
     useState<BatchEditorCourse | null>(null);
   const [availableBatches, setAvailableBatches] = useState<BatchOption[]>([]);
-  const [selectedBatchCodes, setSelectedBatchCodes] = useState<string[]>([]);
+  const [selectedBatchIds, setSelectedBatchIds] = useState<number[]>([]);
   const [loadingBatchEditor, setLoadingBatchEditor] = useState(false);
   const [savingBatches, setSavingBatches] = useState(false);
 
@@ -258,7 +261,7 @@ export default function Page() {
     setBatchEditCourseId(courseId);
     setBatchEditorCourse(null);
     setAvailableBatches([]);
-    setSelectedBatchCodes([]);
+    setSelectedBatchIds([]);
 
     if (!courseId) return;
 
@@ -282,7 +285,11 @@ export default function Page() {
 
       setBatchEditorCourse(json.course || null);
       setAvailableBatches(json.availableBatches || []);
-      setSelectedBatchCodes(json.attachedBatchCodes || []);
+      setSelectedBatchIds(
+        Array.isArray(json.attachedBatchIds)
+          ? json.attachedBatchIds.map((item: unknown) => Number(item))
+          : []
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load batch editor.");
     } finally {
@@ -290,11 +297,11 @@ export default function Page() {
     }
   }
 
-  function toggleBatch(batchCode: string) {
-    setSelectedBatchCodes((prev) =>
-      prev.includes(batchCode)
-        ? prev.filter((item) => item !== batchCode)
-        : [...prev, batchCode].sort()
+  function toggleBatch(batchId: number) {
+    setSelectedBatchIds((prev) =>
+      prev.includes(batchId)
+        ? prev.filter((item) => item !== batchId)
+        : [...prev, batchId].sort((a, b) => a - b)
     );
   }
 
@@ -304,14 +311,13 @@ export default function Page() {
       return;
     }
 
-    if (selectedBatchCodes.length === 0) {
+    if (selectedBatchIds.length === 0) {
       setError("Select at least one batch.");
       return;
     }
 
     const conflictingSelections = availableBatches.filter(
-      (batch) =>
-        selectedBatchCodes.includes(batch.batchCode) && batch.hasConflict
+      (batch) => selectedBatchIds.includes(batch.id) && batch.hasConflict
     );
 
     if (conflictingSelections.length > 0) {
@@ -334,15 +340,17 @@ export default function Page() {
     setMessage("");
 
     try {
+      const payload = {
+        offeredCourseId: Number(batchEditCourseId),
+        batchIds: selectedBatchIds,
+      };
+
       const res = await fetch(
         "/api/admin/co-offering-decision/course-batches/update",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            offeredCourseId: Number(batchEditCourseId),
-            batchCodes: selectedBatchCodes,
-          }),
+          body: JSON.stringify(payload),
         }
       );
 
@@ -626,8 +634,8 @@ export default function Page() {
         <section className="rounded-3xl border border-blue-200 bg-white p-6 shadow-sm">
           <h3 className="mb-4 text-lg font-bold">Course Batch Control</h3>
           <p className="mb-4 text-sm text-slate-600">
-            Shows all batches under the selected program. Attached batches,
-            inactive batches, and schedule-warning batches are clearly marked.
+            Shows all batches under the selected program and all batches already used
+            in this offering workflow. Attached, inactive, conflict, and mismatch batches are clearly marked.
           </p>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -643,7 +651,7 @@ export default function Page() {
                   setBatchEditCourseId("");
                   setBatchEditorCourse(null);
                   setAvailableBatches([]);
-                  setSelectedBatchCodes([]);
+                  setSelectedBatchIds([]);
                 }}
                 className="w-full rounded-xl border px-4 py-3"
               >
@@ -709,7 +717,7 @@ export default function Page() {
 
               <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-5">
                 {availableBatches.map((batch) => {
-                  const isSelected = selectedBatchCodes.includes(batch.batchCode);
+                  const isSelected = selectedBatchIds.includes(batch.id);
 
                   let cardClass =
                     "cursor-pointer rounded-xl border p-3 text-sm transition-all";
@@ -737,7 +745,7 @@ export default function Page() {
                             <input
                               type="checkbox"
                               checked={isSelected}
-                              onChange={() => toggleBatch(batch.batchCode)}
+                              onChange={() => toggleBatch(batch.id)}
                             />
 
                             <span className="font-semibold">
@@ -755,11 +763,25 @@ export default function Page() {
                             </div>
                           ) : null}
 
+                          {batch.isUsedInThisOffering ? (
+                            <div className="mt-2 inline-block rounded-full bg-blue-100 px-2 py-1 text-[10px] font-bold text-blue-700">
+                              USED IN OFFERING
+                            </div>
+                          ) : null}
+
                           {batch.hasConflict ? (
                             <div className="mt-2 rounded-lg bg-red-50 px-2 py-2 text-[11px] text-red-700">
                               Conflict detected
                               <br />
                               {batch.conflictReason}
+                            </div>
+                          ) : null}
+
+                          {batch.isProgramMismatch ? (
+                            <div className="mt-2 rounded-lg bg-amber-50 px-2 py-2 text-[11px] text-amber-700">
+                              Program mismatch
+                              <br />
+                              {batch.warning}
                             </div>
                           ) : null}
 
@@ -777,19 +799,25 @@ export default function Page() {
 
               <div className="mt-4 rounded-xl border bg-slate-50 p-4">
                 <div className="mb-2 text-sm font-semibold">
-                  Selected batches ({selectedBatchCodes.length})
+                  Selected batches ({selectedBatchIds.length})
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  {selectedBatchCodes.length ? (
-                    selectedBatchCodes.map((code) => (
-                      <div
-                        key={code}
-                        className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800"
-                      >
-                        {code}
-                      </div>
-                    ))
+                  {selectedBatchIds.length ? (
+                    selectedBatchIds.map((id) => {
+                      const batch = availableBatches.find((item) => item.id === id);
+
+                      return (
+                        <div
+                          key={id}
+                          className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800"
+                        >
+                          {batch
+                            ? `${batch.batchCode} (${batch.programCode})`
+                            : `Batch ID ${id}`}
+                        </div>
+                      );
+                    })
                   ) : (
                     <span className="text-sm text-slate-500">
                       No batch selected
@@ -804,7 +832,7 @@ export default function Page() {
                 disabled={
                   savingBatches ||
                   batchEditorCourse.offeringStatus === "CONFIRMED" ||
-                  selectedBatchCodes.length === 0
+                  selectedBatchIds.length === 0
                 }
                 className="mt-4 rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -812,8 +840,8 @@ export default function Page() {
                   ? "Saving Batch Configuration..."
                   : batchEditorCourse.offeringStatus === "CONFIRMED"
                     ? "Reset Offering First"
-                    : `Save ${selectedBatchCodes.length} Batch Selection${
-                        selectedBatchCodes.length > 1 ? "s" : ""
+                    : `Save ${selectedBatchIds.length} Batch Selection${
+                        selectedBatchIds.length > 1 ? "s" : ""
                       }`}
               </button>
             </div>
