@@ -1,227 +1,140 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import Link from "next/link";
+import type { StudentPortalSession } from "@/lib/student-session";
 
-type StudentDashboard = {
-  id: number;
-  student_id: string;
-  full_name: string;
-  phone?: string | null;
-  email?: string | null;
-  current_status: string;
-  enrollments: Array<{
-    curriculum_key?: string | null;
-    admission_semester?: string | null;
-    enrollment_status?: string | null;
-    program: {
-      short_name: string;
-      name: string;
-    };
-    batches?: {
-      batch_code: string;
-    } | null;
-  }>;
-  advisor_assignments: Array<{
-    teachers: {
-      teacher_code: string;
-      full_name: string;
-      designation?: string | null;
-    };
-  }>;
+type Props = {
+  session: StudentPortalSession;
 };
 
-export default function StudentDashboardClient() {
-  const searchParams = useSearchParams();
-  const initialStudentId = searchParams.get("studentId") || "";
+export default function StudentDashboardClient({ session }: Props) {
+  async function handleLogout() {
+    await fetch("/api/student-auth/logout", {
+      method: "POST",
+    });
 
-  const [studentId, setStudentId] = useState(initialStudentId);
-  const [student, setStudent] = useState<StudentDashboard | null>(null);
-  const [modules, setModules] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  async function loadDashboard(targetId?: string) {
-    const id = String(targetId || studentId || "").trim();
-
-    if (!id) {
-      setError("Enter a Student ID.");
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-
-    try {
-      const res = await fetch(
-        `/api/student/dashboard?studentId=${encodeURIComponent(id)}`,
-        { cache: "no-store" }
-      );
-
-      const json = await res.json();
-
-      if (!res.ok) {
-        throw new Error(json.error || "Failed to load dashboard.");
-      }
-
-      setStudent(json.student);
-      setModules(json.modules || {});
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load dashboard.");
-      setStudent(null);
-      setModules({});
-    } finally {
-      setLoading(false);
-    }
+    window.location.href = "/student/login";
   }
 
-  useEffect(() => {
-    if (initialStudentId) {
-      loadDashboard(initialStudentId);
-    }
-  }, [initialStudentId]);
-
-  const enrollment = student?.enrollments?.[0];
-  const advisor = student?.advisor_assignments?.[0]?.teachers;
-
   return (
-    <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-900">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <div className="rounded-3xl bg-slate-950 p-6 text-white shadow-sm">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.25em] text-blue-300">
-                UniFlow Student Portal
+    <main className="min-h-screen bg-slate-100">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-blue-700">
+              UniFlow Student Portal
+            </p>
+            <h1 className="mt-1 text-2xl font-bold text-slate-900">
+              Student Dashboard
+            </h1>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+          >
+            Logout
+          </button>
+        </div>
+      </header>
+
+      <section className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-slate-900">
+            Welcome, {session.fullName}
+          </h2>
+
+          <div className="mt-5 grid gap-4 md:grid-cols-3">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Student ID
               </p>
-              <h1 className="mt-3 text-3xl font-bold">
-                Student Dashboard Preview
-              </h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
-                S1-C preview dashboard for student identity and academic profile.
-                Registration, billing, attendance, grades, admit cards, and results
-                will be activated in later ERP phases.
+              <p className="mt-2 text-lg font-semibold text-slate-900">
+                {session.studentId}
               </p>
             </div>
 
-            <Link
-              href="/admin/students"
-              className="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-100"
-            >
-              Back to Student List
-            </Link>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Email
+              </p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">
+                {session.email || "-"}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Portal Status
+              </p>
+              <p className="mt-2 text-lg font-semibold text-green-700">
+                Active
+              </p>
+            </div>
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-3 lg:flex-row">
-            <input
-              placeholder="Enter Student ID"
-              value={studentId}
-              onChange={(e) => setStudentId(e.target.value)}
-              className="flex-1 rounded-xl border px-4 py-3"
-            />
+        <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <FeatureCard
+            title="Academic Profile"
+            description="Student profile and enrollment details will be displayed here."
+            status="Foundation Active"
+          />
 
-            <button
-              onClick={() => loadDashboard()}
-              disabled={loading}
-              className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-            >
-              {loading ? "Loading..." : "Open Dashboard"}
-            </button>
-          </div>
+          <FeatureCard
+            title="Class Routine"
+            description="Student-specific routine will be connected after official registration phase."
+            status="Coming Later"
+          />
+
+          <FeatureCard
+            title="Course Registration"
+            description="Add/drop and seat-based registration will begin in S2, not S1-D."
+            status="Inactive"
+          />
+
+          <FeatureCard
+            title="Billing"
+            description="Pay slip, fee structure, and defaulter status are reserved for billing phase."
+            status="Inactive"
+          />
+
+          <FeatureCard
+            title="Attendance"
+            description="Attendance view will be added after attendance module implementation."
+            status="Inactive"
+          />
+
+          <FeatureCard
+            title="Results"
+            description="Grade and result publication will be added in later ERP checkpoints."
+            status="Inactive"
+          />
         </div>
-
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
-
-        {student && (
-          <>
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <p className="text-sm font-semibold uppercase tracking-[0.2em] text-blue-700">
-                    {student.student_id}
-                  </p>
-                  <h2 className="mt-2 text-2xl font-bold text-slate-900">
-                    {student.full_name}
-                  </h2>
-                  <p className="mt-2 text-sm text-slate-500">
-                    {enrollment?.program?.short_name || "-"} · Batch{" "}
-                    {enrollment?.batches?.batch_code || "-"} ·{" "}
-                    {enrollment?.curriculum_key || "No curriculum key"}
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700">
-                    {student.current_status}
-                  </span>
-
-                  <Link
-                    href={`/admin/students/${student.id}`}
-                    className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-                  >
-                    Edit Detail
-                  </Link>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-5 lg:grid-cols-3">
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="font-semibold">Academic Profile</h3>
-                <div className="mt-4 space-y-2 text-sm">
-                  <div>Program: {enrollment?.program?.name || "-"}</div>
-                  <div>Batch: {enrollment?.batches?.batch_code || "-"}</div>
-                  <div>Curriculum: {enrollment?.curriculum_key || "-"}</div>
-                  <div>Admission Semester: {enrollment?.admission_semester || "-"}</div>
-                  <div>Enrollment Status: {enrollment?.enrollment_status || "-"}</div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="font-semibold">Contact</h3>
-                <div className="mt-4 space-y-2 text-sm">
-                  <div>Phone: {student.phone || "-"}</div>
-                  <div>Email: {student.email || "-"}</div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="font-semibold">Advisor</h3>
-                <div className="mt-4 space-y-2 text-sm">
-                  <div>
-                    {advisor
-                      ? `${advisor.teacher_code} — ${advisor.full_name}`
-                      : "-"}
-                  </div>
-                  <div>{advisor?.designation || "-"}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-5 lg:grid-cols-3">
-              {Object.entries(modules).map(([key, value]) => (
-                <div
-                  key={key}
-                  className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-                >
-                  <h3 className="font-semibold capitalize">
-                    {key.replace(/([A-Z])/g, " $1")}
-                  </h3>
-                  <p className="mt-3 rounded-full bg-amber-100 px-3 py-2 text-sm font-medium text-amber-800">
-                    {value}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
+      </section>
     </main>
+  );
+}
+
+function FeatureCard({
+  title,
+  description,
+  status,
+}: {
+  title: string;
+  description: string;
+  status: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="font-semibold text-slate-900">{title}</h3>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+          {status}
+        </span>
+      </div>
+
+      <p className="mt-3 text-sm leading-6 text-slate-600">{description}</p>
+    </div>
   );
 }

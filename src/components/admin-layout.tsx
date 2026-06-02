@@ -25,6 +25,7 @@ const navItems = [
   { href: "/admin/students", label: "Students" },
   { href: "/admin/students/bulk-import", label: "Student Bulk Import" },
   { href: "/admin/students/verification", label: "Student Verification" },
+  { href: "/admin/student-auth-access", label: "Student Portal Access" },
   { href: "/admin/batch-status", label: "Batch Status" },
   { href: "/admin/batch-status-cleanup", label: "Batch Status Cleanup" },
   { href: "/admin/offering-context", label: "Offering Context" },
