@@ -65,17 +65,18 @@ model students {
 }
 
 model student_program_enrollments {
-  id                Int       @id @default(autoincrement())
-  student_id_ref    Int
-  program_id        Int
-  batch_id          Int?
-  curriculum_key    String?
-  enrollment_status String    @default("ACTIVE")
-  enrolled_at       DateTime  @default(now())
-  completed_at      DateTime?
-  remarks           String?
-  created_at        DateTime  @default(now())
-  updated_at        DateTime  @updatedAt
+  id                 Int       @id @default(autoincrement())
+  student_id_ref     Int
+  program_id         Int
+  batch_id           Int?
+  curriculum_key     String?
+  admission_semester String?   @db.VarChar(100)
+  enrollment_status  String    @default("ACTIVE")
+  enrolled_at        DateTime  @default(now())
+  completed_at       DateTime?
+  remarks            String?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
 
   students students @relation(fields: [student_id_ref], references: [id], onDelete: Cascade)
   program  programs @relation(fields: [program_id], references: [id])
@@ -86,6 +87,7 @@ model student_program_enrollments {
   @@index([program_id])
   @@index([batch_id])
   @@index([curriculum_key])
+  @@index([admission_semester])
 }
 
 model student_contacts {
@@ -448,4 +450,64 @@ model notifications {
   @@index([recipient_teacher_id], map: "ix_notifications_recipient_teacher_id")
   @@index([event_type], map: "ix_notifications_event_type")
   @@index([is_read], map: "ix_notifications_is_read")
+}
+
+model student_import_logs {
+  id                  Int      @id @default(autoincrement())
+  import_type         String   @default("STUDENT_BULK_IMPORT") @db.VarChar(80)
+  file_name           String?  @db.Text
+  file_size           Int?
+  total_rows          Int      @default(0)
+  ok_rows             Int      @default(0)
+  warning_rows        Int      @default(0)
+  error_rows          Int      @default(0)
+  committed_rows      Int      @default(0)
+  created_students    Int      @default(0)
+  updated_students    Int      @default(0)
+  created_batches     Int      @default(0)
+  created_enrollments Int      @default(0)
+  updated_enrollments Int      @default(0)
+  skipped_rows        Int      @default(0)
+  status              String   @default("STARTED") @db.VarChar(40)
+  message             String?  @db.Text
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime @default(now()) @db.Timestamptz(6)
+
+  error_rows_list  student_import_error_rows[]
+  change_rows_list student_import_change_rows[]
+
+  @@index([created_at], map: "idx_student_import_logs_created_at")
+}
+
+model student_import_error_rows {
+  id            Int      @id @default(autoincrement())
+  import_log_id Int
+  row_number    Int
+  student_id    String?  @db.Text
+  full_name     String?  @db.Text
+  program_code  String?  @db.Text
+  batch_code    String?  @db.Text
+  status        String   @default("ERROR") @db.VarChar(40)
+  issues        String?  @db.Text
+  raw_payload   Json?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  import_log student_import_logs @relation(fields: [import_log_id], references: [id], onDelete: Cascade)
+
+  @@index([import_log_id], map: "idx_student_import_error_rows_log_id")
+}
+
+model student_import_change_rows {
+  id               Int      @id @default(autoincrement())
+  import_log_id    Int
+  entity_type      String   @db.VarChar(80)
+  entity_id        Int
+  action           String   @db.VarChar(30)
+  previous_payload Json?
+  new_payload      Json?
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+
+  import_log student_import_logs @relation(fields: [import_log_id], references: [id], onDelete: Cascade)
+
+  @@index([import_log_id], map: "idx_student_import_change_rows_log_id")
 }

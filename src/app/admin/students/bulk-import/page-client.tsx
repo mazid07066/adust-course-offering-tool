@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin-layout";
 
 type PreviewRow = {
@@ -14,7 +14,7 @@ type PreviewRow = {
   phone: string;
   email: string;
   address: string;
-  session: string;
+  admissionSemester: string;
   enrollmentStatus: string;
   normalizedStudentId: string;
   inferredBatchCode: string;
@@ -47,6 +47,7 @@ type PreviewResponse = {
 type CommitResponse = {
   success?: boolean;
   error?: string;
+  importLogId?: number;
   result?: {
     totalRows: number;
     createdStudents: number;
@@ -59,24 +60,90 @@ type CommitResponse = {
   };
 };
 
+type ImportLog = {
+  id: number;
+  import_type: string;
+  file_name: string | null;
+  file_size: number | null;
+  total_rows: number;
+  ok_rows: number;
+  warning_rows: number;
+  error_rows: number;
+  committed_rows: number;
+  created_students: number;
+  updated_students: number;
+  created_batches: number;
+  created_enrollments: number;
+  updated_enrollments: number;
+  skipped_rows: number;
+  status: string;
+  message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type HistoryResponse = {
+  success?: boolean;
+  error?: string;
+  logs?: ImportLog[];
+};
+
 export default function StudentBulkImportPageClient() {
   const [file, setFile] = useState<File | null>(null);
   const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
-  const [summary, setSummary] = useState<PreviewResponse["summary"] | null>(null);
-  const [commitResult, setCommitResult] = useState<CommitResponse["result"] | null>(null);
+  const [summary, setSummary] = useState<PreviewResponse["summary"] | null>(
+    null
+  );
+  const [commitResult, setCommitResult] =
+    useState<CommitResponse["result"] | null>(null);
+  const [latestImportLogId, setLatestImportLogId] = useState<number | null>(
+    null
+  );
+
+  const [history, setHistory] = useState<ImportLog[]>([]);
 
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [loadingCommit, setLoadingCommit] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  const canPreview = useMemo(() => Boolean(file && !loadingPreview), [file, loadingPreview]);
+  const canPreview = useMemo(
+    () => Boolean(file && !loadingPreview),
+    [file, loadingPreview]
+  );
 
   const canCommit = useMemo(() => {
     if (!file || loadingCommit || previewRows.length === 0) return false;
     return previewRows.every((row) => row.status !== "ERROR");
   }, [file, loadingCommit, previewRows]);
+
+  async function loadHistory() {
+    setLoadingHistory(true);
+
+    try {
+      const res = await fetch("/api/admin/students/bulk-import/history?limit=20", {
+        cache: "no-store",
+      });
+
+      const json: HistoryResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load import history.");
+      }
+
+      setHistory(json.logs || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }
+
+  useEffect(() => {
+    loadHistory();
+  }, []);
 
   async function previewImport() {
     if (!file) {
@@ -89,6 +156,7 @@ export default function StudentBulkImportPageClient() {
     setError("");
     setMessage("");
     setCommitResult(null);
+    setLatestImportLogId(null);
     setPreviewRows([]);
     setSummary(null);
 
@@ -131,7 +199,7 @@ export default function StudentBulkImportPageClient() {
     }
 
     const confirmed = window.confirm(
-      "This will create/update students and enrollment records. Continue?"
+      "This will create/update students, batches if missing, and enrollment records. Continue?"
     );
 
     if (!confirmed) return;
@@ -140,6 +208,7 @@ export default function StudentBulkImportPageClient() {
     setError("");
     setMessage("");
     setCommitResult(null);
+    setLatestImportLogId(null);
 
     try {
       const formData = new FormData();
@@ -153,17 +222,40 @@ export default function StudentBulkImportPageClient() {
       const json: CommitResponse = await res.json();
 
       if (!res.ok) {
+        if (json.importLogId) {
+          setLatestImportLogId(json.importLogId);
+        }
         throw new Error(json.error || "Commit failed.");
       }
 
       setCommitResult(json.result || null);
+      setLatestImportLogId(json.importLogId || null);
       setMessage("Student bulk import committed successfully.");
+
       await previewImport();
+      await loadHistory();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Commit failed.");
+      await loadHistory();
     } finally {
       setLoadingCommit(false);
     }
+  }
+
+  function statusBadge(status: string) {
+    const normalized = status.toUpperCase();
+
+    if (normalized === "SUCCESS") return "bg-green-100 text-green-700";
+
+    if (normalized === "PARTIAL_SUCCESS" || normalized === "WARNING") {
+      return "bg-amber-100 text-amber-700";
+    }
+
+    if (normalized === "BLOCKED" || normalized === "FAILED" || normalized === "ERROR") {
+      return "bg-red-100 text-red-700";
+    }
+
+    return "bg-slate-100 text-slate-700";
   }
 
   return (
@@ -176,21 +268,21 @@ export default function StudentBulkImportPageClient() {
                 S1-B — Student Bulk Import and Enrollment Matching
               </h2>
               <p className="mt-1 max-w-3xl text-sm text-slate-600">
-                Upload a CSV/XLSX student list. The system previews student creation,
-                existing student updates, program matching, batch matching, and enrollment
-                matching before committing records.
+                Upload a CSV/XLSX student list. The official import field is now{" "}
+                <b>Admission Semester</b>. Old files with a Session column will still be
+                accepted for compatibility.
               </p>
             </div>
 
             <button
-  type="button"
-  onClick={() => {
-    window.location.href = "/api/admin/students/bulk-import/template";
-  }}
-  className="inline-flex rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800"
->
-  Download CSV Template
-</button>
+              type="button"
+              onClick={() => {
+                window.location.href = "/api/admin/students/bulk-import/template";
+              }}
+              className="inline-flex rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800"
+            >
+              Download CSV Template
+            </button>
           </div>
 
           <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-center">
@@ -202,6 +294,7 @@ export default function StudentBulkImportPageClient() {
                 setPreviewRows([]);
                 setSummary(null);
                 setCommitResult(null);
+                setLatestImportLogId(null);
                 setError("");
                 setMessage("");
               }}
@@ -230,7 +323,18 @@ export default function StudentBulkImportPageClient() {
 
         {error && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
+            <div>{error}</div>
+            {latestImportLogId && (
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = `/api/admin/students/bulk-import/history/${latestImportLogId}/errors/export`;
+                }}
+                className="mt-3 rounded-lg bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700"
+              >
+                Download Error Rows CSV
+              </button>
+            )}
           </div>
         )}
 
@@ -242,7 +346,9 @@ export default function StudentBulkImportPageClient() {
 
         {summary && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="text-base font-semibold text-slate-900">Preview Summary</h3>
+            <h3 className="text-base font-semibold text-slate-900">
+              Preview Summary
+            </h3>
             <div className="mt-4 flex flex-wrap gap-3 text-sm">
               <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700">
                 Total: {summary.totalRows}
@@ -274,7 +380,9 @@ export default function StudentBulkImportPageClient() {
 
         {commitResult && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="text-base font-semibold text-slate-900">Commit Result</h3>
+            <h3 className="text-base font-semibold text-slate-900">
+              Commit Result
+            </h3>
             <div className="mt-4 flex flex-wrap gap-3 text-sm">
               <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700">
                 Total: {commitResult.totalRows}
@@ -299,20 +407,30 @@ export default function StudentBulkImportPageClient() {
               </span>
             </div>
 
-            {commitResult.errors.length > 0 && (
-              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                <div className="font-semibold">Import notes/errors</div>
-                <ul className="mt-2 list-disc space-y-1 pl-5">
-                  {commitResult.errors.slice(0, 20).map((item, index) => (
-                    <li key={index}>{item}</li>
-                  ))}
-                </ul>
-              </div>
+            {latestImportLogId && commitResult.errors.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = `/api/admin/students/bulk-import/history/${latestImportLogId}/errors/export`;
+                }}
+                className="mt-4 rounded-lg bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700"
+              >
+                Download Error Rows CSV
+              </button>
             )}
           </div>
         )}
 
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <h3 className="text-base font-semibold text-slate-900">
+              Preview Rows
+            </h3>
+            <span className="text-xs text-slate-500">
+              {previewRows.length} rows loaded
+            </span>
+          </div>
+
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50">
               <tr>
@@ -322,8 +440,13 @@ export default function StudentBulkImportPageClient() {
                 <th className="border-b px-3 py-3 text-left">Name</th>
                 <th className="border-b px-3 py-3 text-left">Program</th>
                 <th className="border-b px-3 py-3 text-left">Batch</th>
+                <th className="border-b px-3 py-3 text-left">
+                  Admission Semester
+                </th>
                 <th className="border-b px-3 py-3 text-left">Existing Student</th>
-                <th className="border-b px-3 py-3 text-left">Existing Enrollment</th>
+                <th className="border-b px-3 py-3 text-left">
+                  Existing Enrollment
+                </th>
                 <th className="border-b px-3 py-3 text-left">Issues</th>
               </tr>
             </thead>
@@ -366,7 +489,12 @@ export default function StudentBulkImportPageClient() {
                     </div>
                   </td>
                   <td className="border-b px-3 py-2">
-                    {row.existingStudentId ? `Yes (#${row.existingStudentId})` : "No"}
+                    {row.admissionSemester || "-"}
+                  </td>
+                  <td className="border-b px-3 py-2">
+                    {row.existingStudentId
+                      ? `Yes (#${row.existingStudentId})`
+                      : "No"}
                   </td>
                   <td className="border-b px-3 py-2">
                     {row.existingEnrollmentId
@@ -389,8 +517,146 @@ export default function StudentBulkImportPageClient() {
 
               {previewRows.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                     Upload a file and click Preview Import.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <h3 className="text-base font-semibold text-slate-900">
+              Import History
+            </h3>
+            <button
+              type="button"
+              onClick={loadHistory}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              {loadingHistory ? "Refreshing..." : "Refresh History"}
+            </button>
+          </div>
+
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="border-b px-3 py-3 text-left">ID</th>
+                <th className="border-b px-3 py-3 text-left">Status</th>
+                <th className="border-b px-3 py-3 text-left">File</th>
+                <th className="border-b px-3 py-3 text-left">Rows</th>
+                <th className="border-b px-3 py-3 text-left">Created</th>
+                <th className="border-b px-3 py-3 text-left">Updated</th>
+                <th className="border-b px-3 py-3 text-left">Enrollments</th>
+                <th className="border-b px-3 py-3 text-left">Skipped</th>
+                <th className="border-b px-3 py-3 text-left">Time</th>
+                <th className="border-b px-3 py-3 text-left">Action</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {history.map((log) => (
+                <tr key={log.id}>
+                  <td className="border-b px-3 py-2">#{log.id}</td>
+                  <td className="border-b px-3 py-2">
+                    <span
+                      className={`rounded-full px-2 py-1 text-xs font-semibold ${statusBadge(
+                        log.status
+                      )}`}
+                    >
+                      {log.status}
+                    </span>
+                  </td>
+                  <td className="border-b px-3 py-2">
+                    <div className="font-medium">{log.file_name || "-"}</div>
+                    <div className="text-xs text-slate-500">
+                      {log.message || "-"}
+                    </div>
+                  </td>
+                  <td className="border-b px-3 py-2">
+                    {log.total_rows} total / {log.committed_rows} committed
+                  </td>
+                  <td className="border-b px-3 py-2">
+                    Students {log.created_students} / Batches {log.created_batches}
+                  </td>
+                  <td className="border-b px-3 py-2">
+                    Students {log.updated_students}
+                  </td>
+                  <td className="border-b px-3 py-2">
+                    New {log.created_enrollments} / Updated{" "}
+                    {log.updated_enrollments}
+                  </td>
+                  <td className="border-b px-3 py-2">{log.skipped_rows}</td>
+                  <td className="border-b px-3 py-2">
+                    {new Date(log.created_at).toLocaleString()}
+                  </td>
+                  <td className="border-b px-3 py-2">
+                    <div className="flex flex-wrap gap-2">
+  {(log.error_rows > 0 || log.skipped_rows > 0) && (
+    <button
+      type="button"
+      onClick={() => {
+        window.location.href = `/api/admin/students/bulk-import/history/${log.id}/errors/export`;
+      }}
+      className="rounded-lg bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700"
+    >
+      Error CSV
+    </button>
+  )}
+
+  {["SUCCESS", "PARTIAL_SUCCESS"].includes(log.status) && (
+    <button
+      type="button"
+      onClick={async () => {
+        const confirmed = window.confirm(
+          `Rollback import #${log.id}? This will revert created/updated students, batches, and enrollments tracked under this import.`
+        );
+
+        if (!confirmed) return;
+
+        const res = await fetch(
+          `/api/admin/students/bulk-import/history/${log.id}/rollback`,
+          {
+            method: "POST",
+          }
+        );
+
+        const json = await res.json();
+
+        if (!res.ok) {
+          alert(json.error || "Rollback failed.");
+          return;
+        }
+
+        alert("Rollback completed.");
+        await loadHistory();
+      }}
+      className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"
+    >
+      Rollback
+    </button>
+  )}
+
+  {log.status === "ROLLED_BACK" && (
+    <span className="text-xs font-medium text-slate-500">Rolled back</span>
+  )}
+
+  {!["SUCCESS", "PARTIAL_SUCCESS", "ROLLED_BACK"].includes(log.status) &&
+    log.error_rows === 0 &&
+    log.skipped_rows === 0 && (
+      <span className="text-xs text-slate-400">No action</span>
+    )}
+</div>
+                  </td>
+                </tr>
+              ))}
+
+              {history.length === 0 && (
+                <tr>
+                  <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
+                    No student import history found yet.
                   </td>
                 </tr>
               )}

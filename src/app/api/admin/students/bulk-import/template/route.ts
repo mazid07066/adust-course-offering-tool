@@ -5,6 +5,7 @@ function csvEscape(value: string) {
   if (value.includes(",") || value.includes('"') || value.includes("\n")) {
     return `"${value.replace(/"/g, '""')}"`;
   }
+
   return value;
 }
 
@@ -22,7 +23,7 @@ export async function GET() {
     "Phone",
     "Email",
     "Address",
-    "Session",
+    "Admission Semester",
     "Enrollment Status",
   ];
 
@@ -37,7 +38,7 @@ export async function GET() {
       "01700000000",
       "student1@example.com",
       "Dhaka, Bangladesh",
-      "2023-2024",
+      "SPRING 2026",
       "ACTIVE",
     ],
     [
@@ -50,7 +51,7 @@ export async function GET() {
       "01800000000",
       "student2@example.com",
       "Dhaka, Bangladesh",
-      "2026-2027",
+      "SUMMER 2026",
       "ACTIVE",
     ],
   ];
