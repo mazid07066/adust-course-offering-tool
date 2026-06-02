@@ -1,47 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import AdminLayout from "@/components/admin-layout";
-
-type ProgramOption = {
-  id: number;
-  name: string;
-  short_name: string;
-  department_id: number;
-  departments?: {
-    id: number;
-    name: string;
-    short_name: string;
-  };
-};
-
-type BatchOption = {
-  id: number;
-  batch_code: string;
-  program_id: number;
-  admission_term?: string | null;
-  is_active?: boolean | null;
-};
-
-type AdvisorOption = {
-  id: number;
-  teacher_code: string;
-  full_name: string;
-  designation?: string | null;
-};
-
-type CatalogEntry = {
-  id: number;
-  department_code: string;
-  program_code: string;
-  program_title: string;
-  program_type: string;
-  study_shift: string;
-  curriculum_version: string;
-  curriculum_key?: string | null;
-  display_label: string;
-};
 
 type StudentRow = {
   id: number;
@@ -50,509 +11,154 @@ type StudentRow = {
   phone?: string | null;
   email?: string | null;
   current_status: string;
-  admission_year?: number | null;
   enrollments: Array<{
-    id: number;
     curriculum_key?: string | null;
-    enrollment_status: string;
-    program: ProgramOption;
-    batches?: BatchOption | null;
+    admission_semester?: string | null;
+    program?: {
+      short_name: string;
+      name: string;
+      departments?: {
+        short_name: string;
+      } | null;
+    } | null;
+    batches?: {
+      batch_code: string;
+    } | null;
   }>;
   advisor_assignments: Array<{
-    teachers: AdvisorOption;
+    teachers?: {
+      teacher_code: string;
+      full_name: string;
+    } | null;
   }>;
 };
 
-const blankForm = {
-  student_id: "",
-  full_name: "",
-  gender: "",
-  date_of_birth: "",
-  email: "",
-  phone: "",
-  guardian_name: "",
-  guardian_phone: "",
-  present_address: "",
-  permanent_address: "",
-  admission_year: "",
-  admission_term_name: "",
-  current_status: "ACTIVE",
-  program_id: "",
-  batch_id: "",
-  curriculum_key: "",
-  advisor_teacher_id: "",
-  remarks: "",
+type ApiResponse = {
+  success?: boolean;
+  error?: string;
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  totalPages?: number;
+  students?: StudentRow[];
 };
 
 export default function StudentsPageClient() {
-  const [programs, setPrograms] = useState<ProgramOption[]>([]);
-  const [batches, setBatches] = useState<BatchOption[]>([]);
-  const [advisors, setAdvisors] = useState<AdvisorOption[]>([]);
-  const [catalogEntries, setCatalogEntries] = useState<CatalogEntry[]>([]);
-  const [curriculumKeys, setCurriculumKeys] = useState<string[]>([]);
-  const [statuses, setStatuses] = useState<string[]>([]);
-
   const [students, setStudents] = useState<StudentRow[]>([]);
-  const [form, setForm] = useState(blankForm);
-
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [programFilter, setProgramFilter] = useState("");
-  const [batchFilter, setBatchFilter] = useState("");
+  const [status, setStatus] = useState("");
+  const [page, setPage] = useState(1);
+
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const filteredFormBatches = useMemo(() => {
-    const programId = Number(form.program_id || 0);
-    if (!programId) return [];
-    return batches.filter((batch) => batch.program_id === programId);
-  }, [batches, form.program_id]);
-
-  const filteredSearchBatches = useMemo(() => {
-    const programId = Number(programFilter || 0);
-    if (!programId) return batches;
-    return batches.filter((batch) => batch.program_id === programId);
-  }, [batches, programFilter]);
-
-  const selectedProgram = useMemo(() => {
-    return programs.find((program) => String(program.id) === form.program_id);
-  }, [programs, form.program_id]);
-
-  const filteredCatalogEntries = useMemo(() => {
-    if (!selectedProgram) return catalogEntries;
-
-    return catalogEntries.filter((entry) => {
-      const matchesProgramCode =
-        entry.program_code?.toUpperCase() ===
-        selectedProgram.short_name?.toUpperCase();
-
-      const matchesProgramTitle =
-        entry.program_title
-          ?.toUpperCase()
-          .includes(selectedProgram.name?.toUpperCase()) ||
-        selectedProgram.name
-          ?.toUpperCase()
-          .includes(entry.program_title?.toUpperCase());
-
-      const matchesDepartment =
-        !selectedProgram.departments?.short_name ||
-        entry.department_code?.toUpperCase() ===
-          selectedProgram.departments.short_name.toUpperCase();
-
-      return matchesDepartment && (matchesProgramCode || matchesProgramTitle);
-    });
-  }, [catalogEntries, selectedProgram]);
-
-  async function loadOptions() {
-    const res = await fetch("/api/admin/students/options", {
-      cache: "no-store",
-    });
-    const json = await res.json();
-
-    if (!res.ok) {
-      throw new Error(json.error || "Failed to load options.");
-    }
-
-    setPrograms(json.programs || []);
-    setBatches(json.batches || []);
-    setAdvisors(json.advisors || []);
-    setCatalogEntries(json.catalogEntries || []);
-    setCurriculumKeys(json.curriculumKeys || []);
-    setStatuses(json.statuses || []);
-  }
-
-  async function loadStudents() {
+  async function loadStudents(targetPage = page) {
     setLoading(true);
     setError("");
 
     try {
       const params = new URLSearchParams();
-      if (q.trim()) params.set("q", q.trim());
-      if (statusFilter) params.set("status", statusFilter);
-      if (programFilter) params.set("programId", programFilter);
-      if (batchFilter) params.set("batchId", batchFilter);
+      params.set("page", String(targetPage));
+      params.set("pageSize", "25");
 
-      const res = await fetch(`/api/admin/students?${params.toString()}`, {
+      if (q.trim()) params.set("q", q.trim());
+      if (status.trim()) params.set("status", status.trim());
+
+      const res = await fetch(`/api/admin/students/list?${params.toString()}`, {
         cache: "no-store",
       });
 
-      const json = await res.json();
+      const json: ApiResponse = await res.json();
 
       if (!res.ok) {
         throw new Error(json.error || "Failed to load students.");
       }
 
       setStudents(json.students || []);
+      setTotal(json.total || 0);
+      setTotalPages(json.totalPages || 1);
+      setPage(json.page || targetPage);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load students.");
       setStudents([]);
+      setTotal(0);
+      setTotalPages(1);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    loadOptions()
-      .then(loadStudents)
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to initialize page.")
-      );
+    loadStudents(1);
   }, []);
 
-  async function handleCreate(e: React.FormEvent) {
+  function submitSearch(e: React.FormEvent) {
     e.preventDefault();
-    setSaving(true);
-    setError("");
-    setMessage("");
-
-    try {
-      const res = await fetch("/api/admin/students", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(form),
-      });
-
-      const json = await res.json();
-
-      if (!res.ok) {
-        throw new Error(json.error || "Failed to create student.");
-      }
-
-      setMessage("Student created successfully.");
-      setForm(blankForm);
-      await loadStudents();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create student.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleDelete(id: number) {
-    const confirmed = window.confirm(
-      "Delete this student record? This will remove S1 student core data for this student."
-    );
-    if (!confirmed) return;
-
-    setError("");
-    setMessage("");
-
-    try {
-      const res = await fetch(`/api/admin/students/${id}`, {
-        method: "DELETE",
-      });
-
-      const json = await res.json();
-
-      if (!res.ok) {
-        throw new Error(json.error || "Failed to delete student.");
-      }
-
-      setMessage("Student deleted successfully.");
-      await loadStudents();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete student.");
-    }
+    loadStudents(1);
   }
 
   return (
     <AdminLayout title="Students">
       <div className="space-y-6">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">Add Student</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            S1 stores identity and enrollment only. Registration, billing,
-            attendance, grades, and admit cards will be added in later phases.
-          </p>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">
+                Student Search and Detail Access
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                S1-C student profile, enrollment timeline, advisor, status, and portal preparation.
+              </p>
+            </div>
 
-          <form onSubmit={handleCreate} className="mt-5 grid gap-4 lg:grid-cols-4">
-            <input
-              required
-              placeholder="Student ID"
-              value={form.student_id}
-              onChange={(e) => setForm({ ...form, student_id: e.target.value })}
-              className="rounded-xl border px-4 py-3"
-            />
-
-            <input
-              required
-              placeholder="Full Name"
-              value={form.full_name}
-              onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-              className="rounded-xl border px-4 py-3"
-            />
-
-            <select
-              value={form.gender}
-              onChange={(e) => setForm({ ...form, gender: e.target.value })}
-              className="rounded-xl border px-4 py-3"
+            <Link
+              href="/student/dashboard"
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
             >
-              <option value="">Gender</option>
-              <option value="MALE">Male</option>
-              <option value="FEMALE">Female</option>
-              <option value="OTHER">Other</option>
-            </select>
-
-            <input
-              type="date"
-              value={form.date_of_birth}
-              onChange={(e) =>
-                setForm({ ...form, date_of_birth: e.target.value })
-              }
-              className="rounded-xl border px-4 py-3"
-            />
-
-            <input
-              placeholder="Phone"
-              value={form.phone}
-              onChange={(e) => setForm({ ...form, phone: e.target.value })}
-              className="rounded-xl border px-4 py-3"
-            />
-
-            <input
-              placeholder="Email"
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-              className="rounded-xl border px-4 py-3"
-            />
-
-            <input
-              placeholder="Guardian Name"
-              value={form.guardian_name}
-              onChange={(e) =>
-                setForm({ ...form, guardian_name: e.target.value })
-              }
-              className="rounded-xl border px-4 py-3"
-            />
-
-            <input
-              placeholder="Guardian Phone"
-              value={form.guardian_phone}
-              onChange={(e) =>
-                setForm({ ...form, guardian_phone: e.target.value })
-              }
-              className="rounded-xl border px-4 py-3"
-            />
-
-            <select
-              required
-              value={form.program_id}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  program_id: e.target.value,
-                  batch_id: "",
-                  curriculum_key: "",
-                })
-              }
-              className="rounded-xl border px-4 py-3"
-            >
-              <option value="">Program</option>
-              {programs.map((program) => (
-                <option key={program.id} value={program.id}>
-                  {program.short_name} — {program.name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={form.batch_id}
-              onChange={(e) => setForm({ ...form, batch_id: e.target.value })}
-              className="rounded-xl border px-4 py-3"
-            >
-              <option value="">Batch</option>
-              {filteredFormBatches.map((batch) => (
-                <option key={batch.id} value={batch.id}>
-                  {batch.batch_code}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={form.curriculum_key}
-              onChange={(e) =>
-                setForm({ ...form, curriculum_key: e.target.value })
-              }
-              className="rounded-xl border px-4 py-3"
-            >
-              <option value="">Curriculum Key</option>
-
-              {filteredCatalogEntries.map((entry) => (
-                <option
-                  key={`catalog-${entry.id}`}
-                  value={entry.curriculum_key || ""}
-                >
-                  {entry.display_label}
-                  {entry.curriculum_key ? ` — ${entry.curriculum_key}` : ""}
-                </option>
-              ))}
-
-              {filteredCatalogEntries.length === 0 &&
-                curriculumKeys.map((key) => (
-                  <option key={key} value={key}>
-                    {key}
-                  </option>
-                ))}
-            </select>
-
-            <select
-              value={form.advisor_teacher_id}
-              onChange={(e) =>
-                setForm({ ...form, advisor_teacher_id: e.target.value })
-              }
-              className="rounded-xl border px-4 py-3"
-            >
-              <option value="">Advisor</option>
-              {advisors.map((advisor) => (
-                <option key={advisor.id} value={advisor.id}>
-                  {advisor.teacher_code} — {advisor.full_name}
-                </option>
-              ))}
-            </select>
-
-            <input
-              placeholder="Admission Year"
-              value={form.admission_year}
-              onChange={(e) =>
-                setForm({ ...form, admission_year: e.target.value })
-              }
-              className="rounded-xl border px-4 py-3"
-            />
-
-            <input
-              placeholder="Admission Term e.g. SPRING 2026"
-              value={form.admission_term_name}
-              onChange={(e) =>
-                setForm({ ...form, admission_term_name: e.target.value })
-              }
-              className="rounded-xl border px-4 py-3"
-            />
-
-            <select
-              value={form.current_status}
-              onChange={(e) =>
-                setForm({ ...form, current_status: e.target.value })
-              }
-              className="rounded-xl border px-4 py-3"
-            >
-              {statuses.map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
-
-            <input
-              placeholder="Remarks"
-              value={form.remarks}
-              onChange={(e) => setForm({ ...form, remarks: e.target.value })}
-              className="rounded-xl border px-4 py-3"
-            />
-
-            <textarea
-              placeholder="Present Address"
-              value={form.present_address}
-              onChange={(e) =>
-                setForm({ ...form, present_address: e.target.value })
-              }
-              className="rounded-xl border px-4 py-3 lg:col-span-2"
-            />
-
-            <textarea
-              placeholder="Permanent Address"
-              value={form.permanent_address}
-              onChange={(e) =>
-                setForm({ ...form, permanent_address: e.target.value })
-              }
-              className="rounded-xl border px-4 py-3 lg:col-span-2"
-            />
-
-            <button
-              disabled={saving}
-              className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60 lg:col-span-4"
-            >
-              {saving ? "Saving..." : "Create Student"}
-            </button>
-          </form>
-        </div>
-
-        {(message || error) && (
-          <div
-            className={`rounded-xl border px-4 py-3 text-sm ${
-              error
-                ? "border-red-200 bg-red-50 text-red-700"
-                : "border-green-200 bg-green-50 text-green-700"
-            }`}
-          >
-            {error || message}
+              Open Student Dashboard Preview
+            </Link>
           </div>
-        )}
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="grid gap-4 lg:grid-cols-5">
+          <form onSubmit={submitSearch} className="mt-5 grid gap-3 lg:grid-cols-4">
             <input
-              placeholder="Search ID, name, phone, email"
+              placeholder="Search Student ID, name, phone, email"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               className="rounded-xl border px-4 py-3 lg:col-span-2"
             />
 
             <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
               className="rounded-xl border px-4 py-3"
             >
               <option value="">All Statuses</option>
-              {statuses.map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={programFilter}
-              onChange={(e) => {
-                setProgramFilter(e.target.value);
-                setBatchFilter("");
-              }}
-              className="rounded-xl border px-4 py-3"
-            >
-              <option value="">All Programs</option>
-              {programs.map((program) => (
-                <option key={program.id} value={program.id}>
-                  {program.short_name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={batchFilter}
-              onChange={(e) => setBatchFilter(e.target.value)}
-              className="rounded-xl border px-4 py-3"
-            >
-              <option value="">All Batches</option>
-              {filteredSearchBatches.map((batch) => (
-                <option key={batch.id} value={batch.id}>
-                  {batch.batch_code}
-                </option>
-              ))}
+              <option value="ACTIVE">ACTIVE</option>
+              <option value="INACTIVE">INACTIVE</option>
+              <option value="DROPPED">DROPPED</option>
+              <option value="SUSPENDED">SUSPENDED</option>
+              <option value="COMPLETED">COMPLETED</option>
+              <option value="TRANSFERRED">TRANSFERRED</option>
             </select>
 
             <button
-              onClick={loadStudents}
+              type="submit"
               disabled={loading}
-              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60 lg:col-span-5"
+              className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
             >
-              {loading ? "Searching..." : "Search Students"}
+              {loading ? "Loading..." : "Search"}
             </button>
-          </div>
+          </form>
         </div>
+
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
 
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full text-sm">
@@ -563,9 +169,9 @@ export default function StudentsPageClient() {
                 <th className="border-b px-3 py-3 text-left">Program</th>
                 <th className="border-b px-3 py-3 text-left">Batch</th>
                 <th className="border-b px-3 py-3 text-left">Advisor</th>
-                <th className="border-b px-3 py-3 text-left">Contact</th>
                 <th className="border-b px-3 py-3 text-left">Status</th>
-                <th className="border-b px-3 py-3 text-left">Action</th>
+                <th className="border-b px-3 py-3 text-left">Contact</th>
+                <th className="border-b px-3 py-3 text-left">Actions</th>
               </tr>
             </thead>
 
@@ -592,15 +198,15 @@ export default function StudentsPageClient() {
                         : "-"}
                     </td>
                     <td className="border-b px-3 py-2">
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold">
+                        {student.current_status}
+                      </span>
+                    </td>
+                    <td className="border-b px-3 py-2">
                       <div>{student.phone || "-"}</div>
                       <div className="text-xs text-slate-500">
                         {student.email || "-"}
                       </div>
-                    </td>
-                    <td className="border-b px-3 py-2">
-                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-                        {student.current_status}
-                      </span>
                     </td>
                     <td className="border-b px-3 py-2">
                       <div className="flex flex-wrap gap-2">
@@ -608,15 +214,15 @@ export default function StudentsPageClient() {
                           href={`/admin/students/${student.id}`}
                           className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700"
                         >
-                          View
+                          Detail
                         </Link>
 
-                        <button
-                          onClick={() => handleDelete(student.id)}
-                          className="rounded-lg bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700"
+                        <Link
+                          href={`/student/dashboard?studentId=${encodeURIComponent(student.student_id)}`}
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium hover:bg-slate-50"
                         >
-                          Delete
-                        </button>
+                          Dashboard
+                        </Link>
                       </div>
                     </td>
                   </tr>
@@ -625,16 +231,41 @@ export default function StudentsPageClient() {
 
               {students.length === 0 && !loading && (
                 <tr>
-                  <td
-                    colSpan={8}
-                    className="px-4 py-8 text-center text-slate-500"
-                  >
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
                     No students found.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm shadow-sm lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            Total Students: <span className="font-semibold">{total}</span> | Page{" "}
+            <span className="font-semibold">{page}</span> of{" "}
+            <span className="font-semibold">{totalPages}</span>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={page <= 1 || loading}
+              onClick={() => loadStudents(page - 1)}
+              className="rounded-xl border px-4 py-2 disabled:opacity-50"
+            >
+              Previous
+            </button>
+
+            <button
+              type="button"
+              disabled={page >= totalPages || loading}
+              onClick={() => loadStudents(page + 1)}
+              className="rounded-xl border px-4 py-2 disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
     </AdminLayout>

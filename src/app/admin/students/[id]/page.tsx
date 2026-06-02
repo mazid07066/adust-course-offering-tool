@@ -1,7 +1,7 @@
 import { requireCoordinatorOrAdmin } from "@/lib/auth-guard";
-import StudentProfilePageClient from "./page-client";
+import StudentDetailPageClient from "./page-client";
 
-export default async function StudentProfilePage() {
+export default async function StudentDetailPage() {
   await requireCoordinatorOrAdmin();
-  return <StudentProfilePageClient />;
+  return <StudentDetailPageClient />;
 }

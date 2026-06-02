@@ -4,9 +4,7 @@ import { prisma } from "@/lib/prisma";
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const studentId = String(searchParams.get("studentId") || "")
-      .trim()
-      .toUpperCase();
+    const studentId = String(searchParams.get("studentId") || "").trim();
 
     if (!studentId) {
       return NextResponse.json(
@@ -19,21 +17,47 @@ export async function GET(req: NextRequest) {
       where: {
         student_id: studentId,
       },
-      include: {
+      select: {
+        id: true,
+        student_id: true,
+        full_name: true,
+        phone: true,
+        email: true,
+        current_status: true,
         enrollments: {
-          include: {
-            program: true,
-            batches: true,
+          orderBy: [{ created_at: "desc" }, { id: "desc" }],
+          take: 1,
+          select: {
+            curriculum_key: true,
+            admission_semester: true,
+            enrollment_status: true,
+            program: {
+              select: {
+                short_name: true,
+                name: true,
+              },
+            },
+            batches: {
+              select: {
+                batch_code: true,
+              },
+            },
           },
-          orderBy: [{ id: "desc" }],
         },
         advisor_assignments: {
-          where: { is_active: true },
-          include: {
-            teachers: true,
+          where: {
+            is_active: true,
           },
-          orderBy: [{ assigned_at: "desc" }],
           take: 1,
+          select: {
+            teachers: {
+              select: {
+                teacher_code: true,
+                full_name: true,
+                designation: true,
+              },
+            },
+          },
         },
       },
     });
@@ -49,12 +73,12 @@ export async function GET(req: NextRequest) {
       success: true,
       student,
       modules: {
-        registration: "COMING_IN_S2",
-        billing: "COMING_IN_S3",
-        attendance: "COMING_IN_S4",
-        gradeSubmission: "COMING_IN_S5",
-        admitCard: "COMING_IN_S6",
-        result: "COMING_IN_S7",
+        registration: "Prepared for later ERP phase",
+        billing: "Prepared for later ERP phase",
+        attendance: "Prepared for later ERP phase",
+        grades: "Prepared for later ERP phase",
+        admitCard: "Prepared for later ERP phase",
+        results: "Prepared for later ERP phase",
       },
     });
   } catch (error) {

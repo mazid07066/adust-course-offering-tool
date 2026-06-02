@@ -36,29 +36,23 @@ model batch_completed_courses {
 }
 
 model students {
-  id                      Int       @id @default(autoincrement())
-  student_id              String    @unique
-  full_name               String
-  gender                  String?
-  date_of_birth           DateTime?
-  email                   String?
-  phone                   String?
-  guardian_name           String?
-  guardian_phone          String?
-  present_address         String?
-  permanent_address       String?
-  admission_year          Int?
-  admission_term_name     String?
-  current_status          String    @default("ACTIVE")
-  remarks                 String?
-  blood_group             String?
-  religion                String?
-  nationality             String?
-  emergency_contact_name  String?
-  emergency_contact_phone String?
-  portal_user_id          Int?
-  created_at              DateTime  @default(now())
-  updated_at              DateTime  @updatedAt
+  id                  Int       @id @default(autoincrement())
+  student_id          String    @unique
+  full_name           String
+  gender              String?
+  date_of_birth       DateTime?
+  email               String?
+  phone               String?
+  guardian_name       String?
+  guardian_phone      String?
+  present_address     String?
+  permanent_address   String?
+  admission_year      Int?
+  admission_term_name String?
+  current_status      String    @default("ACTIVE")
+  remarks             String?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
 
   enrollments         student_program_enrollments[]
   contacts            student_contacts[]
@@ -80,8 +74,6 @@ model student_program_enrollments {
   enrollment_status  String    @default("ACTIVE")
   enrolled_at        DateTime  @default(now())
   completed_at       DateTime?
-  effective_from     DateTime?
-  effective_to       DateTime?
   remarks            String?
   created_at         DateTime  @default(now())
   updated_at         DateTime  @updatedAt
@@ -519,3 +511,215 @@ model student_import_change_rows {
 
   @@index([import_log_id], map: "idx_student_import_change_rows_log_id")
 }
+===== STUDENTS MODEL SEARCH =====
+> D:\adust-course-offering-tool\prisma\schema.prisma:38:model students {
+  D:\adust-course-offering-tool\prisma\schema.prisma:39:  id                  Int       @id @default(autoincrement())
+  D:\adust-course-offering-tool\prisma\schema.prisma:40:  student_id          String    @unique
+  D:\adust-course-offering-tool\prisma\schema.prisma:41:  full_name           String
+  D:\adust-course-offering-tool\prisma\schema.prisma:42:  gender              String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:43:  date_of_birth       DateTime?
+  D:\adust-course-offering-tool\prisma\schema.prisma:44:  email               String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:45:  phone               String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:46:  guardian_name       String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:47:  guardian_phone      String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:48:  present_address     String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:49:  permanent_address   String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:50:  admission_year      Int?
+  D:\adust-course-offering-tool\prisma\schema.prisma:51:  admission_term_name String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:52:  current_status      String    @default("ACTIVE")
+  D:\adust-course-offering-tool\prisma\schema.prisma:53:  remarks             String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:54:  created_at          DateTime  @default(now())
+  D:\adust-course-offering-tool\prisma\schema.prisma:55:  updated_at          DateTime  @updatedAt
+  D:\adust-course-offering-tool\prisma\schema.prisma:56:
+  D:\adust-course-offering-tool\prisma\schema.prisma:57:  enrollments         student_program_enrollments[]
+  D:\adust-course-offering-tool\prisma\schema.prisma:58:  contacts            student_contacts[]
+  D:\adust-course-offering-tool\prisma\schema.prisma:59:  status_history      student_status_history[]
+  D:\adust-course-offering-tool\prisma\schema.prisma:60:  advisor_assignments student_advisor_assignments[]
+  D:\adust-course-offering-tool\prisma\schema.prisma:61:
+  D:\adust-course-offering-tool\prisma\schema.prisma:62:  @@index([student_id])
+  D:\adust-course-offering-tool\prisma\schema.prisma:63:  @@index([full_name])
+  D:\adust-course-offering-tool\prisma\schema.prisma:64:  @@index([current_status])
+  D:\adust-course-offering-tool\prisma\schema.prisma:65:}
+  D:\adust-course-offering-tool\prisma\schema.prisma:66:
+> D:\adust-course-offering-tool\prisma\schema.prisma:67:model student_program_enrollments {
+  D:\adust-course-offering-tool\prisma\schema.prisma:68:  id                 Int       @id @default(autoincrement())
+  D:\adust-course-offering-tool\prisma\schema.prisma:69:  student_id_ref     Int
+  D:\adust-course-offering-tool\prisma\schema.prisma:70:  program_id         Int
+  D:\adust-course-offering-tool\prisma\schema.prisma:71:  batch_id           Int?
+  D:\adust-course-offering-tool\prisma\schema.prisma:72:  curriculum_key     String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:73:  admission_semester String?   @db.VarChar(100)
+  D:\adust-course-offering-tool\prisma\schema.prisma:74:  enrollment_status  String    @default("ACTIVE")
+  D:\adust-course-offering-tool\prisma\schema.prisma:75:  enrolled_at        DateTime  @default(now())
+  D:\adust-course-offering-tool\prisma\schema.prisma:76:  completed_at       DateTime?
+  D:\adust-course-offering-tool\prisma\schema.prisma:77:  remarks            String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:78:  created_at         DateTime  @default(now())
+  D:\adust-course-offering-tool\prisma\schema.prisma:79:  updated_at         DateTime  @updatedAt
+  D:\adust-course-offering-tool\prisma\schema.prisma:80:
+  D:\adust-course-offering-tool\prisma\schema.prisma:81:  students students @relation(fields: [student_id_ref], references: [id], onDelete: Cascade)
+  D:\adust-course-offering-tool\prisma\schema.prisma:82:  program  programs @relation(fields: [program_id], references: [id])
+  D:\adust-course-offering-tool\prisma\schema.prisma:83:  batches  batches? @relation(fields: [batch_id], references: [id])
+  D:\adust-course-offering-tool\prisma\schema.prisma:84:
+  D:\adust-course-offering-tool\prisma\schema.prisma:85:  @@unique([student_id_ref, program_id, batch_id])
+  D:\adust-course-offering-tool\prisma\schema.prisma:86:  @@index([student_id_ref])
+  D:\adust-course-offering-tool\prisma\schema.prisma:87:  @@index([program_id])
+  D:\adust-course-offering-tool\prisma\schema.prisma:88:  @@index([batch_id])
+  D:\adust-course-offering-tool\prisma\schema.prisma:89:  @@index([curriculum_key])
+  D:\adust-course-offering-tool\prisma\schema.prisma:90:  @@index([admission_semester])
+  D:\adust-course-offering-tool\prisma\schema.prisma:91:}
+  D:\adust-course-offering-tool\prisma\schema.prisma:92:
+  D:\adust-course-offering-tool\prisma\schema.prisma:93:model student_contacts {
+  D:\adust-course-offering-tool\prisma\schema.prisma:94:  id             Int      @id @default(autoincrement())
+  D:\adust-course-offering-tool\prisma\schema.prisma:95:  student_id_ref Int
+  D:\adust-course-offering-tool\prisma\schema.prisma:96:  contact_type   String
+  D:\adust-course-offering-tool\prisma\schema.prisma:97:  contact_value  String
+  D:\adust-course-offering-tool\prisma\schema.prisma:98:  is_primary     Boolean  @default(false)
+  D:\adust-course-offering-tool\prisma\schema.prisma:99:  created_at     DateTime @default(now())
+  D:\adust-course-offering-tool\prisma\schema.prisma:100:  updated_at     DateTime @updatedAt
+  D:\adust-course-offering-tool\prisma\schema.prisma:101:
+  D:\adust-course-offering-tool\prisma\schema.prisma:102:  students students @relation(fields: [student_id_ref], references: [id], onDelete: Cascade)
+  D:\adust-course-offering-tool\prisma\schema.prisma:103:
+  D:\adust-course-offering-tool\prisma\schema.prisma:104:  @@index([student_id_ref])
+  D:\adust-course-offering-tool\prisma\schema.prisma:105:  @@index([contact_type])
+  D:\adust-course-offering-tool\prisma\schema.prisma:106:}
+  D:\adust-course-offering-tool\prisma\schema.prisma:107:
+  D:\adust-course-offering-tool\prisma\schema.prisma:108:model student_status_history {
+  D:\adust-course-offering-tool\prisma\schema.prisma:109:  id             Int      @id @default(autoincrement())
+  D:\adust-course-offering-tool\prisma\schema.prisma:110:  student_id_ref Int
+  D:\adust-course-offering-tool\prisma\schema.prisma:111:  old_status     String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:112:  new_status     String
+  D:\adust-course-offering-tool\prisma\schema.prisma:113:  note           String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:114:  changed_at     DateTime @default(now())
+  D:\adust-course-offering-tool\prisma\schema.prisma:115:
+  D:\adust-course-offering-tool\prisma\schema.prisma:116:  students students @relation(fields: [student_id_ref], references: [id], onDelete: Cascade)
+  D:\adust-course-offering-tool\prisma\schema.prisma:117:
+  D:\adust-course-offering-tool\prisma\schema.prisma:118:  @@index([student_id_ref])
+  D:\adust-course-offering-tool\prisma\schema.prisma:119:  @@index([new_status])
+  D:\adust-course-offering-tool\prisma\schema.prisma:120:}
+  D:\adust-course-offering-tool\prisma\schema.prisma:121:
+  D:\adust-course-offering-tool\prisma\schema.prisma:122:model student_advisor_assignments {
+  D:\adust-course-offering-tool\prisma\schema.prisma:123:  id             Int       @id @default(autoincrement())
+  D:\adust-course-offering-tool\prisma\schema.prisma:124:  student_id_ref Int
+  D:\adust-course-offering-tool\prisma\schema.prisma:125:  teacher_id     Int
+  D:\adust-course-offering-tool\prisma\schema.prisma:126:  assigned_at    DateTime  @default(now())
+  D:\adust-course-offering-tool\prisma\schema.prisma:127:  ended_at       DateTime?
+  D:\adust-course-offering-tool\prisma\schema.prisma:128:  is_active      Boolean   @default(true)
+  D:\adust-course-offering-tool\prisma\schema.prisma:129:  remarks        String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:130:
+  D:\adust-course-offering-tool\prisma\schema.prisma:131:  students students @relation(fields: [student_id_ref], references: [id], onDelete: Cascade)
+  D:\adust-course-offering-tool\prisma\schema.prisma:132:  teachers teachers @relation(fields: [teacher_id], references: [id])
+  D:\adust-course-offering-tool\prisma\schema.prisma:133:
+  D:\adust-course-offering-tool\prisma\schema.prisma:134:  @@index([student_id_ref])
+  D:\adust-course-offering-tool\prisma\schema.prisma:135:  @@index([teacher_id])
+  D:\adust-course-offering-tool\prisma\schema.prisma:136:  @@index([is_active])
+  D:\adust-course-offering-tool\prisma\schema.prisma:137:}
+  D:\adust-course-offering-tool\prisma\schema.prisma:138:
+  D:\adust-course-offering-tool\prisma\schema.prisma:139:model batch_current_registrations {
+  D:\adust-course-offering-tool\prisma\schema.prisma:140:  id                Int            @id @default(autoincrement())
+  D:\adust-course-offering-tool\prisma\schema.prisma:141:  batch_id          Int
+  D:\adust-course-offering-tool\prisma\schema.prisma:142:  academic_term_id  Int
+  D:\adust-course-offering-tool\prisma\schema.prisma:143:  course_code       String         @db.VarChar(100)
+  D:\adust-course-offering-tool\prisma\schema.prisma:144:  course_title      String         @db.VarChar(300)
+  D:\adust-course-offering-tool\prisma\schema.prisma:145:  normalized_title  String         @db.VarChar(300)
+  D:\adust-course-offering-tool\prisma\schema.prisma:146:  credit            Float
+  D:\adust-course-offering-tool\prisma\schema.prisma:147:  source_student_id String?        @db.VarChar(100)
+> D:\adust-course-offering-tool\prisma\schema.prisma:326:model teachers {
+  D:\adust-course-offering-tool\prisma\schema.prisma:327:  id                          Int                           @id @default(autoincrement())
+  D:\adust-course-offering-tool\prisma\schema.prisma:328:  department_id               Int
+  D:\adust-course-offering-tool\prisma\schema.prisma:329:  teacher_code                String                        @unique @db.VarChar(100)
+  D:\adust-course-offering-tool\prisma\schema.prisma:330:  full_name                   String                        @db.VarChar(200)
+  D:\adust-course-offering-tool\prisma\schema.prisma:331:  designation                 String?                       @db.VarChar(150)
+  D:\adust-course-offering-tool\prisma\schema.prisma:332:  email                       String?                       @db.VarChar(200)
+  D:\adust-course-offering-tool\prisma\schema.prisma:333:  phone                       String?                       @db.VarChar(50)
+  D:\adust-course-offering-tool\prisma\schema.prisma:334:  seniority_level             Int?
+  D:\adust-course-offering-tool\prisma\schema.prisma:335:  is_active                   Boolean?
+  D:\adust-course-offering-tool\prisma\schema.prisma:336:  faculty_course_selections   faculty_course_selections[]
+  D:\adust-course-offering-tool\prisma\schema.prisma:337:  offered_course_teachers     offered_course_teachers[]
+  D:\adust-course-offering-tool\prisma\schema.prisma:338:  departments                 departments                   @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  D:\adust-course-offering-tool\prisma\schema.prisma:339:  users                       users[]
+  D:\adust-course-offering-tool\prisma\schema.prisma:340:  student_advisor_assignments student_advisor_assignments[]
+  D:\adust-course-offering-tool\prisma\schema.prisma:341:
+  D:\adust-course-offering-tool\prisma\schema.prisma:342:  @@index([department_id], map: "ix_teachers_department_id")
+  D:\adust-course-offering-tool\prisma\schema.prisma:343:  @@index([seniority_level], map: "ix_teachers_seniority_level")
+  D:\adust-course-offering-tool\prisma\schema.prisma:344:}
+  D:\adust-course-offering-tool\prisma\schema.prisma:345:
+> D:\adust-course-offering-tool\prisma\schema.prisma:346:model users {
+  D:\adust-course-offering-tool\prisma\schema.prisma:347:  id                  Int                   @id @default(autoincrement())
+  D:\adust-course-offering-tool\prisma\schema.prisma:348:  username            String                @unique(map: "ix_users_username") @db.VarChar(100)
+  D:\adust-course-offering-tool\prisma\schema.prisma:349:  full_name           String                @db.VarChar(200)
+  D:\adust-course-offering-tool\prisma\schema.prisma:350:  password_hash       String
+  D:\adust-course-offering-tool\prisma\schema.prisma:351:  role                String                @db.VarChar(50)
+  D:\adust-course-offering-tool\prisma\schema.prisma:352:  is_active           Boolean?
+  D:\adust-course-offering-tool\prisma\schema.prisma:353:  teacher_id          Int?
+  D:\adust-course-offering-tool\prisma\schema.prisma:354:  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  D:\adust-course-offering-tool\prisma\schema.prisma:355:  offerings           offerings[]
+  D:\adust-course-offering-tool\prisma\schema.prisma:356:  student_report_logs student_report_logs[]
+  D:\adust-course-offering-tool\prisma\schema.prisma:357:  teachers            teachers?             @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  D:\adust-course-offering-tool\prisma\schema.prisma:358:
+  D:\adust-course-offering-tool\prisma\schema.prisma:359:  // ? ADD THIS LINE ONLY
+  D:\adust-course-offering-tool\prisma\schema.prisma:360:  faculty_login_sessions FacultyLoginSession[]
+  D:\adust-course-offering-tool\prisma\schema.prisma:361:
+  D:\adust-course-offering-tool\prisma\schema.prisma:362:  @@index([id], map: "ix_users_id")
+  D:\adust-course-offering-tool\prisma\schema.prisma:363:}
+  D:\adust-course-offering-tool\prisma\schema.prisma:364:
+  D:\adust-course-offering-tool\prisma\schema.prisma:365:model academic_catalog_entries {
+  D:\adust-course-offering-tool\prisma\schema.prisma:366:  id                 Int      @id @default(autoincrement())
+  D:\adust-course-offering-tool\prisma\schema.prisma:367:  department_code    String
+  D:\adust-course-offering-tool\prisma\schema.prisma:368:  department_name    String
+  D:\adust-course-offering-tool\prisma\schema.prisma:369:  program_code       String   @unique
+  D:\adust-course-offering-tool\prisma\schema.prisma:370:  program_title      String
+  D:\adust-course-offering-tool\prisma\schema.prisma:371:  program_type       String
+  D:\adust-course-offering-tool\prisma\schema.prisma:372:  study_shift        String
+  D:\adust-course-offering-tool\prisma\schema.prisma:373:  curriculum_version String
+  D:\adust-course-offering-tool\prisma\schema.prisma:374:  student_id_suffix  String?  @unique
+  D:\adust-course-offering-tool\prisma\schema.prisma:375:  display_label      String
+  D:\adust-course-offering-tool\prisma\schema.prisma:376:  is_active          Boolean  @default(true)
+  D:\adust-course-offering-tool\prisma\schema.prisma:377:  created_at         DateTime @default(now())
+  D:\adust-course-offering-tool\prisma\schema.prisma:378:  updated_at         DateTime @default(now()) @updatedAt
+  D:\adust-course-offering-tool\prisma\schema.prisma:379:  curriculum_key     String?
+  D:\adust-course-offering-tool\prisma\schema.prisma:380:
+  D:\adust-course-offering-tool\prisma\schema.prisma:381:  @@index([department_code])
+  D:\adust-course-offering-tool\prisma\schema.prisma:382:  @@index([program_type])
+  D:\adust-course-offering-tool\prisma\schema.prisma:383:  @@index([study_shift])
+  D:\adust-course-offering-tool\prisma\schema.prisma:384:  @@index([curriculum_version])
+  D:\adust-course-offering-tool\prisma\schema.prisma:385:  @@index([curriculum_key])
+  D:\adust-course-offering-tool\prisma\schema.prisma:386:}
+  D:\adust-course-offering-tool\prisma\schema.prisma:387:
+  D:\adust-course-offering-tool\prisma\schema.prisma:388:model SystemSetting {
+  D:\adust-course-offering-tool\prisma\schema.prisma:389:  id              Int      @id @default(autoincrement())
+  D:\adust-course-offering-tool\prisma\schema.prisma:390:  settingKey      String   @unique
+  D:\adust-course-offering-tool\prisma\schema.prisma:391:  settingValue    String
+  D:\adust-course-offering-tool\prisma\schema.prisma:392:  updatedByUserId Int?
+  D:\adust-course-offering-tool\prisma\schema.prisma:393:  updatedAt       DateTime @updatedAt
+  D:\adust-course-offering-tool\prisma\schema.prisma:394:}
+  D:\adust-course-offering-tool\prisma\schema.prisma:395:
+  D:\adust-course-offering-tool\prisma\schema.prisma:396:model FacultyLoginSession {
+  D:\adust-course-offering-tool\prisma\schema.prisma:397:  id           Int       @id @default(autoincrement())
+  D:\adust-course-offering-tool\prisma\schema.prisma:398:  userId       Int
+  D:\adust-course-offering-tool\prisma\schema.prisma:399:  sessionToken String    @unique
+  D:\adust-course-offering-tool\prisma\schema.prisma:400:  createdAt    DateTime  @default(now())
+  D:\adust-course-offering-tool\prisma\schema.prisma:401:  expiresAt    DateTime
+  D:\adust-course-offering-tool\prisma\schema.prisma:402:  revokedAt    DateTime?
+  D:\adust-course-offering-tool\prisma\schema.prisma:403:
+  D:\adust-course-offering-tool\prisma\schema.prisma:404:  user users @relation(fields: [userId], references: [id], onDelete: Cascade)
+  D:\adust-course-offering-tool\prisma\schema.prisma:405:
+  D:\adust-course-offering-tool\prisma\schema.prisma:406:  @@index([userId])
+  D:\adust-course-offering-tool\prisma\schema.prisma:407:}
+  D:\adust-course-offering-tool\prisma\schema.prisma:408:
+  D:\adust-course-offering-tool\prisma\schema.prisma:409:model offered_course_manual_cooffers {
+  D:\adust-course-offering-tool\prisma\schema.prisma:410:  id                  Int             @id @default(autoincrement())
+  D:\adust-course-offering-tool\prisma\schema.prisma:411:  offered_course_id   Int
+  D:\adust-course-offering-tool\prisma\schema.prisma:412:  target_program_code String?         @db.VarChar(100)
+  D:\adust-course-offering-tool\prisma\schema.prisma:413:  manual_course_code  String          @db.VarChar(100)
+  D:\adust-course-offering-tool\prisma\schema.prisma:414:  note                String?         @db.VarChar(300)
+  D:\adust-course-offering-tool\prisma\schema.prisma:415:  created_at          DateTime        @default(now())
+  D:\adust-course-offering-tool\prisma\schema.prisma:416:  offered_courses     offered_courses @relation(fields: [offered_course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  D:\adust-course-offering-tool\prisma\schema.prisma:417:
+  D:\adust-course-offering-tool\prisma\schema.prisma:418:  @@index([offered_course_id], map: "ix_offered_course_manual_cooffers_offered_course_id")
+  D:\adust-course-offering-tool\prisma\schema.prisma:419:  @@index([target_program_code], map: "ix_offered_course_manual_cooffers_target_program_code")
+  D:\adust-course-offering-tool\prisma\schema.prisma:420:}
+  D:\adust-course-offering-tool\prisma\schema.prisma:421:
+  D:\adust-course-offering-tool\prisma\schema.prisma:422:model faculty_login_sessions {
+  D:\adust-course-offering-tool\prisma\schema.prisma:423:  id            Int       @id @default(autoincrement())
+  D:\adust-course-offering-tool\prisma\schema.prisma:424:  user_id       Int
+  D:\adust-course-offering-tool\prisma\schema.prisma:425:  teacher_id    Int?
+  D:\adust-course-offering-tool\prisma\schema.prisma:426:  session_token String    @unique @db.VarChar(191)
