@@ -30,6 +30,18 @@ function splitStoredRoomCode(stored: string) {
   };
 }
 
+function parseCapacity(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error("Room capacity must be a positive whole number.");
+  }
+
+  return parsed;
+}
+
 export async function PUT(
   req: NextRequest,
   context: { params: Promise<{ roomId: string }> }
@@ -55,6 +67,7 @@ export async function PUT(
     const roomCode = String(body.roomCode || "").trim().toUpperCase();
     const roomNumber = String(body.roomNumber || "").trim().toUpperCase();
     const building = String(body.building || "").trim().toUpperCase();
+    const capacity = parseCapacity(body.capacity);
     const isActive = Boolean(body.isActive);
 
     if (!roomCode) {
@@ -118,12 +131,14 @@ export async function PUT(
       data: {
         room_code: storedRoomCode,
         room_type: building,
+        capacity,
         is_active: isActive,
       },
       select: {
         id: true,
         room_code: true,
         room_type: true,
+        capacity: true,
         is_active: true,
       },
     });
@@ -137,6 +152,7 @@ export async function PUT(
         roomCode: parsed.roomCode,
         roomNumber: parsed.roomNumber,
         building: updated.room_type,
+        capacity: updated.capacity,
         isActive: Boolean(updated.is_active),
         displayCode: `${parsed.roomCode} | ${parsed.roomNumber}`,
       },

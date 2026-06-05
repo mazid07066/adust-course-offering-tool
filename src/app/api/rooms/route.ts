@@ -30,6 +30,18 @@ function splitStoredRoomCode(stored: string) {
   };
 }
 
+function parseCapacity(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error("Room capacity must be a positive whole number.");
+  }
+
+  return parsed;
+}
+
 export async function GET() {
   try {
     await requireCoordinatorOrAdminApi();
@@ -42,6 +54,7 @@ export async function GET() {
         id: true,
         room_code: true,
         room_type: true,
+        capacity: true,
         is_active: true,
       },
     });
@@ -56,6 +69,7 @@ export async function GET() {
           roomCode: parsed.roomCode,
           roomNumber: parsed.roomNumber,
           building: room.room_type,
+          capacity: room.capacity,
           isActive: Boolean(room.is_active),
           displayCode: `${parsed.roomCode} | ${parsed.roomNumber}`,
         };
@@ -84,6 +98,7 @@ export async function POST(req: NextRequest) {
     const roomCode = String(body.roomCode || "").trim().toUpperCase();
     const roomNumber = String(body.roomNumber || "").trim().toUpperCase();
     const building = String(body.building || "").trim().toUpperCase();
+    const capacity = parseCapacity(body.capacity);
     const isActive = body.isActive === undefined ? true : Boolean(body.isActive);
 
     if (!roomCode) {
@@ -141,12 +156,14 @@ export async function POST(req: NextRequest) {
       data: {
         room_code: storedRoomCode,
         room_type: building,
+        capacity,
         is_active: isActive,
       },
       select: {
         id: true,
         room_code: true,
         room_type: true,
+        capacity: true,
         is_active: true,
       },
     });
@@ -160,6 +177,7 @@ export async function POST(req: NextRequest) {
         roomCode: parsed.roomCode,
         roomNumber: parsed.roomNumber,
         building: room.room_type,
+        capacity: room.capacity,
         isActive: Boolean(room.is_active),
         displayCode: `${parsed.roomCode} | ${parsed.roomNumber}`,
       },

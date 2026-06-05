@@ -8,6 +8,7 @@ type RoomRow = {
   roomCode: string;
   roomNumber: string;
   building: string;
+  capacity: number | null;
   isActive: boolean;
   displayCode: string;
 };
@@ -31,6 +32,7 @@ export default function RoomsPageClient() {
   const [roomCode, setRoomCode] = useState("");
   const [roomNumber, setRoomNumber] = useState("");
   const [building, setBuilding] = useState("BUILDING 1");
+  const [capacity, setCapacity] = useState("");
   const [isActive, setIsActive] = useState(true);
 
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -67,8 +69,21 @@ export default function RoomsPageClient() {
     setRoomCode("");
     setRoomNumber("");
     setBuilding("BUILDING 1");
+    setCapacity("");
     setIsActive(true);
     setEditingId(null);
+  }
+
+  function parseCapacityInput() {
+    if (!capacity.trim()) return null;
+
+    const parsed = Number(capacity);
+
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new Error("Room capacity must be a positive whole number.");
+    }
+
+    return parsed;
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -82,6 +97,16 @@ export default function RoomsPageClient() {
 
     if (!roomNumber.trim()) {
       setError("Room number is required.");
+      setMessage("");
+      return;
+    }
+
+    let parsedCapacity: number | null = null;
+
+    try {
+      parsedCapacity = parseCapacityInput();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid room capacity.");
       setMessage("");
       return;
     }
@@ -103,6 +128,7 @@ export default function RoomsPageClient() {
           roomCode,
           roomNumber,
           building,
+          capacity: parsedCapacity,
           isActive,
         }),
       });
@@ -153,6 +179,7 @@ export default function RoomsPageClient() {
     setRoomCode(room.roomCode);
     setRoomNumber(room.roomNumber);
     setBuilding(room.building);
+    setCapacity(room.capacity ? String(room.capacity) : "");
     setIsActive(room.isActive);
     setMessage("");
     setError("");
@@ -164,7 +191,7 @@ export default function RoomsPageClient() {
         <div>
           <h3 className="text-lg font-semibold text-slate-900">Room Setup</h3>
           <p className="mt-1 text-sm text-slate-500">
-            Create and maintain rooms that will be used during slot scheduling.
+            Create and maintain rooms with seat capacity for class scheduling and exam scheduling.
           </p>
         </div>
 
@@ -172,7 +199,7 @@ export default function RoomsPageClient() {
           onSubmit={handleSubmit}
           className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
         >
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-5">
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-700">
                 Room Code
@@ -212,6 +239,21 @@ export default function RoomsPageClient() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Seat Capacity
+              </label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={capacity}
+                onChange={(e) => setCapacity(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3"
+                placeholder="Example: 60"
+              />
             </div>
 
             <div className="flex items-center gap-3 pt-8">
@@ -285,6 +327,7 @@ export default function RoomsPageClient() {
                   <th className="border-b px-3 py-3 text-left">Room Code</th>
                   <th className="border-b px-3 py-3 text-left">Room Number</th>
                   <th className="border-b px-3 py-3 text-left">Building</th>
+                  <th className="border-b px-3 py-3 text-left">Capacity</th>
                   <th className="border-b px-3 py-3 text-left">Status</th>
                   <th className="border-b px-3 py-3 text-left">Action</th>
                 </tr>
@@ -295,6 +338,9 @@ export default function RoomsPageClient() {
                     <td className="border-b px-3 py-2">{room.roomCode}</td>
                     <td className="border-b px-3 py-2">{room.roomNumber}</td>
                     <td className="border-b px-3 py-2">{room.building}</td>
+                    <td className="border-b px-3 py-2">
+                      {room.capacity ? room.capacity : "-"}
+                    </td>
                     <td className="border-b px-3 py-2">
                       {room.isActive ? "Active" : "Inactive"}
                     </td>
@@ -322,7 +368,7 @@ export default function RoomsPageClient() {
 
                 {rooms.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
                       No rooms configured yet.
                     </td>
                   </tr>
