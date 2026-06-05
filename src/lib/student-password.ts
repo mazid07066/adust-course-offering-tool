@@ -1,50 +1,44 @@
-import crypto from "crypto";
+import bcrypt from "bcryptjs";
 
-const SCRYPT_N = 16384;
-const SCRYPT_R = 8;
-const SCRYPT_P = 1;
-const KEY_LENGTH = 64;
-
-export function hashStudentPassword(password: string) {
-  if (!password || password.length < 6) {
-    throw new Error("Password must be at least 6 characters.");
-  }
-
-  const salt = crypto.randomBytes(16).toString("hex");
-
-  const hash = crypto.scryptSync(password, salt, KEY_LENGTH, {
-    N: SCRYPT_N,
-    r: SCRYPT_R,
-    p: SCRYPT_P,
-  });
-
-  return `scrypt$${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt}$${hash.toString(
-    "hex"
-  )}`;
+export async function hashStudentPassword(password: string) {
+  return bcrypt.hash(password, 12);
 }
 
-export function verifyStudentPassword(password: string, storedHash: string) {
-  try {
-    const parts = storedHash.split("$");
+export async function verifyStudentPassword(password: string, passwordHash: string) {
+  return bcrypt.compare(password, passwordHash);
+}
 
-    if (parts.length !== 6 || parts[0] !== "scrypt") {
-      return false;
-    }
-
-    const n = Number(parts[1]);
-    const r = Number(parts[2]);
-    const p = Number(parts[3]);
-    const salt = parts[4];
-    const expectedHash = Buffer.from(parts[5], "hex");
-
-    const actualHash = crypto.scryptSync(password, salt, expectedHash.length, {
-      N: n,
-      r,
-      p,
-    });
-
-    return crypto.timingSafeEqual(expectedHash, actualHash);
-  } catch {
-    return false;
+export function validateStudentPasswordStrength(password: string) {
+  if (!password || password.length < 8) {
+    return {
+      valid: false,
+      message: "Password must be at least 8 characters long.",
+    };
   }
+
+  if (!/[A-Z]/.test(password)) {
+    return {
+      valid: false,
+      message: "Password must include at least one uppercase letter.",
+    };
+  }
+
+  if (!/[a-z]/.test(password)) {
+    return {
+      valid: false,
+      message: "Password must include at least one lowercase letter.",
+    };
+  }
+
+  if (!/[0-9]/.test(password)) {
+    return {
+      valid: false,
+      message: "Password must include at least one number.",
+    };
+  }
+
+  return {
+    valid: true,
+    message: "Password is strong enough.",
+  };
 }

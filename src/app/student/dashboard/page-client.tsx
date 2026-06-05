@@ -1,140 +1,174 @@
 "use client";
 
-import type { StudentPortalSession } from "@/lib/student-session";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import StudentLayout from "@/components/student-layout";
 
-type Props = {
-  session: StudentPortalSession;
+type ProfileResponse = {
+  success?: boolean;
+  error?: string;
+  account?: any;
+  student?: any;
+  enrollments?: any[];
 };
 
-export default function StudentDashboardClient({ session }: Props) {
-  async function handleLogout() {
-    await fetch("/api/student-auth/logout", {
-      method: "POST",
-    });
+export default function StudentDashboardPageClient() {
+  const [data, setData] = useState<ProfileResponse | null>(null);
+  const [loading, setLoading] = useState(true);
 
-    window.location.href = "/student/login";
+  async function loadProfile() {
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/student/profile", {
+        cache: "no-store",
+      });
+
+      const json = await res.json();
+
+      if (res.status === 401) {
+        window.location.href = "/student/login";
+        return;
+      }
+
+      setData(json);
+    } catch {
+      setData({ error: "Failed to load dashboard." });
+    } finally {
+      setLoading(false);
+    }
   }
 
+  useEffect(() => {
+    loadProfile();
+  }, []);
+
+  if (loading) {
+    return (
+      <StudentLayout title="Dashboard">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          Loading student dashboard...
+        </div>
+      </StudentLayout>
+    );
+  }
+
+  if (data?.error || !data?.student) {
+    return (
+      <StudentLayout title="Dashboard">
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {data?.error || "Student profile could not be loaded."}
+        </div>
+      </StudentLayout>
+    );
+  }
+
+  const student = data.student;
+  const account = data.account;
+  const activeEnrollment = data.enrollments?.[0];
+
   return (
-    <main className="min-h-screen bg-slate-100">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-blue-700">
-              UniFlow Student Portal
+    <StudentLayout
+      title="Dashboard"
+      subtitle="Student account overview and academic identity"
+    >
+      <div className="space-y-6">
+        {account?.must_change_password && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-900 shadow-sm">
+            <h2 className="text-lg font-semibold">Password change required</h2>
+            <p className="mt-1 text-sm">
+              Your account is using a temporary password. Please change your
+              password before continuing to use the student portal.
             </p>
-            <h1 className="mt-1 text-2xl font-bold text-slate-900">
-              Student Dashboard
-            </h1>
+            <Link
+              href="/student/change-password"
+              className="mt-4 inline-flex rounded-xl bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700"
+            >
+              Change Password
+            </Link>
+          </div>
+        )}
+
+        <div className="grid gap-5 lg:grid-cols-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-2">
+            <h2 className="text-xl font-semibold text-slate-900">
+              Welcome, {student.full_name}
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Student ID: {student.student_id}
+            </p>
+
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <InfoCard label="Portal Email" value={account?.email || "-"} />
+              <InfoCard
+                label="Portal Status"
+                value={account?.is_active ? "Active" : "Inactive"}
+              />
+              <InfoCard
+                label="Current Program"
+                value={activeEnrollment?.program?.short_name || "-"}
+              />
+              <InfoCard
+                label="Current Batch"
+                value={activeEnrollment?.batch?.batch_code || "-"}
+              />
+            </div>
           </div>
 
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
-          >
-            Logout
-          </button>
-        </div>
-      </header>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">
+              Quick Actions
+            </h2>
 
-      <section className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-slate-900">
-            Welcome, {session.fullName}
-          </h2>
+            <div className="mt-4 space-y-3">
+              <Link
+                href="/student/profile"
+                className="block rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium hover:bg-slate-50"
+              >
+                View Full Profile
+              </Link>
 
-          <div className="mt-5 grid gap-4 md:grid-cols-3">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Student ID
-              </p>
-              <p className="mt-2 text-lg font-semibold text-slate-900">
-                {session.studentId}
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Email
-              </p>
-              <p className="mt-2 text-lg font-semibold text-slate-900">
-                {session.email || "-"}
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Portal Status
-              </p>
-              <p className="mt-2 text-lg font-semibold text-green-700">
-                Active
-              </p>
+              <Link
+                href="/student/change-password"
+                className="block rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium hover:bg-slate-50"
+              >
+                Change Password
+              </Link>
             </div>
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <FeatureCard
-            title="Academic Profile"
-            description="Student profile and enrollment details will be displayed here."
-            status="Foundation Active"
-          />
-
-          <FeatureCard
-            title="Class Routine"
-            description="Student-specific routine will be connected after official registration phase."
-            status="Coming Later"
-          />
-
-          <FeatureCard
-            title="Course Registration"
-            description="Add/drop and seat-based registration will begin in S2, not S1-D."
-            status="Inactive"
-          />
-
-          <FeatureCard
-            title="Billing"
-            description="Pay slip, fee structure, and defaulter status are reserved for billing phase."
-            status="Inactive"
-          />
-
-          <FeatureCard
-            title="Attendance"
-            description="Attendance view will be added after attendance module implementation."
-            status="Inactive"
-          />
-
-          <FeatureCard
-            title="Results"
-            description="Grade and result publication will be added in later ERP checkpoints."
-            status="Inactive"
-          />
+        <div className="grid gap-5 lg:grid-cols-3">
+          <LockedFeature title="Course Registration" />
+          <LockedFeature title="Billing and Pay Slip" />
+          <LockedFeature title="Attendance, Result and Admit Card" />
         </div>
-      </section>
-    </main>
+      </div>
+    </StudentLayout>
   );
 }
 
-function FeatureCard({
-  title,
-  description,
-  status,
-}: {
-  title: string;
-  description: string;
-  status: string;
-}) {
+function InfoCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </div>
+      <div className="mt-1 text-base font-semibold text-slate-900">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function LockedFeature({ title }: { title: string }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <h3 className="font-semibold text-slate-900">{title}</h3>
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-          {status}
-        </span>
-      </div>
-
-      <p className="mt-3 text-sm leading-6 text-slate-600">{description}</p>
+      <div className="text-sm font-semibold text-slate-900">{title}</div>
+      <p className="mt-2 text-sm text-slate-500">
+        This module is reserved for a later ERP checkpoint and is intentionally
+        inactive in S1-E.
+      </p>
     </div>
   );
 }

@@ -1,8 +1,5 @@
-import { requireStudentSession } from "@/lib/student-session";
-import StudentDashboardClient from "./page-client";
+import StudentDashboardPageClient from "./page-client";
 
-export default async function StudentDashboardPage() {
-  const session = await requireStudentSession();
-
-  return <StudentDashboardClient session={session} />;
+export default function StudentDashboardPage() {
+  return <StudentDashboardPageClient />;
 }
