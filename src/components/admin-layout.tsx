@@ -82,6 +82,7 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/admin/schedule", label: "Schedule Board" },
       { href: "/admin/schedule-control", label: "Final Schedule Control" },
+      { href: "/admin/exam-scheduler", label: "Exam Scheduler" },
       { href: "/admin/faculty-load", label: "Faculty Load Board" },
       { href: "/admin/confirmed-schedule", label: "Confirmed Schedule" },
       { href: "/admin/batch-routine", label: "Batch Routine Report" },
