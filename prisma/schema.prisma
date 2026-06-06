@@ -9,15 +9,16 @@ datasource db {
 }
 
 model academic_terms {
-  id                          Int                           @id @default(autoincrement())
-  name                        String                        @unique @db.VarChar(100)
-  year                        Int
-  term_type                   String                        @db.VarChar(30)
-  is_active                   Boolean?
-  batch_completed_courses     batch_completed_courses[]
-  batch_current_registrations batch_current_registrations[]
-  faculty_course_selections   faculty_course_selections[]
-  offerings                   offerings[]
+  id                           Int                              @id @default(autoincrement())
+  name                         String                           @unique @db.VarChar(100)
+  year                         Int
+  term_type                    String                           @db.VarChar(30)
+  is_active                    Boolean?
+  batch_completed_courses      batch_completed_courses[]
+  batch_current_registrations  batch_current_registrations[]
+  faculty_course_selections    faculty_course_selections[]
+  offerings                    offerings[]
+  studentSemesterRegistrations student_semester_registrations[]
 }
 
 model batch_completed_courses {
@@ -60,10 +61,12 @@ model students {
   created_at              DateTime  @default(now())
   updated_at              DateTime  @updatedAt
 
-  enrollments         student_program_enrollments[]
-  contacts            student_contacts[]
-  status_history      student_status_history[]
-  advisor_assignments student_advisor_assignments[]
+  enrollments                  student_program_enrollments[]
+  contacts                     student_contacts[]
+  status_history               student_status_history[]
+  advisor_assignments          student_advisor_assignments[]
+  studentSemesterRegistrations student_semester_registrations[]
+  studentRegistrationActions   student_registration_actions[]
 
   @@index([student_id])
   @@index([full_name])
@@ -86,9 +89,10 @@ model student_program_enrollments {
   created_at         DateTime  @default(now())
   updated_at         DateTime  @updatedAt
 
-  students students @relation(fields: [student_id_ref], references: [id], onDelete: Cascade)
-  program  programs @relation(fields: [program_id], references: [id])
-  batches  batches? @relation(fields: [batch_id], references: [id])
+  students                     students                         @relation(fields: [student_id_ref], references: [id], onDelete: Cascade)
+  program                      programs                         @relation(fields: [program_id], references: [id])
+  batches                      batches?                         @relation(fields: [batch_id], references: [id])
+  studentSemesterRegistrations student_semester_registrations[]
 
   @@unique([student_id_ref, program_id, batch_id])
   @@index([student_id_ref])
@@ -159,16 +163,17 @@ model batch_current_registrations {
 }
 
 model batches {
-  id                          Int                           @id @default(autoincrement())
-  program_id                  Int
-  batch_code                  String                        @db.VarChar(100)
-  admission_term              String?                       @db.VarChar(100)
-  is_active                   Boolean?
-  batch_completed_courses     batch_completed_courses[]
-  batch_current_registrations batch_current_registrations[]
-  programs                    programs                      @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  offered_course_batches      offered_course_batches[]
-  student_program_enrollments student_program_enrollments[]
+  id                           Int                              @id @default(autoincrement())
+  program_id                   Int
+  batch_code                   String                           @db.VarChar(100)
+  admission_term               String?                          @db.VarChar(100)
+  is_active                    Boolean?
+  batch_completed_courses      batch_completed_courses[]
+  batch_current_registrations  batch_current_registrations[]
+  programs                     programs                         @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  offered_course_batches       offered_course_batches[]
+  student_program_enrollments  student_program_enrollments[]
+  studentSemesterRegistrations student_semester_registrations[]
 
   @@unique([program_id, batch_code], map: "uq_program_batch")
 }
@@ -250,6 +255,8 @@ model offered_courses {
   offered_course_manual_cooffers offered_course_manual_cooffers[]
   primary_offered_course         offered_courses?                 @relation("offered_course_cooffer_links", fields: [primary_offered_course_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   secondary_offered_courses      offered_courses[]                @relation("offered_course_cooffer_links")
+  studentRegisteredCourses       student_registered_courses[]
+  studentRegistrationActions     student_registration_actions[]
 
   @@index([offering_id, section], map: "ix_offered_courses_offering_section")
   @@index([primary_offered_course_id], map: "ix_offered_courses_primary_offered_course_id")
@@ -290,15 +297,16 @@ model faculty_course_selections {
 }
 
 model programs {
-  id                          Int                           @id @default(autoincrement())
-  department_id               Int
-  name                        String                        @db.VarChar(200)
-  short_name                  String                        @db.VarChar(50)
-  batches                     batches[]
-  master_courses              master_courses[]
-  offerings                   offerings[]
-  departments                 departments                   @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  student_program_enrollments student_program_enrollments[]
+  id                           Int                              @id @default(autoincrement())
+  department_id                Int
+  name                         String                           @db.VarChar(200)
+  short_name                   String                           @db.VarChar(50)
+  batches                      batches[]
+  master_courses               master_courses[]
+  offerings                    offerings[]
+  departments                  departments                      @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  student_program_enrollments  student_program_enrollments[]
+  studentSemesterRegistrations student_semester_registrations[]
 
   @@unique([department_id, name], map: "uq_program_department_name")
 }
@@ -365,7 +373,8 @@ model users {
   teachers            teachers?             @relation(fields: [teacher_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   // ✅ ADD THIS LINE ONLY
-  faculty_login_sessions FacultyLoginSession[]
+  faculty_login_sessions     FacultyLoginSession[]
+  studentRegistrationActions student_registration_actions[]
 
   @@index([id], map: "ix_users_id")
 }
@@ -518,4 +527,89 @@ model student_import_change_rows {
   import_log student_import_logs @relation(fields: [import_log_id], references: [id], onDelete: Cascade)
 
   @@index([import_log_id], map: "idx_student_import_change_rows_log_id")
+}
+
+model student_semester_registrations {
+  id                      Int       @id @default(autoincrement())
+  student_id_ref          Int
+  enrollment_id           Int?
+  academic_term_id        Int
+  program_id              Int
+  batch_id                Int?
+  status                  String    @default("DRAFT") @db.VarChar(40)
+  total_credits           Float     @default(0)
+  submitted_at            DateTime? @db.Timestamptz(6)
+  advisor_approved_at     DateTime? @db.Timestamptz(6)
+  coordinator_approved_at DateTime? @db.Timestamptz(6)
+  locked_at               DateTime? @db.Timestamptz(6)
+  cancelled_at            DateTime? @db.Timestamptz(6)
+  remarks                 String?
+  created_by_student      Boolean   @default(true)
+  created_at              DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  students                     students                       @relation(fields: [student_id_ref], references: [id], onDelete: Cascade)
+  student_program_enrollments  student_program_enrollments?   @relation(fields: [enrollment_id], references: [id], onDelete: SetNull)
+  academic_terms               academic_terms                 @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  programs                     programs                       @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  batches                      batches?                       @relation(fields: [batch_id], references: [id], onDelete: SetNull)
+  student_registered_courses   student_registered_courses[]
+  student_registration_actions student_registration_actions[]
+
+  @@unique([student_id_ref, academic_term_id, program_id], map: "uq_student_semester_registration_student_term_program")
+  @@index([student_id_ref], map: "ix_student_semester_registrations_student_id_ref")
+  @@index([enrollment_id], map: "ix_student_semester_registrations_enrollment_id")
+  @@index([academic_term_id], map: "ix_student_semester_registrations_academic_term_id")
+  @@index([program_id], map: "ix_student_semester_registrations_program_id")
+  @@index([batch_id], map: "ix_student_semester_registrations_batch_id")
+  @@index([status], map: "ix_student_semester_registrations_status")
+  @@index([academic_term_id, status], map: "ix_student_semester_registrations_term_status")
+}
+
+model student_registered_courses {
+  id                Int       @id @default(autoincrement())
+  registration_id   Int
+  offered_course_id Int
+  course_status     String    @default("ADDED") @db.VarChar(40)
+  action_type       String    @default("ADD") @db.VarChar(30)
+  credit            Float     @default(0)
+  is_retake         Boolean   @default(false)
+  is_improvement    Boolean   @default(false)
+  added_at          DateTime  @default(now()) @db.Timestamptz(6)
+  dropped_at        DateTime? @db.Timestamptz(6)
+  remarks           String?
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  student_semester_registrations student_semester_registrations @relation(fields: [registration_id], references: [id], onDelete: Cascade)
+  offered_courses                offered_courses                @relation(fields: [offered_course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([registration_id, offered_course_id], map: "uq_student_registered_course_registration_course")
+  @@index([registration_id], map: "ix_student_registered_courses_registration_id")
+  @@index([offered_course_id], map: "ix_student_registered_courses_offered_course_id")
+  @@index([course_status], map: "ix_student_registered_courses_course_status")
+}
+
+model student_registration_actions {
+  id                   Int      @id @default(autoincrement())
+  registration_id      Int
+  student_id_ref       Int?
+  offered_course_id    Int?
+  action_type          String   @db.VarChar(50)
+  old_status           String?  @db.VarChar(40)
+  new_status           String?  @db.VarChar(40)
+  performed_by_user_id Int?
+  performed_by_student Boolean  @default(false)
+  note                 String?
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+
+  student_semester_registrations student_semester_registrations @relation(fields: [registration_id], references: [id], onDelete: Cascade)
+  students                       students?                      @relation(fields: [student_id_ref], references: [id], onDelete: SetNull)
+  offered_courses                offered_courses?               @relation(fields: [offered_course_id], references: [id], onDelete: SetNull)
+  users                          users?                         @relation(fields: [performed_by_user_id], references: [id], onDelete: SetNull)
+
+  @@index([registration_id], map: "ix_student_registration_actions_registration_id")
+  @@index([student_id_ref], map: "ix_student_registration_actions_student_id_ref")
+  @@index([action_type], map: "ix_student_registration_actions_action_type")
+  @@index([created_at], map: "ix_student_registration_actions_created_at")
 }
