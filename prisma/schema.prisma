@@ -738,3 +738,25 @@ model baete_task_updates {
 
   @@index([task_id], map: "ix_baete_task_updates_task_id")
 }
+
+model baete_task_evidence {
+  id                  Int       @id @default(autoincrement())
+  task_id             Int
+  original_file_name  String    @db.VarChar(300)
+  stored_file_name    String    @db.VarChar(300)
+  file_path           String
+  file_mime_type      String?   @db.VarChar(150)
+  file_size_bytes     Int       @default(0)
+  evidence_note       String?
+  uploaded_by_user_id Int?
+  review_status       String    @default("PENDING_REVIEW") @db.VarChar(60)
+  reviewer_feedback   String?
+  reviewed_by_user_id Int?
+  reviewed_at         DateTime? @db.Timestamptz(6)
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([task_id], map: "ix_baete_task_evidence_task_id")
+  @@index([review_status], map: "ix_baete_task_evidence_review_status")
+  @@index([created_at], map: "ix_baete_task_evidence_created_at")
+}
