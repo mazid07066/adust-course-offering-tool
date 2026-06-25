@@ -37,6 +37,15 @@ const navGroups = [
     ],
   },
   {
+    title: "Work Queue",
+    items: [
+      { href: "/admin/accreditation/my-tasks", label: "My BAETE Tasks", icon: "◉" },
+      { href: "/admin/accreditation/committee-board", label: "Committee Board", icon: "▧" },
+      { href: "/admin/accreditation/review-queue", label: "Review Queue", icon: "◇" },
+      { href: "/admin/accreditation/overdue", label: "Overdue Tasks", icon: "!" },
+    ],
+  },
+  {
     title: "Administration",
     items: [
       { href: "/admin/accreditation/settings", label: "Settings & Configuration", icon: "⚙" },
@@ -115,9 +124,8 @@ export default function BaeteWorkspaceShell({
                 Dynamic UniFlow Module
               </div>
               <p className="mt-2">
-                Tasks are database-backed with committee assignment, evidence
-                upload, supervisor review, status tracking, completion
-                checkboxes, and admin configuration.
+                Live work queues now show assigned tasks, committee work,
+                pending evidence reviews, and overdue accreditation actions.
               </p>
               <Link
                 href="/admin"
@@ -158,16 +166,16 @@ export default function BaeteWorkspaceShell({
 
                   <div className="flex flex-wrap gap-2">
                     <Link
-                      href="/admin/accreditation/mock-audits"
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-                    >
-                      Mock Dashboard
-                    </Link>
-                    <Link
-                      href="/admin/accreditation/roadmap/gantt"
+                      href="/admin/accreditation/my-tasks"
                       className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100"
                     >
-                      24-Month Gantt
+                      My Tasks
+                    </Link>
+                    <Link
+                      href="/admin/accreditation/review-queue"
+                      className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-100"
+                    >
+                      Review Queue
                     </Link>
                     <Link
                       href="/admin/accreditation/settings"

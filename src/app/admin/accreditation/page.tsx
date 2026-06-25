@@ -1,195 +1,169 @@
 ﻿import Link from "next/link";
 import { requireCoordinatorOrAdmin } from "@/lib/auth-guard";
+import { prisma } from "@/lib/prisma";
 import BaeteWorkspaceShell from "@/components/baete-accreditation-layout";
-import {
-  baeteCriteria,
-  calculateWeightedOrs,
-  deficiencyTriggers,
-  graduateAttributes,
-  roadmapTimeline,
-} from "@/lib/baete-static-data";
+import BaeteDashboardAlerts from "@/components/baete-dashboard-alerts";
+
+type ModuleSummary = {
+  id: number;
+  module_code: string;
+  module_title: string;
+  description: string | null;
+  route_path: string | null;
+  total_tasks: number;
+  completed_tasks: number;
+  critical_tasks: number;
+};
 
 export default async function AccreditationWorkspacePage() {
   await requireCoordinatorOrAdmin();
 
-  const ors = calculateWeightedOrs();
+  const modules = await prisma.$queryRaw<ModuleSummary[]>`
+    SELECT
+      m.id,
+      m.module_code,
+      m.module_title,
+      m.description,
+      m.route_path,
+      COUNT(t.id)::int AS total_tasks,
+      COUNT(t.id) FILTER (WHERE t.is_completed = TRUE)::int AS completed_tasks,
+      COUNT(t.id) FILTER (WHERE t.is_critical = TRUE AND t.is_completed = FALSE)::int AS critical_tasks
+    FROM baete_workspace_modules m
+    LEFT JOIN baete_task_groups g
+      ON g.module_id = m.id
+      AND g.is_active = TRUE
+    LEFT JOIN baete_tasks t
+      ON t.task_group_id = g.id
+      AND t.is_active = TRUE
+    WHERE m.is_active = TRUE
+    GROUP BY
+      m.id,
+      m.module_code,
+      m.module_title,
+      m.description,
+      m.route_path,
+      m.display_order
+    ORDER BY m.display_order ASC;
+  `;
 
   return (
     <BaeteWorkspaceShell
       title="ADUST EEE — BAETE Accreditation Readiness Report"
-      subtitle="Electrical & Electronic Engineering Program | Outcome-Based Education (OBE) Integrated Accreditation System | Version 3.0"
+      subtitle="Dynamic accreditation workspace for roadmap, Gantt chart, weekly plan, prerequisites, documentation, mock audit, evidence review, assigned work queues, and committee-wise tracking."
     >
       <div className="space-y-6">
-        <section className="rounded-2xl bg-[#173f78] p-6 text-white shadow-sm">
-          <div className="flex flex-wrap gap-3 text-xs font-semibold">
-            <span className="rounded-full bg-white/15 px-4 py-2">24-Month Implementation Cycle</span>
-            <span className="rounded-full bg-white/15 px-4 py-2">104-Week Controlled Plan</span>
-            <span className="rounded-full bg-emerald-500/40 px-4 py-2">Current: Semester 1 Cohort Active</span>
-            <span className="rounded-full bg-amber-500/40 px-4 py-2">Mock Audit: Month 18</span>
-            <span className="rounded-full bg-white/15 px-4 py-2">Washington Accord Aligned</span>
-          </div>
-        </section>
+        <section className="rounded-3xl bg-gradient-to-r from-blue-950 via-blue-900 to-slate-950 p-8 text-white shadow-sm">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.25em] text-blue-200">
+                Electrical & Electronic Engineering Program
+              </p>
+              <h2 className="mt-3 text-3xl font-bold">
+                BAETE 3.0 Accreditation Workspace
+              </h2>
+              <p className="mt-3 max-w-4xl text-sm leading-7 text-blue-100">
+                This workspace is connected with live UniFlow data. Each module
+                tracks assigned committees, assigned persons, task completion,
+                uploaded evidence, review decisions, overdue actions, and
+                revision feedback.
+              </p>
+            </div>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-base font-bold text-slate-950">
-            Overall Accreditation Readiness Score (ORS) — Target Framework
-          </h2>
-
-          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
-            {baeteCriteria.filter((criterion) => criterion.weight > 0).map((criterion) => (
-              <div key={criterion.key} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="h-1 rounded-full bg-blue-600" />
-                <div className="mt-6 text-center text-sm font-semibold text-slate-700">
-                  {criterion.key} - {criterion.title}
-                </div>
-                <div className="mt-1 text-center text-xs text-slate-500">
-                  Weight: {criterion.weight}%
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-5 rounded-2xl bg-[#142e63] p-6 text-white">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <div className="text-sm font-semibold">ORS Formula</div>
-                <div className="mt-2 font-mono text-sm">
-                  ORS = ((C1×0.25)+(C2×0.20)+(C3×0.15)+(C4×0.15)+(C5×0.15)+(C6×0.10))×20
-                </div>
-                <div className="mt-4 inline-flex rounded-full bg-yellow-400 px-5 py-2 text-sm font-black text-slate-950">
-                  TARGET: ORS ≥ 80 = BAETE READY
-                </div>
-              </div>
-
-              <div className="text-sm leading-6 text-blue-100">
-                <div className="font-semibold text-white">Current Static ORS: {ors}</div>
-                <div>≥80 → Ready</div>
-                <div>65–79 → Minor fixes</div>
-                <div>50–64 → Major issues</div>
-                <div>&lt;50 → Not ready</div>
-              </div>
+            <div className="flex flex-col gap-2">
+              <Link
+                href="/admin/accreditation/my-tasks"
+                className="rounded-xl bg-white px-5 py-3 text-sm font-bold text-slate-950"
+              >
+                Open My Tasks
+              </Link>
+              <Link
+                href="/admin/accreditation/review-queue"
+                className="rounded-xl border border-white/30 px-5 py-3 text-sm font-bold text-white hover:bg-white/10"
+              >
+                Evidence Review Queue
+              </Link>
             </div>
           </div>
-        </section>
 
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-base font-bold text-slate-950">Program Timeline Summary</h2>
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-[#173f78] text-white">
-                  <tr>
-                    <th className="px-4 py-3 text-left">Phase</th>
-                    <th className="px-4 py-3 text-left">Period</th>
-                    <th className="px-4 py-3 text-left">Focus</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {roadmapTimeline.map((item) => (
-                    <tr key={item.phase} className="border-b border-slate-100">
-                      <td className="px-4 py-3 font-semibold">{item.phase}</td>
-                      <td className="px-4 py-3">{item.period}</td>
-                      <td className="px-4 py-3">{item.focus}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-base font-bold text-slate-950">Critical Deficiency Triggers</h2>
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-[#173f78] text-white">
-                  <tr>
-                    <th className="px-4 py-3 text-left">Issue</th>
-                    <th className="px-4 py-3 text-left">Severity</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deficiencyTriggers.map((item) => (
-                    <tr key={item.issue} className="border-b border-slate-100">
-                      <td className="px-4 py-3">{item.issue}</td>
-                      <td className="px-4 py-3">
-                        <span className={`rounded-full px-3 py-1 text-xs font-bold ${
-                          item.severity === "CRITICAL"
-                            ? "bg-red-100 text-red-700"
-                            : item.severity === "MAJOR"
-                              ? "bg-orange-100 text-orange-700"
-                              : "bg-green-100 text-green-700"
-                        }`}>
-                          {item.severity}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-base font-bold text-slate-950">
-            CQI Closed-Loop Requirements (CRITICAL — Must Prove to Auditors)
-          </h2>
-
-          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {[
-              ["Step 1: DETECT", "Measure CO attainment per course per semester. Identify COs below threshold."],
-              ["Step 2: DIAGNOSE", "Root cause analysis. Was it teaching quality, content coverage, assessment design, or engagement?"],
-              ["Step 3: ACT", "Apply corrective action. Document the specific intervention with timeline, responsible faculty, and method."],
-              ["Step 4: VALIDATE", "Re-measure next offering. Show before/after data. Without this, CQI is incomplete."],
-            ].map(([title, text]) => (
-              <div key={title} className="rounded-xl border border-blue-200 bg-blue-50 p-4">
-                <div className="font-bold text-slate-900">{title}</div>
-                <p className="mt-2 text-sm leading-6 text-slate-700">{text}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-4 rounded-xl bg-orange-50 px-4 py-3 text-sm font-medium text-orange-800">
-            CQI Failure Conditions: No before/after comparison = FAKE CQI | No corrective action = LOOP FAILURE | No re-measurement = INACTIVE CQI.
+          <div className="mt-6 flex flex-wrap gap-3 text-xs font-semibold">
+            <span className="rounded-full bg-white/15 px-4 py-2">
+              24-Month Implementation Cycle
+            </span>
+            <span className="rounded-full bg-white/15 px-4 py-2">
+              104-Week Controlled Plan
+            </span>
+            <span className="rounded-full bg-emerald-500/40 px-4 py-2">
+              Assigned User Tracking Active
+            </span>
+            <span className="rounded-full bg-violet-500/40 px-4 py-2">
+              Evidence Review Active
+            </span>
+            <span className="rounded-full bg-red-500/40 px-4 py-2">
+              Overdue Alerts Active
+            </span>
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-base font-bold text-slate-950">
-            Washington Accord Graduate Attributes — PO Coverage Required
-          </h2>
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-[#173f78] text-white">
-                <tr>
-                  <th className="px-4 py-3 text-left">PO</th>
-                  <th className="px-4 py-3 text-left">Graduate Attribute</th>
-                  <th className="px-4 py-3 text-left">BAETE Code</th>
-                  <th className="px-4 py-3 text-left">Assessment Evidence</th>
-                </tr>
-              </thead>
-              <tbody>
-                {graduateAttributes.map(([po, attribute, code, evidence]) => (
-                  <tr key={po} className="border-b border-slate-100">
-                    <td className="px-4 py-3 font-semibold">{po}</td>
-                    <td className="px-4 py-3">{attribute}</td>
-                    <td className="px-4 py-3">{code}</td>
-                    <td className="px-4 py-3">{evidence}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+        <BaeteDashboardAlerts />
 
-        <div className="flex flex-wrap gap-3">
-          <Link href="/admin/accreditation/mock-audits" className="rounded-xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white">
-            Open Mock Audit Dashboard
-          </Link>
-          <Link href="/admin/accreditation/mock-audits/new" className="rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700">
-            Create New Audit Session
-          </Link>
-        </div>
+        <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {modules.map((module) => {
+            const percent =
+              module.total_tasks === 0
+                ? 0
+                : Math.round(
+                    (module.completed_tasks / module.total_tasks) * 100
+                  );
+
+            return (
+              <Link
+                key={module.id}
+                href={module.route_path || "/admin/accreditation"}
+                className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-blue-300 hover:shadow-md"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">
+                      {module.module_code}
+                    </div>
+                    <h3 className="mt-2 text-lg font-bold text-slate-950">
+                      {module.module_title}
+                    </h3>
+                  </div>
+
+                  <div className="rounded-full bg-blue-50 px-3 py-1 text-sm font-black text-blue-700">
+                    {percent}%
+                  </div>
+                </div>
+
+                {module.description ? (
+                  <p className="mt-3 text-sm leading-6 text-slate-600">
+                    {module.description}
+                  </p>
+                ) : null}
+
+                <div className="mt-5 h-2 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-blue-600"
+                    style={{ width: `${percent}%` }}
+                  />
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                  <span className="rounded-full bg-slate-100 px-3 py-1 font-semibold text-slate-700">
+                    Tasks: {module.total_tasks}
+                  </span>
+                  <span className="rounded-full bg-emerald-100 px-3 py-1 font-semibold text-emerald-700">
+                    Done: {module.completed_tasks}
+                  </span>
+                  <span className="rounded-full bg-red-100 px-3 py-1 font-semibold text-red-700">
+                    Critical Open: {module.critical_tasks}
+                  </span>
+                </div>
+              </Link>
+            );
+          })}
+        </section>
       </div>
     </BaeteWorkspaceShell>
   );
