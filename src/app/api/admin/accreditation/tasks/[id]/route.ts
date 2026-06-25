@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import {
+  requireBaeteTaskManageApi,
+  requireBaeteTaskUpdateApi,
+} from "@/lib/baete-permissions";
 
 const ALLOWED_STATUSES = [
   "PENDING",
@@ -75,12 +78,12 @@ export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireCoordinatorOrAdminApi();
-  if (guard instanceof Response) return guard;
-
   try {
     const { id } = await context.params;
     const taskId = parseId(id);
+
+    const permission = await requireBaeteTaskUpdateApi(taskId);
+    if (permission instanceof Response) return permission;
 
     const body = await req.json();
 
@@ -141,32 +144,8 @@ export async function PATCH(
       );
     }
 
-    const title =
-      typeof body.title === "string" && body.title.trim()
-        ? body.title.trim()
-        : existing.title;
+    const managerMode = permission.canManage;
 
-    const description =
-      "description" in body
-        ? String(body.description || "").trim() || null
-        : existing.description;
-
-    const deliverable =
-      "deliverable" in body
-        ? String(body.deliverable || "").trim() || null
-        : existing.deliverable;
-
-    const evidenceFormat =
-      "evidence_format" in body
-        ? String(body.evidence_format || "").trim() || null
-        : existing.evidence_format;
-
-    const evidenceReference =
-      "evidence_reference" in body
-        ? String(body.evidence_reference || "").trim() || null
-        : existing.evidence_reference;
-
-    const priority = normalizePriority(body.priority, existing.priority);
     const status = normalizeStatus(body.status, existing.status);
 
     const isCompleted =
@@ -174,25 +153,52 @@ export async function PATCH(
         ? body.is_completed
         : existing.is_completed;
 
-    const isCritical =
-      typeof body.is_critical === "boolean"
-        ? body.is_critical
-        : priority === "CRITICAL"
-          ? true
-          : existing.is_critical;
-
-    const requiresCheckbox =
-      typeof body.requires_checkbox === "boolean"
-        ? body.requires_checkbox
-        : existing.requires_checkbox;
-
     const completionNote =
       "completion_note" in body
         ? String(body.completion_note || "").trim() || null
         : existing.completion_note;
 
+    const title =
+      managerMode && typeof body.title === "string" && body.title.trim()
+        ? body.title.trim()
+        : existing.title;
+
+    const description =
+      managerMode && "description" in body
+        ? String(body.description || "").trim() || null
+        : existing.description;
+
+    const deliverable =
+      managerMode && "deliverable" in body
+        ? String(body.deliverable || "").trim() || null
+        : existing.deliverable;
+
+    const evidenceFormat =
+      managerMode && "evidence_format" in body
+        ? String(body.evidence_format || "").trim() || null
+        : existing.evidence_format;
+
+    const evidenceReference =
+      managerMode && "evidence_reference" in body
+        ? String(body.evidence_reference || "").trim() || null
+        : existing.evidence_reference;
+
+    const priority = managerMode
+      ? normalizePriority(body.priority, existing.priority)
+      : existing.priority;
+
+    const isCritical =
+      managerMode && typeof body.is_critical === "boolean"
+        ? body.is_critical
+        : existing.is_critical;
+
+    const requiresCheckbox =
+      managerMode && typeof body.requires_checkbox === "boolean"
+        ? body.requires_checkbox
+        : existing.requires_checkbox;
+
     const assignedCommitteeId =
-      "assigned_committee_id" in body
+      managerMode && "assigned_committee_id" in body
         ? parseOptionalPositiveInteger(
             body.assigned_committee_id,
             "assigned_committee_id"
@@ -200,32 +206,32 @@ export async function PATCH(
         : existing.assigned_committee_id;
 
     const assignedUserId =
-      "assigned_user_id" in body
+      managerMode && "assigned_user_id" in body
         ? parseOptionalPositiveInteger(body.assigned_user_id, "assigned_user_id")
         : existing.assigned_user_id;
 
     const startMonth =
-      "start_month" in body
+      managerMode && "start_month" in body
         ? parseOptionalPositiveInteger(body.start_month, "start_month")
         : existing.start_month;
 
     const endMonth =
-      "end_month" in body
+      managerMode && "end_month" in body
         ? parseOptionalPositiveInteger(body.end_month, "end_month")
         : existing.end_month;
 
     const startWeek =
-      "start_week" in body
+      managerMode && "start_week" in body
         ? parseOptionalPositiveInteger(body.start_week, "start_week")
         : existing.start_week;
 
     const endWeek =
-      "end_week" in body
+      managerMode && "end_week" in body
         ? parseOptionalPositiveInteger(body.end_week, "end_week")
         : existing.end_week;
 
     const displayOrder =
-      "display_order" in body
+      managerMode && "display_order" in body
         ? parseOptionalNonNegativeInteger(body.display_order, "display_order") ??
           existing.display_order
         : existing.display_order;
@@ -330,6 +336,7 @@ export async function PATCH(
         new_status,
         old_completed,
         new_completed,
+        updated_by_user_id,
         note,
         created_at
       )
@@ -339,6 +346,7 @@ export async function PATCH(
         ${status},
         ${existing.is_completed},
         ${isCompleted},
+        ${permission.user.id},
         ${completionNote},
         NOW()
       );
@@ -346,7 +354,9 @@ export async function PATCH(
 
     return NextResponse.json({
       success: true,
-      message: "Task updated successfully.",
+      message: managerMode
+        ? "Task updated successfully."
+        : "Your task status update was saved successfully.",
     });
   } catch (error) {
     console.error("BAETE task update error:", error);
@@ -367,12 +377,12 @@ export async function DELETE(
   _req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireCoordinatorOrAdminApi();
-  if (guard instanceof Response) return guard;
-
   try {
     const { id } = await context.params;
     const taskId = parseId(id);
+
+    const permission = await requireBaeteTaskManageApi(taskId);
+    if (permission instanceof Response) return permission;
 
     await prisma.$executeRaw`
       UPDATE baete_tasks
@@ -389,6 +399,7 @@ export async function DELETE(
         new_status,
         old_completed,
         new_completed,
+        updated_by_user_id,
         note,
         created_at
       )
@@ -398,6 +409,7 @@ export async function DELETE(
         status,
         is_completed,
         is_completed,
+        ${permission.user.id},
         'Task archived',
         NOW()
       FROM baete_tasks

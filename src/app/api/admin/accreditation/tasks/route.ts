@@ -1,6 +1,9 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import {
+  requireBaeteManagerApi,
+  requireBaeteWorkspaceApi,
+} from "@/lib/baete-permissions";
 
 type TaskRow = {
   id: number;
@@ -63,8 +66,8 @@ function normalizePriority(value: unknown) {
 }
 
 export async function GET(req: NextRequest) {
-  const guard = await requireCoordinatorOrAdminApi();
-  if (guard instanceof Response) return guard;
+  const permission = await requireBaeteWorkspaceApi();
+  if (permission instanceof Response) return permission;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -211,6 +214,12 @@ export async function GET(req: NextRequest) {
       module,
       groups: Array.from(groupsMap.values()),
       committees,
+      permissions: {
+        canManageWorkspace: permission.canManageWorkspace,
+        canAssignTasks: permission.canAssignTasks,
+        canReviewAnyEvidence: permission.canReviewAnyEvidence,
+        managedCommitteeIds: permission.managedCommitteeIds,
+      },
     });
   } catch (error) {
     console.error("BAETE task list error:", error);
@@ -223,8 +232,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requireCoordinatorOrAdminApi();
-  if (guard instanceof Response) return guard;
+  const permission = await requireBaeteManagerApi("BAETE_TASK_CREATE");
+  if (permission instanceof Response) return permission;
 
   try {
     const body = await req.json();

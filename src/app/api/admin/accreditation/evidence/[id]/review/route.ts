@@ -1,6 +1,6 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import { requireBaeteEvidenceReviewApi } from "@/lib/baete-permissions";
 
 const ALLOWED_REVIEW_STATUSES = [
   "PENDING_REVIEW",
@@ -23,12 +23,12 @@ export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireCoordinatorOrAdminApi();
-  if (guard instanceof Response) return guard;
-
   try {
     const { id } = await context.params;
     const evidenceId = parseEvidenceId(id);
+
+    const permission = await requireBaeteEvidenceReviewApi(evidenceId);
+    if (permission instanceof Response) return permission;
 
     const body = await req.json();
 
@@ -50,9 +50,9 @@ export async function PATCH(
     }
 
     const existingRows = await prisma.$queryRaw<
-      Array<{ id: number; task_id: number }>
+      Array<{ id: number; task_id: number; review_status: string }>
     >`
-      SELECT id, task_id
+      SELECT id, task_id, review_status
       FROM baete_task_evidence
       WHERE id = ${evidenceId}
       LIMIT 1;
@@ -72,6 +72,7 @@ export async function PATCH(
       SET
         review_status = ${reviewStatus},
         reviewer_feedback = ${reviewerFeedback || null},
+        reviewed_by_user_id = ${permission.user.id},
         reviewed_at = NOW(),
         updated_at = NOW()
       WHERE id = ${evidenceId};
@@ -86,6 +87,29 @@ export async function PATCH(
           completed_at = COALESCE(completed_at, NOW()),
           updated_at = NOW()
         WHERE id = ${existing.task_id};
+      `;
+
+      await prisma.$executeRaw`
+        INSERT INTO baete_task_updates (
+          task_id,
+          old_status,
+          new_status,
+          old_completed,
+          new_completed,
+          updated_by_user_id,
+          note,
+          created_at
+        )
+        VALUES (
+          ${existing.task_id},
+          'SUBMITTED',
+          'VERIFIED',
+          FALSE,
+          TRUE,
+          ${permission.user.id},
+          ${reviewerFeedback || "Evidence reviewed as Done."},
+          NOW()
+        );
       `;
     }
 
@@ -102,6 +126,29 @@ export async function PATCH(
           updated_at = NOW()
         WHERE id = ${existing.task_id};
       `;
+
+      await prisma.$executeRaw`
+        INSERT INTO baete_task_updates (
+          task_id,
+          old_status,
+          new_status,
+          old_completed,
+          new_completed,
+          updated_by_user_id,
+          note,
+          created_at
+        )
+        VALUES (
+          ${existing.task_id},
+          'SUBMITTED',
+          'NEEDS_REVISION',
+          FALSE,
+          FALSE,
+          ${permission.user.id},
+          ${reviewerFeedback || "Evidence returned for update/modification."},
+          NOW()
+        );
+      `;
     }
 
     return NextResponse.json({
@@ -109,7 +156,7 @@ export async function PATCH(
       message: "Evidence review updated successfully.",
     });
   } catch (error) {
-    console.error(error);
+    console.error("BAETE evidence review error:", error);
     return NextResponse.json(
       {
         error:

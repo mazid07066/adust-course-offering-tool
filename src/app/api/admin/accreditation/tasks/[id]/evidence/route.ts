@@ -1,9 +1,12 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import path from "path";
 import { mkdir, writeFile } from "fs/promises";
 import { prisma } from "@/lib/prisma";
-import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
+import {
+  requireBaeteEvidenceUploadApi,
+  requireBaeteEvidenceViewApi,
+} from "@/lib/baete-permissions";
 
 const MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024;
 
@@ -49,12 +52,12 @@ export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireCoordinatorOrAdminApi();
-  if (guard instanceof Response) return guard;
-
   try {
     const { id } = await context.params;
     const taskId = parseTaskId(id);
+
+    const permission = await requireBaeteEvidenceViewApi(taskId);
+    if (permission instanceof Response) return permission;
 
     const evidence = await prisma.$queryRaw<
       Array<{
@@ -66,6 +69,8 @@ export async function GET(
         evidence_note: string | null;
         review_status: string;
         reviewer_feedback: string | null;
+        uploaded_by_user_id: number | null;
+        reviewed_by_user_id: number | null;
         reviewed_at: Date | null;
         created_at: Date;
       }>
@@ -79,6 +84,8 @@ export async function GET(
         evidence_note,
         review_status,
         reviewer_feedback,
+        uploaded_by_user_id,
+        reviewed_by_user_id,
         reviewed_at,
         created_at
       FROM baete_task_evidence
@@ -88,13 +95,20 @@ export async function GET(
 
     return NextResponse.json({
       success: true,
+      permissions: {
+        canUploadEvidence: permission.canUploadEvidence,
+        canReviewEvidence: permission.canReviewEvidence,
+        canManageTask: permission.canManage,
+        isAssignedUser: permission.isAssignedUser,
+        isCommitteeAuthority: permission.isCommitteeAuthority,
+      },
       evidence: evidence.map((item) => ({
         ...item,
         download_url: `/api/admin/accreditation/evidence/${item.id}/download`,
       })),
     });
   } catch (error) {
-    console.error(error);
+    console.error("BAETE evidence list error:", error);
     return NextResponse.json(
       {
         error:
@@ -111,12 +125,12 @@ export async function POST(
   req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireCoordinatorOrAdminApi();
-  if (guard instanceof Response) return guard;
-
   try {
     const { id } = await context.params;
     const taskId = parseTaskId(id);
+
+    const permission = await requireBaeteEvidenceUploadApi(taskId);
+    if (permission instanceof Response) return permission;
 
     const taskRows = await prisma.$queryRaw<Array<{ id: number }>>`
       SELECT id FROM baete_tasks WHERE id = ${taskId} LIMIT 1;
@@ -157,8 +171,7 @@ export async function POST(
     if (!ALLOWED_EXTENSIONS.has(extension)) {
       return NextResponse.json(
         {
-          error:
-            "Only PDF, Word, PowerPoint, and Excel files are allowed.",
+          error: "Only PDF, Word, PowerPoint, and Excel files are allowed.",
         },
         { status: 400 }
       );
@@ -199,6 +212,7 @@ export async function POST(
         file_size_bytes,
         evidence_note,
         review_status,
+        uploaded_by_user_id,
         created_at,
         updated_at
       )
@@ -211,6 +225,7 @@ export async function POST(
         ${file.size},
         ${evidenceNote || null},
         'PENDING_REVIEW',
+        ${permission.user.id},
         NOW(),
         NOW()
       );
@@ -219,11 +234,36 @@ export async function POST(
     await prisma.$executeRaw`
       UPDATE baete_tasks
       SET status = CASE
-            WHEN status = 'PENDING' THEN 'SUBMITTED'
+            WHEN status IN ('PENDING', 'IN_PROGRESS', 'NEEDS_REVISION') THEN 'SUBMITTED'
             ELSE status
           END,
+          is_completed = FALSE,
+          completed_at = NULL,
           updated_at = NOW()
       WHERE id = ${taskId};
+    `;
+
+    await prisma.$executeRaw`
+      INSERT INTO baete_task_updates (
+        task_id,
+        old_status,
+        new_status,
+        old_completed,
+        new_completed,
+        updated_by_user_id,
+        note,
+        created_at
+      )
+      VALUES (
+        ${taskId},
+        ${permission.task.status},
+        'SUBMITTED',
+        ${permission.task.is_completed},
+        FALSE,
+        ${permission.user.id},
+        ${evidenceNote || "Evidence uploaded and submitted for review."},
+        NOW()
+      );
     `;
 
     return NextResponse.json({
@@ -231,7 +271,7 @@ export async function POST(
       message: "Evidence uploaded successfully.",
     });
   } catch (error) {
-    console.error(error);
+    console.error("BAETE evidence upload error:", error);
     return NextResponse.json(
       {
         error:
