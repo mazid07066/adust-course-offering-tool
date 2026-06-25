@@ -247,6 +247,22 @@ export async function PATCH(
       }
     }
 
+    if (assignedUserId) {
+      const userRows = await prisma.$queryRaw<Array<{ id: number }>>`
+        SELECT id
+        FROM users
+        WHERE id = ${assignedUserId}
+        LIMIT 1;
+      `;
+
+      if (!userRows[0]) {
+        return NextResponse.json(
+          { error: "Selected user was not found." },
+          { status: 400 }
+        );
+      }
+    }
+
     const completedAtValue =
       isCompleted && !existing.is_completed
         ? new Date()
@@ -333,7 +349,8 @@ export async function PATCH(
       message: "Task updated successfully.",
     });
   } catch (error) {
-    console.error(error);
+    console.error("BAETE task update error:", error);
+
     return NextResponse.json(
       {
         error:
@@ -365,12 +382,35 @@ export async function DELETE(
       WHERE id = ${taskId};
     `;
 
+    await prisma.$executeRaw`
+      INSERT INTO baete_task_updates (
+        task_id,
+        old_status,
+        new_status,
+        old_completed,
+        new_completed,
+        note,
+        created_at
+      )
+      SELECT
+        id,
+        status,
+        status,
+        is_completed,
+        is_completed,
+        'Task archived',
+        NOW()
+      FROM baete_tasks
+      WHERE id = ${taskId};
+    `;
+
     return NextResponse.json({
       success: true,
       message: "Task archived successfully.",
     });
   } catch (error) {
-    console.error(error);
+    console.error("BAETE task archive error:", error);
+
     return NextResponse.json(
       {
         error:

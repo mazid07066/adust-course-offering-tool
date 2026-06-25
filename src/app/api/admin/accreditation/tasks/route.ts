@@ -28,6 +28,8 @@ type TaskRow = {
   assigned_committee_id: number | null;
   assigned_committee_code: string | null;
   assigned_committee_name: string | null;
+  assigned_user_id: number | null;
+  assigned_user_label: string | null;
   start_month: number | null;
   end_month: number | null;
   start_week: number | null;
@@ -132,6 +134,14 @@ export async function GET(req: NextRequest) {
         t.assigned_committee_id,
         c.committee_code AS assigned_committee_code,
         c.committee_name AS assigned_committee_name,
+        t.assigned_user_id,
+        COALESCE(
+          to_jsonb(u)->>'name',
+          to_jsonb(u)->>'full_name',
+          to_jsonb(u)->>'display_name',
+          to_jsonb(u)->>'email',
+          CASE WHEN u.id IS NULL THEN NULL ELSE 'User ' || u.id::text END
+        ) AS assigned_user_label,
         t.start_month,
         t.end_month,
         t.start_week,
@@ -142,6 +152,7 @@ export async function GET(req: NextRequest) {
       JOIN baete_task_groups g ON g.id = t.task_group_id
       JOIN baete_workspace_modules m ON m.id = g.module_id
       LEFT JOIN baete_committees c ON c.id = t.assigned_committee_id
+      LEFT JOIN users u ON u.id = t.assigned_user_id
       WHERE m.module_code = ${moduleCode}
         AND m.is_active = TRUE
         AND g.is_active = TRUE
@@ -202,7 +213,8 @@ export async function GET(req: NextRequest) {
       committees,
     });
   } catch (error) {
-    console.error(error);
+    console.error("BAETE task list error:", error);
+
     return NextResponse.json(
       { error: "Failed to load BAETE tasks." },
       { status: 500 }
@@ -241,6 +253,11 @@ export async function POST(req: NextRequest) {
     const assignedCommitteeId = parseOptionalPositiveInteger(
       body.assigned_committee_id,
       "assigned_committee_id"
+    );
+
+    const assignedUserId = parseOptionalPositiveInteger(
+      body.assigned_user_id,
+      "assigned_user_id"
     );
 
     const startMonth = parseOptionalPositiveInteger(
@@ -290,6 +307,22 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    if (assignedUserId) {
+      const userRows = await prisma.$queryRaw<Array<{ id: number }>>`
+        SELECT id
+        FROM users
+        WHERE id = ${assignedUserId}
+        LIMIT 1;
+      `;
+
+      if (!userRows[0]) {
+        return NextResponse.json(
+          { error: "Assigned user not found." },
+          { status: 400 }
+        );
+      }
+    }
+
     const orderRows = await prisma.$queryRaw<Array<{ next_order: number }>>`
       SELECT COALESCE(MAX(display_order), 0)::int + 1 AS next_order
       FROM baete_tasks
@@ -313,6 +346,7 @@ export async function POST(req: NextRequest) {
         requires_checkbox,
         is_completed,
         assigned_committee_id,
+        assigned_user_id,
         start_month,
         end_month,
         start_week,
@@ -336,6 +370,7 @@ export async function POST(req: NextRequest) {
         ${requiresCheckbox},
         FALSE,
         ${assignedCommitteeId},
+        ${assignedUserId},
         ${startMonth},
         ${endMonth},
         ${startWeek},
@@ -352,7 +387,8 @@ export async function POST(req: NextRequest) {
       message: "BAETE task created successfully.",
     });
   } catch (error) {
-    console.error(error);
+    console.error("BAETE task create error:", error);
+
     return NextResponse.json(
       {
         error:
