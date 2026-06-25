@@ -36,6 +36,12 @@ const navGroups = [
       { href: "/admin/accreditation/mock-audit-18-month", label: "18-Month Mock Audit", icon: "⌕" },
     ],
   },
+  {
+    title: "Administration",
+    items: [
+      { href: "/admin/accreditation/settings", label: "Settings & Configuration", icon: "⚙" },
+    ],
+  },
 ];
 
 function isActive(pathname: string, href: string) {
@@ -57,7 +63,7 @@ export default function BaeteWorkspaceShell({
   return (
     <div className="min-h-screen bg-slate-100 text-slate-950">
       <div className="flex min-h-screen">
-        <aside className="hidden w-86 shrink-0 bg-slate-950 text-white xl:block">
+        <aside className="hidden w-80 shrink-0 bg-slate-950 text-white xl:block">
           <div className="sticky top-0 h-screen overflow-y-auto px-5 py-6">
             <Link href="/admin/accreditation" className="flex items-center gap-3">
               <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-400 text-xl font-black text-slate-950">
@@ -110,8 +116,8 @@ export default function BaeteWorkspaceShell({
               </div>
               <p className="mt-2">
                 Tasks are database-backed with committee assignment, evidence
-                upload, supervisor review, status tracking, and completion
-                checkboxes.
+                upload, supervisor review, status tracking, completion
+                checkboxes, and admin configuration.
               </p>
               <Link
                 href="/admin"
@@ -164,10 +170,10 @@ export default function BaeteWorkspaceShell({
                       24-Month Gantt
                     </Link>
                     <Link
-                      href="/admin/accreditation/documentation"
+                      href="/admin/accreditation/settings"
                       className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                     >
-                      Documentation
+                      Settings
                     </Link>
                   </div>
                 </div>
