@@ -14,6 +14,7 @@ model academic_terms {
   year                        Int
   term_type                   String                        @db.VarChar(30)
   is_active                   Boolean?
+  is_current                  Boolean                       @default(false)
   batch_completed_courses     batch_completed_courses[]
   batch_current_registrations batch_current_registrations[]
   faculty_course_selections   faculty_course_selections[]

@@ -1,68 +1,60 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
+import nextTypeScript from "eslint-config-next/typescript";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const eslintConfig = defineConfig([
+  ...nextCoreWebVitals,
+  ...nextTypeScript,
 
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
+  globalIgnores([
+    ".next/**",
+    "node_modules/**",
+    "dist/**",
+    "build/**",
+    "coverage/**",
+    "out/**",
 
-const eslintConfig = [
-  {
-    ignores: [
-      ".next/**",
-      "node_modules/**",
-      "dist/**",
-      "build/**",
-      "coverage/**",
-      "out/**",
+    /*
+     * Development and maintenance scripts intentionally use Node CommonJS
+     * require() style. They are not part of the Next.js runtime bundle.
+     */
+    "scripts/**",
 
-      /*
-       * Development/maintenance scripts intentionally use Node CommonJS
-       * require() style. They are not part of the Next.js runtime bundle.
-       */
-      "scripts/**",
-
-      /*
-       * Generated and dump files should never participate in lint checks.
-       */
-      "*.dump.*",
-      "*_dump.*",
-      "project_full_dump*.txt",
-      "reporting_scheduling_upgrade_dump.txt",
-      "git_project_history_dump.txt",
-      "env_structure_safe_dump.txt",
-    ],
-  },
-
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+    /*
+     * Generated files, diagnostics, and project dumps must not participate
+     * in application lint checks.
+     */
+    "*.dump.*",
+    "*_dump.*",
+    "project_full_dump*.txt",
+    "reporting_scheduling_upgrade_dump.txt",
+    "git_project_history_dump.txt",
+    "env_structure_safe_dump.txt",
+  ]),
 
   {
     files: ["**/*.{ts,tsx,js,jsx}"],
+
     rules: {
       /*
-       * This codebase has many Prisma dynamic queries, legacy route payloads,
-       * and report mappers where `any` was already used before S1-B.
-       * Keep builds stable while later refactors can tighten individual files.
+       * The existing application contains Prisma dynamic queries, legacy API
+       * payloads, and report mappers where `any` remains intentional.
        */
       "@typescript-eslint/no-explicit-any": "off",
 
       /*
-       * Next/React 19 lint now warns against common data-loading effects.
-       * Existing pages use useEffect-based data loading intentionally.
+       * Existing client pages intentionally load data through effects.
        */
       "react-hooks/set-state-in-effect": "off",
 
       /*
-       * API download endpoints are intentionally linked by URL.
+       * API download endpoints are intentionally addressed through URLs.
        */
       "@next/next/no-html-link-for-pages": "off",
 
       /*
-       * Keep these as warnings so development is not blocked by old unused
-       * variables while major ERP expansion packages are being added.
+       * Preserve existing development behavior while reporting old unused
+       * variables without failing the entire lint command.
        */
       "@typescript-eslint/no-unused-vars": [
         "warn",
@@ -76,6 +68,6 @@ const eslintConfig = [
       "react-hooks/exhaustive-deps": "warn",
     },
   },
-];
+]);
 
 export default eslintConfig;

@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   requireBaeteManagerApi,
@@ -101,9 +101,9 @@ export async function GET(req: NextRequest) {
       LIMIT 1;
     `;
 
-    const module = moduleRows[0];
+    const accreditationModule = moduleRows[0];
 
-    if (!module) {
+    if (!accreditationModule) {
       return NextResponse.json(
         { error: "BAETE workspace module not found." },
         { status: 404 }
@@ -211,7 +211,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      module,
+      module: accreditationModule,
       groups: Array.from(groupsMap.values()),
       committees,
       permissions: {
