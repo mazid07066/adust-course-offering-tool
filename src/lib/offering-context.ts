@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { getCatalogProgramByCode } from "@/lib/academic-catalog";
 import { resolveCanonicalProgram } from "@/lib/canonical-program";
-import { getLatestTerm, getNextSemester } from "@/lib/semester-utils";
+import { getLatestTerm } from "@/lib/semester-utils";
+import { resolveAcademicTermContext } from "@/lib/academic-term-context";
 
 type MasterCourseRow = {
   id: number;
@@ -77,9 +78,10 @@ export type OfferingContextResult = {
   batchCode: string;
   batchAdmissionTerm: string | null;
 
-  currentTermName: string | null;
+  currentTermName: string;
+  currentRegistrationTermName: string | null;
   latestCompletedAcademicTerm: string | null;
-  suggestedOfferingAcademicTerm: string | null;
+  suggestedOfferingAcademicTerm: string;
 
   latestCompletedLevelTerm: string | null;
   latestOngoingLevelTerm: string | null;
@@ -190,16 +192,6 @@ function getNextLevelTerm(levelTerm: string | null | undefined): string | null {
   return formatLevelTerm(parsed.level + 1, 1);
 }
 
-function safeGetNextSemester(termName: string | null | undefined): string | null {
-  const raw = String(termName || "").trim();
-  if (!raw) return null;
-
-  try {
-    return getNextSemester(raw);
-  } catch {
-    return null;
-  }
-}
 
 function toUiCourse(
   row: MasterCourseRow,
@@ -563,6 +555,7 @@ function resolveCourseLevelTermFromMaster(
 export async function buildOfferingContext(params: {
   programCode: string;
   batchCode: string;
+  termName?: string | null;
 }): Promise<OfferingContextResult> {
   const programCode = String(params.programCode || "").trim().toUpperCase();
   const batchCode = String(params.batchCode || "").trim();
@@ -574,6 +567,10 @@ export async function buildOfferingContext(params: {
   if (!batchCode) {
     throw new Error("batchCode is required.");
   }
+
+  const academicTerm = await resolveAcademicTermContext({
+    termName: params.termName,
+  });
 
   const resolved = await resolveBatchForProgramCode(programCode, batchCode);
 
@@ -624,7 +621,7 @@ export async function buildOfferingContext(params: {
     }),
   ]);
 
-  const currentTermName = getLatestTerm(
+  const currentRegistrationTermName = getLatestTerm(
     ongoingRows.map((row) => row.academic_terms?.name)
   );
 
@@ -675,11 +672,7 @@ export async function buildOfferingContext(params: {
   const suggestedNextLevelTerm =
     getNextLevelTerm(latestOngoingLevelTerm || latestCompletedLevelTerm) || null;
 
-  const suggestedOfferingAcademicTerm =
-    safeGetNextSemester(currentTermName) ||
-    safeGetNextSemester(latestCompletedAcademicTerm) ||
-    resolved.batch.admission_term ||
-    null;
+  const suggestedOfferingAcademicTerm = academicTerm.name;
 
   let candidateCoursesForNextOffering = remainingCourses;
 
@@ -731,7 +724,8 @@ export async function buildOfferingContext(params: {
     batchCode: resolved.batch.batch_code,
     batchAdmissionTerm: resolved.batch.admission_term || null,
 
-    currentTermName,
+    currentTermName: academicTerm.name,
+    currentRegistrationTermName,
     latestCompletedAcademicTerm,
     suggestedOfferingAcademicTerm,
 
@@ -755,7 +749,7 @@ export async function buildOfferingContext(params: {
 
     academicProgress: {
       latestCompletedTerm: latestCompletedAcademicTerm,
-      currentRegistrationTerm: currentTermName,
+      currentRegistrationTerm: currentRegistrationTermName,
       suggestedOfferingTerm: suggestedOfferingAcademicTerm,
     },
 
