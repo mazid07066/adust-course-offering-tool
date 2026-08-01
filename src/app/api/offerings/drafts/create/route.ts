@@ -3,7 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { getCatalogProgramByCode } from "@/lib/academic-catalog";
 import { resolveCanonicalProgram } from "@/lib/canonical-program";
-import { parseAcademicTerm } from "@/lib/semester-utils";
+import {
+  isAcademicTermContextError,
+  resolveAcademicTermContext,
+} from "@/lib/academic-term-context";
 import { clearReportingCacheWithLog } from "@/lib/reporting-cache";
 
 type ProgramCandidate = {
@@ -148,47 +151,6 @@ async function getProgramCandidates(programCode: string): Promise<{
     requestedProgramCode: normalizedProgramCode,
     candidates: uniqueById(candidates),
   };
-}
-
-async function ensureAcademicTerm(termName: string) {
-  const normalized = String(termName || "").trim().toUpperCase();
-
-  if (!normalized) {
-    throw new Error("termName is required.");
-  }
-
-  const existing = await prisma.academic_terms.findFirst({
-    where: {
-      name: normalized,
-    },
-    select: {
-      id: true,
-      name: true,
-      year: true,
-      term_type: true,
-      is_active: true,
-    },
-  });
-
-  if (existing) return existing;
-
-  const parsed = parseAcademicTerm(normalized);
-
-  return prisma.academic_terms.create({
-    data: {
-      name: normalized,
-      year: parsed.year,
-      term_type: parsed.season,
-      is_active: true,
-    },
-    select: {
-      id: true,
-      name: true,
-      year: true,
-      term_type: true,
-      is_active: true,
-    },
-  });
 }
 
 async function resolvePreparedByUserId() {
@@ -345,14 +307,16 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
 
     const programCode = String(body.programCode || "").trim().toUpperCase();
-    const termName = String(body.termName || "").trim().toUpperCase();
+    const requestedTermName = String(body.termName || "")
+      .trim()
+      .toUpperCase();
 
-    if (!programCode || !termName) {
+    if (!programCode) {
       clearReportingCacheWithLog("offering/reporting data changed");
       return NextResponse.json(
         {
           ok: false,
-          error: "programCode and termName are required.",
+          error: "programCode is required.",
         },
         { status: 400 }
       );
@@ -376,7 +340,9 @@ export async function POST(req: NextRequest) {
     );
 
     const selectedProgram = sortedCandidates[0];
-    const term = await ensureAcademicTerm(termName);
+    const term = await resolveAcademicTermContext({
+      termName: requestedTermName || undefined,
+    });
     const preparedByUserId = await resolvePreparedByUserId();
 
     const existingDraft = await prisma.offerings.findFirst({
@@ -442,13 +408,19 @@ export async function POST(req: NextRequest) {
     const message =
       error instanceof Error ? error.message : "Failed to create draft offering.";
 
+    const status = isAcademicTermContextError(error)
+      ? error.code === "ACADEMIC_TERM_NOT_FOUND"
+        ? 404
+        : 409
+      : 500;
+
     clearReportingCacheWithLog("offering/reporting data changed");
     return NextResponse.json(
       {
         ok: false,
         error: message,
       },
-      { status: 500 }
+      { status }
     );
   }
 }

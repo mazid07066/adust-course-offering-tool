@@ -26,6 +26,15 @@ const navGroups: NavGroup[] = [
     items: [{ href: "/admin", label: "Dashboard" }],
   },
   {
+    title: "Accreditation",
+    items: [
+      { href: "/admin/accreditation", label: "BAETE Workspace" },
+      { href: "/admin/accreditation/roadmap", label: "Readiness Roadmap" },
+      { href: "/admin/accreditation/mock-audits", label: "Mock Audit Tool" },
+      { href: "/admin/accreditation/analytics", label: "Historical Analytics" },
+    ],
+  },
+  {
     title: "Core Setup",
     items: [
       { href: "/admin/academic-setup", label: "Academic Setup" },
@@ -205,6 +214,13 @@ export default function AdminLayout({
                     className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
                   >
                     Public Routine
+                  </Link>
+
+                  <Link
+                    href="/admin/accreditation"
+                    className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
+                  >
+                    BAETE Workspace
                   </Link>
 
                   <Link

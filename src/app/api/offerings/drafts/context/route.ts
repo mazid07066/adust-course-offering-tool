@@ -1,8 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { getCatalogProgramByCode } from "@/lib/academic-catalog";
 import { resolveCanonicalProgram } from "@/lib/canonical-program";
+import {
+  isAcademicTermContextError,
+  resolveAcademicTermContext,
+} from "@/lib/academic-term-context";
 
 type ProgramCandidate = {
   id: number;
@@ -136,22 +140,31 @@ async function getProgramCandidates(programCode: string): Promise<ProgramCandida
 
 export async function GET(req: NextRequest) {
   try {
-    await requireCoordinatorOrAdminApi();
+    const guard = await requireCoordinatorOrAdminApi();
+    if (guard instanceof Response) return guard;
 
     const { searchParams } = new URL(req.url);
     const programCode = String(searchParams.get("programCode") || "").trim();
-    const termName = String(searchParams.get("termName") || "").trim().toUpperCase();
+    const requestedTermName = String(
+      searchParams.get("termName") || ""
+    )
+      .trim()
+      .toUpperCase();
     const batchCode = String(searchParams.get("batchCode") || "").trim();
 
-    if (!programCode || !termName || !batchCode) {
+    if (!programCode || !batchCode) {
       return NextResponse.json(
         {
           ok: false,
-          error: "programCode, termName, and batchCode are required.",
+          error: "programCode and batchCode are required.",
         },
         { status: 400 }
       );
     }
+
+    const term = await resolveAcademicTermContext({
+      termName: requestedTermName || undefined,
+    });
 
     const candidates = await getProgramCandidates(programCode);
     const candidateProgramIds = candidates.map((item) => item.id);
@@ -161,9 +174,7 @@ export async function GET(req: NextRequest) {
         status: {
           in: ["DRAFT", "BUFFER_READY"],
         },
-        academic_terms: {
-          name: termName,
-        },
+        academic_term_id: term.id,
         program_id: {
           in: candidateProgramIds,
         },
@@ -246,12 +257,18 @@ export async function GET(req: NextRequest) {
     const message =
       error instanceof Error ? error.message : "Failed to load draft context.";
 
+    const status = isAcademicTermContextError(error)
+      ? error.code === "ACADEMIC_TERM_NOT_FOUND"
+        ? 404
+        : 409
+      : 500;
+
     return NextResponse.json(
       {
         ok: false,
         error: message,
       },
-      { status: 500 }
+      { status }
     );
   }
 }
