@@ -19,6 +19,8 @@ model academic_terms {
   batch_current_registrations batch_current_registrations[]
   faculty_course_selections   faculty_course_selections[]
   offerings                   offerings[]
+
+  semester_archives semester_archives[]
 }
 
 model batch_completed_courses {
@@ -301,6 +303,8 @@ model programs {
   departments                 departments                   @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   student_program_enrollments student_program_enrollments[]
 
+  semester_archives semester_archives[]
+
   @@unique([department_id, name], map: "uq_program_department_name")
 }
 
@@ -367,6 +371,11 @@ model users {
 
   // ✅ ADD THIS LINE ONLY
   faculty_login_sessions FacultyLoginSession[]
+
+  semester_archives_created   semester_archives[]            @relation("semester_archives_created_by")
+  semester_archives_finalized semester_archives[]            @relation("semester_archives_finalized_by")
+  archive_reflections_created semester_archive_reflections[] @relation("semester_archive_reflections_created_by")
+  archive_reflections_updated semester_archive_reflections[] @relation("semester_archive_reflections_updated_by")
 
   @@index([id], map: "ix_users_id")
 }
@@ -596,21 +605,21 @@ model baete_graduate_attributes {
 
 model baete_cqi_templates {
   id                   Int      @id @default(autoincrement())
-  criterion_id          Int?
-  criterion_label       String?  @db.VarChar(250)
-  title                 String   @db.VarChar(250)
-  description           String?
-  timeline              String?  @db.VarChar(150)
-  resources             String?
-  success_metric        String?
-  implementation_steps  String?
-  default_status        String   @default("Planned") @db.VarChar(60)
-  display_order         Int      @default(0)
-  is_active             Boolean  @default(true)
-  created_by_user_id    Int?
-  updated_by_user_id    Int?
-  created_at            DateTime @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  criterion_id         Int?
+  criterion_label      String?  @db.VarChar(250)
+  title                String   @db.VarChar(250)
+  description          String?
+  timeline             String?  @db.VarChar(150)
+  resources            String?
+  success_metric       String?
+  implementation_steps String?
+  default_status       String   @default("Planned") @db.VarChar(60)
+  display_order        Int      @default(0)
+  is_active            Boolean  @default(true)
+  created_by_user_id   Int?
+  updated_by_user_id   Int?
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@index([criterion_id], map: "ix_baete_cqi_templates_criterion_id")
   @@index([is_active], map: "ix_baete_cqi_templates_is_active")
@@ -689,33 +698,33 @@ model baete_task_groups {
 
 model baete_tasks {
   id                    Int       @id @default(autoincrement())
-  task_group_id          Int
-  task_code              String?   @db.VarChar(120)
-  title                  String    @db.VarChar(300)
-  description            String?
-  deliverable            String?
-  evidence_format        String?   @db.VarChar(200)
-  evidence_reference     String?   @db.VarChar(250)
-  priority               String    @default("NORMAL") @db.VarChar(40)
-  status                 String    @default("PENDING") @db.VarChar(50)
-  is_critical            Boolean   @default(false)
-  requires_checkbox      Boolean   @default(true)
-  is_completed           Boolean   @default(false)
-  completed_at           DateTime? @db.Timestamptz(6)
-  completion_note        String?
-  assigned_committee_id  Int?
-  assigned_user_id       Int?
-  start_month            Int?
-  end_month              Int?
-  start_week             Int?
-  end_week               Int?
-  due_date               DateTime? @db.Date
-  display_order          Int       @default(0)
-  is_active              Boolean   @default(true)
-  created_by_user_id     Int?
-  updated_by_user_id     Int?
-  created_at             DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at             DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  task_group_id         Int
+  task_code             String?   @db.VarChar(120)
+  title                 String    @db.VarChar(300)
+  description           String?
+  deliverable           String?
+  evidence_format       String?   @db.VarChar(200)
+  evidence_reference    String?   @db.VarChar(250)
+  priority              String    @default("NORMAL") @db.VarChar(40)
+  status                String    @default("PENDING") @db.VarChar(50)
+  is_critical           Boolean   @default(false)
+  requires_checkbox     Boolean   @default(true)
+  is_completed          Boolean   @default(false)
+  completed_at          DateTime? @db.Timestamptz(6)
+  completion_note       String?
+  assigned_committee_id Int?
+  assigned_user_id      Int?
+  start_month           Int?
+  end_month             Int?
+  start_week            Int?
+  end_week              Int?
+  due_date              DateTime? @db.Date
+  display_order         Int       @default(0)
+  is_active             Boolean   @default(true)
+  created_by_user_id    Int?
+  updated_by_user_id    Int?
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@index([task_group_id], map: "ix_baete_tasks_task_group_id")
   @@index([assigned_committee_id], map: "ix_baete_tasks_assigned_committee_id")
@@ -760,4 +769,55 @@ model baete_task_evidence {
   @@index([task_id], map: "ix_baete_task_evidence_task_id")
   @@index([review_status], map: "ix_baete_task_evidence_review_status")
   @@index([created_at], map: "ix_baete_task_evidence_created_at")
+}
+
+model semester_archives {
+  id                   Int       @id @default(autoincrement())
+  academic_term_id     Int
+  program_id           Int
+  version              Int       @default(1)
+  status               String    @default("DRAFT") @db.VarChar(30)
+  snapshot_json        Json
+  snapshot_schema      String    @default("semester-archive-v1") @db.VarChar(100)
+  archive_note         String?   @db.Text
+  created_by_user_id   Int
+  created_at           DateTime  @default(now()) @db.Timestamptz(6)
+  finalized_by_user_id Int?
+  finalized_at         DateTime? @db.Timestamptz(6)
+
+  academic_terms    academic_terms                 @relation(fields: [academic_term_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  programs          programs                       @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  created_by_user   users                          @relation("semester_archives_created_by", fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  finalized_by_user users?                         @relation("semester_archives_finalized_by", fields: [finalized_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reflections       semester_archive_reflections[]
+
+  @@unique([academic_term_id, program_id, version], map: "uq_semester_archive_version")
+  @@index([academic_term_id], map: "ix_semester_archives_academic_term")
+  @@index([program_id], map: "ix_semester_archives_program")
+  @@index([status], map: "ix_semester_archives_status")
+  @@index([created_by_user_id], map: "ix_semester_archives_created_by")
+  @@index([finalized_by_user_id], map: "ix_semester_archives_finalized_by")
+}
+
+model semester_archive_reflections {
+  id                  Int      @id @default(autoincrement())
+  semester_archive_id Int
+  category            String   @db.VarChar(50)
+  title               String   @db.VarChar(250)
+  narrative           String   @db.Text
+  evidence_json       Json?
+  sort_order          Int      @default(0)
+  created_by_user_id  Int
+  updated_by_user_id  Int?
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime @default(now()) @db.Timestamptz(6)
+
+  semester_archive semester_archives @relation(fields: [semester_archive_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  created_by_user  users             @relation("semester_archive_reflections_created_by", fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  updated_by_user  users?            @relation("semester_archive_reflections_updated_by", fields: [updated_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([semester_archive_id], map: "ix_archive_reflections_archive")
+  @@index([category], map: "ix_archive_reflections_category")
+  @@index([created_by_user_id], map: "ix_archive_reflections_created_by")
+  @@index([updated_by_user_id], map: "ix_archive_reflections_updated_by")
 }
