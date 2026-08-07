@@ -767,10 +767,150 @@ export async function POST(
       );
     }
 
+    /**
+     * Prepare all historical terms before entering
+     * the interactive transaction.
+     *
+     * We intentionally avoid one upsert per semester.
+     * On a remote Supabase database those repeated
+     * round trips can exceed Prisma's transaction timeout.
+     */
+    const distinctCompletedTerms =
+      Array.from(
+        new Set(
+          completedCourses
+            .map(
+              (course) =>
+                normalizeUpper(
+                  course.semester
+                )
+            )
+            .filter(Boolean)
+        )
+      );
+
+    const allRequiredTermNames =
+      Array.from(
+        new Set([
+          ...distinctCompletedTerms,
+          currentRegistrationTerm,
+        ])
+      );
+
+    const parsedRequiredTerms =
+      allRequiredTermNames.map(
+        (termName) =>
+          parseAcademicTermName(
+            termName
+          )
+      );
+
     const saveResult =
       await prisma
         .$transaction(
           async (tx) => {
+            /**
+             * One INSERT ... ON CONFLICT style operation
+             * instead of many sequential upserts.
+             */
+            await tx
+              .academic_terms
+              .createMany({
+                data:
+                  parsedRequiredTerms.map(
+                    (term) => ({
+                      name:
+                        term.name,
+
+                      term_type:
+                        term.termType,
+
+                      year:
+                        term.year,
+
+                      is_active:
+                        true,
+
+                      is_current:
+                        false,
+                    })
+                  ),
+
+                skipDuplicates:
+                  true,
+              });
+
+            /**
+             * Resolve every required term ID with one query.
+             */
+            const termRows =
+              await tx
+                .academic_terms
+                .findMany({
+                  where: {
+                    name: {
+                      in:
+                        parsedRequiredTerms
+                          .map(
+                            (term) =>
+                              term.name
+                          ),
+                    },
+                  },
+
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                });
+
+            const termIdMap =
+              new Map<
+                string,
+                number
+              >(
+                termRows.map(
+                  (term) => [
+                    normalizeUpper(
+                      term.name
+                    ),
+                    term.id,
+                  ]
+                )
+              );
+
+            for (
+              const termName of
+              allRequiredTermNames
+            ) {
+              if (
+                !termIdMap.has(
+                  normalizeUpper(
+                    termName
+                  )
+                )
+              ) {
+                throw new Error(
+                  `Academic term ${termName} could not be resolved.`
+                );
+              }
+            }
+
+            const registrationTermId =
+              termIdMap.get(
+                normalizeUpper(
+                  currentRegistrationTerm
+                )
+              );
+
+            if (
+              !registrationTermId
+            ) {
+              throw new Error(
+                `Registration term ${currentRegistrationTerm} could not be resolved.`
+              );
+            }
+
             const batch =
               await tx
                 .batches
@@ -783,108 +923,6 @@ export async function POST(
                   data: {
                     is_active:
                       true,
-                  },
-                });
-
-            const completedTermMap =
-              new Map<
-                string,
-                number
-              >();
-
-            const distinctCompletedTerms =
-              Array.from(
-                new Set(
-                  completedCourses
-                    .map(
-                      (course) =>
-                        normalizeUpper(
-                          course.semester
-                        )
-                    )
-                    .filter(Boolean)
-                )
-              );
-
-            for (
-              const termName of
-              distinctCompletedTerms
-            ) {
-              const parsedTerm =
-                parseAcademicTermName(
-                  termName
-                );
-
-              const term =
-                await tx
-                  .academic_terms
-                  .upsert({
-                    where: {
-                      name:
-                        parsedTerm.name,
-                    },
-
-                    update: {},
-
-                    create: {
-                      name:
-                        parsedTerm.name,
-
-                      term_type:
-                        parsedTerm.termType,
-
-                      year:
-                        parsedTerm.year,
-
-                      is_active:
-                        true,
-
-                      is_current:
-                        false,
-                    },
-                  });
-
-              completedTermMap.set(
-                parsedTerm.name,
-                term.id
-              );
-            }
-
-            const registrationParsedTerm =
-              parseAcademicTermName(
-                currentRegistrationTerm
-              );
-
-            const registrationTerm =
-              await tx
-                .academic_terms
-                .upsert({
-                  where: {
-                    name:
-                      registrationParsedTerm
-                        .name,
-                  },
-
-                  update: {},
-
-                  create: {
-                    name:
-                      registrationParsedTerm
-                        .name,
-
-                    term_type:
-                      registrationParsedTerm
-                        .termType,
-
-                    year:
-                      registrationParsedTerm
-                        .year,
-
-                    is_active:
-                      true,
-
-                    is_current:
-                      false,
                   },
                 });
 
@@ -922,7 +960,7 @@ export async function POST(
                           );
 
                         const academicTermId =
-                          completedTermMap.get(
+                          termIdMap.get(
                             termName
                           );
 
@@ -994,7 +1032,7 @@ export async function POST(
                           batch.id,
 
                         academic_term_id:
-                          registrationTerm.id,
+                          registrationTermId,
 
                         course_code:
                           normalizeUpper(
@@ -1030,6 +1068,13 @@ export async function POST(
             return {
               batch,
             };
+          },
+          {
+            maxWait:
+              10000,
+
+            timeout:
+              20000,
           }
         );
 
