@@ -88,6 +88,28 @@ function normalizeRefreshMode(
     : "EXISTING_BATCH";
 }
 
+function normalizeUpper(
+  value:
+    string | null | undefined
+) {
+  return String(
+    value || ""
+  )
+    .trim()
+    .toUpperCase();
+}
+
+function isNewCurriculum(
+  curriculumVersion:
+    string | null | undefined
+) {
+  return (
+    normalizeUpper(
+      curriculumVersion
+    ) === "NEW"
+  );
+}
+
 function numbersClose(
   a: number | null,
   b: number | null,
@@ -155,8 +177,10 @@ function chooseBetterTranscriptParse(
     );
 
   const primaryScore =
-    primaryCourses.length * 10 +
-    primaryCompleted.length * 5 +
+    primaryCourses.length *
+      10 +
+    primaryCompleted.length *
+      5 +
     (
       primaryEarned !== null &&
       numbersClose(
@@ -168,8 +192,10 @@ function chooseBetterTranscriptParse(
     );
 
   const alternateScore =
-    alternateCourses.length * 10 +
-    alternateCompleted.length * 5 +
+    alternateCourses.length *
+      10 +
+    alternateCompleted.length *
+      5 +
     (
       alternateEarned !== null &&
       numbersClose(
@@ -238,13 +264,13 @@ export async function POST(
       );
 
     const selectedProgramCode =
-      String(
-        formData.get(
-          "programCode"
-        ) || ""
-      )
-        .trim()
-        .toUpperCase();
+      normalizeUpper(
+        String(
+          formData.get(
+            "programCode"
+          ) || ""
+        )
+      );
 
     const transcriptValue =
       formData.get(
@@ -270,9 +296,7 @@ export async function POST(
         ? registrationValue
         : null;
 
-    if (
-      !selectedProgramCode
-    ) {
+    if (!selectedProgramCode) {
       return NextResponse.json(
         {
           error:
@@ -358,11 +382,34 @@ export async function POST(
     }
 
     /**
-     * IMPORTANT:
-     * Preview must remain read-only.
+     * S2-B3A:
+     * New incoming batches may only use the current
+     * NEW curriculum identity.
      *
-     * findCanonicalProgram() performs lookup only.
-     * It does not create or update departments/programs.
+     * OLD curriculum identities remain fully valid for
+     * EXISTING_BATCH refreshes.
+     */
+    if (
+      refreshMode ===
+        "NEW_INTAKE" &&
+      !isNewCurriculum(
+        selectedProgram
+          .curriculum_version
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            `${selectedProgram.program_code} uses curriculum version ${selectedProgram.curriculum_version}. New incoming batches may only use a NEW curriculum identity.`,
+        },
+        {
+          status: 409,
+        }
+      );
+    }
+
+    /**
+     * Preview must remain read-only.
      */
     const canonicalProgram =
       await findCanonicalProgram({
@@ -400,7 +447,8 @@ export async function POST(
     }
 
     const masterCourses =
-      selectedProgram.curriculum_key
+      selectedProgram
+        .curriculum_key
         ? await prisma
             .master_courses
             .findMany({
@@ -614,10 +662,12 @@ export async function POST(
 
         offeringContext: {
           suggestedNextOfferingTerm:
-            currentAcademicTerm.name,
+            currentAcademicTerm
+              .name,
 
           offeringCandidateCount:
-            offeringCandidateCourses.length,
+            offeringCandidateCourses
+              .length,
         },
 
         counts: {
@@ -712,7 +762,8 @@ export async function POST(
       );
 
     const transcriptText =
-      transcriptChoice.chosenText;
+      transcriptChoice
+        .chosenText;
 
     const transcriptCourses =
       transcriptChoice
@@ -1026,25 +1077,19 @@ export async function POST(
       );
     }
 
-    if (
-      !identity.studentId
-    ) {
+    if (!identity.studentId) {
       warningMessages.push(
         "Student ID could not be detected."
       );
     }
 
-    if (
-      !identity.batchCode
-    ) {
+    if (!identity.batchCode) {
       warningMessages.push(
         "Batch code could not be detected."
       );
     }
 
-    if (
-      !masterCourses.length
-    ) {
+    if (!masterCourses.length) {
       warningMessages.push(
         "No active master courses were found."
       );
@@ -1052,7 +1097,7 @@ export async function POST(
 
     if (
       transcriptEarnedCredits ===
-        null
+      null
     ) {
       warningMessages.push(
         "Transcript earned-credit total could not be detected."
@@ -1216,7 +1261,8 @@ export async function POST(
           calculatedNextTerm,
 
         offeringCandidateCount:
-          offeringCandidateCourses.length,
+          offeringCandidateCourses
+            .length,
       },
 
       counts: {

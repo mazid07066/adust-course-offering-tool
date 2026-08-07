@@ -53,7 +53,8 @@ type RolloverSnapshot = {
   }>;
 };
 
-export const runtime = "nodejs";
+export const runtime =
+  "nodejs";
 
 function normalizeText(
   value: string
@@ -82,6 +83,17 @@ function normalizeRefreshMode(
   ) === "NEW_INTAKE"
     ? "NEW_INTAKE"
     : "EXISTING_BATCH";
+}
+
+function isNewCurriculum(
+  value:
+    string | null | undefined
+) {
+  return (
+    normalizeUpper(
+      String(value || "")
+    ) === "NEW"
+  );
 }
 
 function numbersClose(
@@ -321,7 +333,8 @@ export async function POST(
         Array.isArray(
           body.completedCourses
         )
-          ? body.completedCourses as
+          ? body
+              .completedCourses as
               SaveCompletedCourse[]
           : []
       );
@@ -331,7 +344,8 @@ export async function POST(
         Array.isArray(
           body.ongoingCourses
         )
-          ? body.ongoingCourses as
+          ? body
+              .ongoingCourses as
               SaveOngoingCourse[]
           : []
       );
@@ -404,6 +418,32 @@ export async function POST(
       );
     }
 
+    /**
+     * S2-B3A hard protection.
+     *
+     * Perform this check before resolveCanonicalProgram()
+     * so an invalid OLD new-intake request cannot cause
+     * any canonical-program synchronization write.
+     */
+    if (
+      refreshMode ===
+        "NEW_INTAKE" &&
+      !isNewCurriculum(
+        academicIdentity
+          .curriculum_version
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            `${academicIdentity.program_code} uses curriculum version ${academicIdentity.curriculum_version}. New incoming batches may only use a NEW curriculum identity.`,
+        },
+        {
+          status: 409,
+        }
+      );
+    }
+
     const program =
       await resolveCanonicalProgram({
         department_code:
@@ -427,7 +467,7 @@ export async function POST(
             .study_shift,
       });
 
-        // ================================================================
+    // ================================================================
     // NEW INTAKE
     // ================================================================
 
@@ -526,7 +566,8 @@ export async function POST(
               });
 
       if (
-        activeCourseCount <= 0
+        activeCourseCount <=
+        0
       ) {
         return NextResponse.json(
           {
@@ -1021,7 +1062,8 @@ export async function POST(
       refreshMode,
 
       currentAcademicTerm:
-        currentAcademicTerm.name,
+        currentAcademicTerm
+          .name,
 
       batchId:
         saveResult.batch.id,
