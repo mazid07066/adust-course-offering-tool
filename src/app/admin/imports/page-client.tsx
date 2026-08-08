@@ -8,6 +8,7 @@ import {
 
 type RefreshMode =
   | "EXISTING_BATCH"
+  | "REGISTRATION_ONLY"
   | "NEW_INTAKE";
 
 type ProgramOption = {
@@ -253,9 +254,17 @@ export default function ImportsPageClient() {
     loadPrograms();
   }, []);
 
-  const isExistingBatch =
+  const isFullExistingBatch =
     refreshMode ===
     "EXISTING_BATCH";
+
+  const isRegistrationOnly =
+    refreshMode ===
+    "REGISTRATION_ONLY";
+
+  const isExistingMode =
+    isFullExistingBatch ||
+    isRegistrationOnly;
 
   const isNewIntake =
     refreshMode ===
@@ -349,7 +358,7 @@ export default function ImportsPageClient() {
       }
 
       if (
-        isExistingBatch &&
+        isFullExistingBatch &&
         !transcriptFile
       ) {
         throw new Error(
@@ -358,11 +367,22 @@ export default function ImportsPageClient() {
       }
 
       if (
-        isExistingBatch &&
+        isExistingMode &&
         !registrationFile
       ) {
         throw new Error(
-          "Existing Batch Refresh requires the latest registration PDF."
+          isRegistrationOnly
+            ? "Registration-Only Refresh requires the registration PDF."
+            : "Existing Batch Refresh requires the latest registration PDF."
+        );
+      }
+
+      if (
+        isRegistrationOnly &&
+        transcriptFile
+      ) {
+        throw new Error(
+          "Registration-Only Refresh must not use a transcript PDF."
         );
       }
 
@@ -380,7 +400,7 @@ export default function ImportsPageClient() {
       );
 
       if (
-        isExistingBatch &&
+        isFullExistingBatch &&
         transcriptFile
       ) {
         formData.append(
@@ -390,7 +410,7 @@ export default function ImportsPageClient() {
       }
 
       if (
-        isExistingBatch &&
+        isExistingMode &&
         registrationFile
       ) {
         formData.append(
@@ -612,14 +632,15 @@ export default function ImportsPageClient() {
         </h2>
 
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          Refresh existing batches
-          from their latest academic
-          records, or prepare the new
-          incoming batch directly from
-          the current academic term.
+          Refresh historical
+          batches, process a newly
+          admitted batch that has
+          registration only, or
+          prepare the current
+          incoming batch.
         </p>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <div className="mt-6 grid gap-4 lg:grid-cols-3">
           <button
             type="button"
             onClick={() =>
@@ -628,7 +649,7 @@ export default function ImportsPageClient() {
               )
             }
             className={`rounded-2xl border p-5 text-left ${
-              isExistingBatch
+              isFullExistingBatch
                 ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-100"
                 : "border-slate-200 bg-white"
             }`}
@@ -638,9 +659,36 @@ export default function ImportsPageClient() {
             </div>
 
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              Latest transcript plus
-              previous-semester
-              registration response.
+              For established batches
+              that have both a latest
+              transcript and previous
+              semester registration.
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              changeRefreshMode(
+                "REGISTRATION_ONLY"
+              )
+            }
+            className={`rounded-2xl border p-5 text-left ${
+              isRegistrationOnly
+                ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
+                : "border-slate-200 bg-white"
+            }`}
+          >
+            <div className="font-bold text-slate-900">
+              Registration-Only Refresh
+            </div>
+
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              For the immediate
+              previous intake that has
+              first-semester
+              registration but no
+              transcript yet.
             </p>
           </button>
 
@@ -696,8 +744,28 @@ export default function ImportsPageClient() {
               initial offering pool.
             </p>
           </div>
+        ) : isRegistrationOnly ? (
+          <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-5 text-sm leading-7 text-blue-900">
+            <p className="font-semibold">
+              First-registration rule
+            </p>
+
+            <p className="mt-2">
+              Use this only when the
+              batch has no transcript
+              yet. The registration
+              semester must match the
+              batch admission term.
+            </p>
+
+            <p className="mt-2">
+              The following semester
+              must also be the current
+              UniFlow academic term.
+            </p>
+          </div>
         ) : (
-          <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-5 text-sm leading-7 text-slate-700">
+          <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 p-5 text-sm leading-7 text-slate-700">
             Previous-semester state
             must already be preserved
             in a finalized rollover
@@ -754,7 +822,7 @@ export default function ImportsPageClient() {
             </select>
           </div>
 
-          {isExistingBatch ? (
+          {isFullExistingBatch ? (
             <>
               <div>
                 <label className="mb-1 block text-sm font-medium">
@@ -798,6 +866,40 @@ export default function ImportsPageClient() {
                 />
               </div>
             </>
+          ) : isRegistrationOnly ? (
+            <>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-700">
+                <strong>
+                  Transcript
+                </strong>
+                <div className="mt-1">
+                  Not required for
+                  first-registration
+                  refresh.
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">
+                  First Semester
+                  Registration PDF
+                </label>
+
+                <input
+                  key={`registration-${fileInputVersion}`}
+                  type="file"
+                  accept=".pdf"
+                  required
+                  onChange={(e) =>
+                    setRegistrationFile(
+                      e.target.files?.[0] ||
+                        null
+                    )
+                  }
+                  className="w-full rounded-2xl border px-3 py-3"
+                />
+              </div>
+            </>
           ) : (
             <div className="md:col-span-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-900">
               No source files required.
@@ -820,7 +922,9 @@ export default function ImportsPageClient() {
                 ? "Preparing..."
                 : isNewIntake
                   ? "Preview New Intake"
-                  : "Parse and Preview Status"}
+                  : isRegistrationOnly
+                    ? "Parse Registration and Preview"
+                    : "Parse and Preview Status"}
             </button>
 
             {result ? (
@@ -841,7 +945,9 @@ export default function ImportsPageClient() {
                     ? "Save Blocked"
                     : isNewIntake
                       ? `Create Batch ${result.refreshContext.generatedBatchCode}`
-                      : "Save Refreshed Batch Status"}
+                      : isRegistrationOnly
+                        ? "Save Registration-Only Status"
+                        : "Save Refreshed Batch Status"}
               </button>
             ) : null}
           </div>
@@ -878,6 +984,20 @@ export default function ImportsPageClient() {
                 </h3>
 
                 <p className="mt-2 text-sm">
+                  Mode:{" "}
+                  <strong>
+                    {result
+                      .refreshContext
+                      .refreshMode ===
+                    "REGISTRATION_ONLY"
+                      ? "REGISTRATION ONLY"
+                      : result
+                          .refreshContext
+                          .refreshMode}
+                  </strong>
+                </p>
+
+                <p className="mt-1 text-sm">
                   Current term:{" "}
                   <strong>
                     {
@@ -896,6 +1016,16 @@ export default function ImportsPageClient() {
                         .studentIdentity
                         .batchCode
                     }
+                  </strong>
+                </p>
+
+                <p className="mt-1 text-sm">
+                  Resolved batch ID:{" "}
+                  <strong>
+                    {result
+                      .refreshContext
+                      .existingBatchId ??
+                      "-"}
                   </strong>
                 </p>
 
@@ -995,6 +1125,53 @@ export default function ImportsPageClient() {
             </div>
           </div>
 
+          <div className="rounded-3xl border border-slate-200 bg-white p-6">
+            <h3 className="text-xl font-bold">
+              Parsed Semester Context
+            </h3>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border p-4">
+                <div className="text-xs uppercase text-slate-500">
+                  Latest Completed
+                </div>
+
+                <div className="mt-2 font-semibold">
+                  {result
+                    .transcriptSummary
+                    .latestCompletedTerm ||
+                    "None"}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border p-4">
+                <div className="text-xs uppercase text-slate-500">
+                  Registration
+                </div>
+
+                <div className="mt-2 font-semibold">
+                  {result
+                    .registrationSummary
+                    .currentRegistrationTerm ||
+                    "Unknown"}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border p-4">
+                <div className="text-xs uppercase text-slate-500">
+                  Suggested Next
+                </div>
+
+                <div className="mt-2 font-semibold">
+                  {result
+                    .offeringContext
+                    .suggestedNextOfferingTerm ||
+                    "Unknown"}
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="rounded-3xl border border-indigo-200 bg-indigo-50 p-6">
             <h3 className="text-xl font-bold">
               {
@@ -1007,7 +1184,9 @@ export default function ImportsPageClient() {
             <p className="mt-2 text-sm text-slate-600">
               {isNewIntake
                 ? "All active curriculum courses are visible for the incoming batch."
-                : "Remaining curriculum courses are shown after completed and current courses are excluded."}
+                : isRegistrationOnly
+                  ? "The first-semester registered courses are excluded. Remaining curriculum courses become the current offering candidate pool."
+                  : "Remaining curriculum courses are shown after completed and current courses are excluded."}
             </p>
 
             <div className="mt-4 overflow-x-auto rounded-2xl bg-white">
@@ -1093,86 +1272,104 @@ export default function ImportsPageClient() {
             </div>
           </div>
 
-          {isExistingBatch ? (
+          {isExistingMode ? (
             <>
-              <div className="rounded-3xl border bg-white p-6">
-                <h3 className="text-xl font-bold">
-                  Completed Courses
-                </h3>
+              {!isRegistrationOnly ? (
+                <div className="rounded-3xl border bg-white p-6">
+                  <h3 className="text-xl font-bold">
+                    Completed Courses
+                  </h3>
 
-                <div className="mt-4 overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="border-b text-left">
-                        <th className="px-3 py-2">
-                          Semester
-                        </th>
+                  <div className="mt-4 overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left">
+                          <th className="px-3 py-2">
+                            Semester
+                          </th>
 
-                        <th className="px-3 py-2">
-                          Code
-                        </th>
+                          <th className="px-3 py-2">
+                            Code
+                          </th>
 
-                        <th className="px-3 py-2">
-                          Title
-                        </th>
+                          <th className="px-3 py-2">
+                            Title
+                          </th>
 
-                        <th className="px-3 py-2">
-                          Credits
-                        </th>
+                          <th className="px-3 py-2">
+                            Credits
+                          </th>
 
-                        <th className="px-3 py-2">
-                          Grade
-                        </th>
-                      </tr>
-                    </thead>
+                          <th className="px-3 py-2">
+                            Grade
+                          </th>
+                        </tr>
+                      </thead>
 
-                    <tbody>
-                      {result.completedCourses.map(
-                        (row) => (
-                          <tr
-                            key={`${row.semester}-${row.code}`}
-                            className="border-b"
-                          >
-                            <td className="px-3 py-2">
-                              {
-                                row.semester
-                              }
-                            </td>
+                      <tbody>
+                        {result.completedCourses.map(
+                          (row) => (
+                            <tr
+                              key={`${row.semester}-${row.code}`}
+                              className="border-b"
+                            >
+                              <td className="px-3 py-2">
+                                {
+                                  row.semester
+                                }
+                              </td>
 
-                            <td className="px-3 py-2">
-                              {
-                                row.code
-                              }
-                            </td>
+                              <td className="px-3 py-2">
+                                {
+                                  row.code
+                                }
+                              </td>
 
-                            <td className="px-3 py-2">
-                              {
-                                row.title
-                              }
-                            </td>
+                              <td className="px-3 py-2">
+                                {
+                                  row.title
+                                }
+                              </td>
 
-                            <td className="px-3 py-2">
-                              {
-                                row.credits
-                              }
-                            </td>
+                              <td className="px-3 py-2">
+                                {
+                                  row.credits
+                                }
+                              </td>
 
-                            <td className="px-3 py-2">
-                              {
-                                row.grade
-                              }
-                            </td>
-                          </tr>
-                        )
-                      )}
-                    </tbody>
-                  </table>
+                              <td className="px-3 py-2">
+                                {
+                                  row.grade
+                                }
+                              </td>
+                            </tr>
+                          )
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="rounded-3xl border border-blue-200 bg-blue-50 p-6">
+                  <h3 className="text-xl font-bold">
+                    Completed Courses
+                  </h3>
+
+                  <p className="mt-2 text-sm text-blue-900">
+                    No transcript exists
+                    yet for this
+                    immediate-previous
+                    intake. Completed
+                    history remains empty.
+                  </p>
+                </div>
+              )}
 
               <div className="rounded-3xl border bg-white p-6">
                 <h3 className="text-xl font-bold">
-                  Previous Semester Registration
+                  {isRegistrationOnly
+                    ? "First Semester Registration"
+                    : "Previous Semester Registration"}
                 </h3>
 
                 <div className="mt-4 overflow-x-auto">

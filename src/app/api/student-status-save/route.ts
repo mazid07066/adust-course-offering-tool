@@ -29,6 +29,7 @@ import {
 
 type RefreshMode =
   | "EXISTING_BATCH"
+  | "REGISTRATION_ONLY"
   | "NEW_INTAKE";
 
 type SaveCompletedCourse = {
@@ -75,19 +76,36 @@ function normalizeUpper(
 function normalizeRefreshMode(
   value: unknown
 ): RefreshMode {
-  return normalizeUpper(
-    String(
-      value ||
-        "EXISTING_BATCH"
-    )
-  ) === "NEW_INTAKE"
-    ? "NEW_INTAKE"
-    : "EXISTING_BATCH";
+  const normalized =
+    normalizeUpper(
+      String(
+        value ||
+          "EXISTING_BATCH"
+      )
+    );
+
+  if (
+    normalized ===
+    "REGISTRATION_ONLY"
+  ) {
+    return "REGISTRATION_ONLY";
+  }
+
+  if (
+    normalized ===
+    "NEW_INTAKE"
+  ) {
+    return "NEW_INTAKE";
+  }
+
+  return "EXISTING_BATCH";
 }
 
 function isNewCurriculum(
   value:
-    string | null | undefined
+    | string
+    | null
+    | undefined
 ) {
   return (
     normalizeUpper(
@@ -276,6 +294,10 @@ export async function POST(
         body.refreshMode
       );
 
+    const isRegistrationOnly =
+      refreshMode ===
+      "REGISTRATION_ONLY";
+
     const programCode =
       normalizeUpper(
         body.programCode ||
@@ -418,13 +440,6 @@ export async function POST(
       );
     }
 
-    /**
-     * S2-B3A hard protection.
-     *
-     * Perform this check before resolveCanonicalProgram()
-     * so an invalid OLD new-intake request cannot cause
-     * any canonical-program synchronization write.
-     */
     if (
       refreshMode ===
         "NEW_INTAKE" &&
@@ -641,7 +656,7 @@ export async function POST(
     }
 
     // ================================================================
-    // EXISTING BATCH
+    // EXISTING BATCH / REGISTRATION ONLY
     // ================================================================
 
     const batchCode =
@@ -687,18 +702,131 @@ export async function POST(
     }
 
     if (
-      !latestCompletedTerm ||
-      !currentRegistrationTerm
+      isRegistrationOnly
     ) {
-      return NextResponse.json(
-        {
-          error:
-            "Existing-batch refresh requires both completed-term and registration-term information.",
-        },
-        {
-          status: 400,
-        }
-      );
+      if (
+        latestCompletedTerm
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Registration-only refresh must not contain a completed-term value.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      if (
+        completedCourses.length >
+        0
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Registration-only refresh must not contain completed-course rows.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      if (
+        transcriptEarnedCredits !==
+        null
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Registration-only refresh must not contain transcript earned-credit data.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      if (
+        parsedCompletedCredits !==
+          null &&
+        parsedCompletedCredits !==
+          0
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Registration-only refresh must have zero parsed completed credits.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      if (
+        !currentRegistrationTerm
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Registration-only refresh requires registration-term information.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      if (
+        ongoingCourses.length ===
+        0
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Registration-only refresh requires at least one parsed registration course.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      if (
+        normalizeUpper(
+          existingBatch
+            .admission_term ||
+            ""
+        ) !==
+        currentRegistrationTerm
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              `Registration-only refresh is restricted to the immediate previous intake. Batch ${batchCode} was admitted in ${existingBatch.admission_term || "UNKNOWN"}, but its uploaded registration is ${currentRegistrationTerm}.`,
+          },
+          {
+            status: 409,
+          }
+        );
+      }
+    } else {
+      if (
+        !latestCompletedTerm ||
+        !currentRegistrationTerm
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Existing-batch refresh requires both completed-term and registration-term information.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
     }
 
     const nextTerm =
@@ -767,14 +895,6 @@ export async function POST(
       );
     }
 
-    /**
-     * Prepare all historical terms before entering
-     * the interactive transaction.
-     *
-     * We intentionally avoid one upsert per semester.
-     * On a remote Supabase database those repeated
-     * round trips can exceed Prisma's transaction timeout.
-     */
     const distinctCompletedTerms =
       Array.from(
         new Set(
@@ -809,10 +929,6 @@ export async function POST(
       await prisma
         .$transaction(
           async (tx) => {
-            /**
-             * One INSERT ... ON CONFLICT style operation
-             * instead of many sequential upserts.
-             */
             await tx
               .academic_terms
               .createMany({
@@ -840,9 +956,6 @@ export async function POST(
                   true,
               });
 
-            /**
-             * Resolve every required term ID with one query.
-             */
             const termRows =
               await tx
                 .academic_terms
@@ -1102,7 +1215,9 @@ export async function POST(
       success: true,
 
       message:
-        `Existing batch ${batchCode} refreshed for ${currentAcademicTerm.name}.`,
+        isRegistrationOnly
+          ? `Registration-only status for batch ${batchCode} refreshed for ${currentAcademicTerm.name}.`
+          : `Existing batch ${batchCode} refreshed for ${currentAcademicTerm.name}.`,
 
       refreshMode,
 
@@ -1129,7 +1244,9 @@ export async function POST(
       savedOngoing,
 
       offeringCandidateSource:
-        "REMAINING_CURRICULUM",
+        isRegistrationOnly
+          ? "REMAINING_AFTER_FIRST_REGISTRATION"
+          : "REMAINING_CURRICULUM",
     });
   } catch (error) {
     console.error(error);

@@ -45,6 +45,7 @@ export const runtime = "nodejs";
 
 type RefreshMode =
   | "EXISTING_BATCH"
+  | "REGISTRATION_ONLY"
   | "NEW_INTAKE";
 
 type CatalogProgramRow = {
@@ -75,33 +76,45 @@ type ParsedTranscriptCourse = {
 function normalizeRefreshMode(
   value: FormDataEntryValue | null
 ): RefreshMode {
-  const normalized =
-    String(
-      value || "EXISTING_BATCH"
-    )
-      .trim()
-      .toUpperCase();
+  const normalized = String(
+    value || "EXISTING_BATCH"
+  )
+    .trim()
+    .toUpperCase();
 
-  return normalized ===
+  if (
+    normalized ===
+    "REGISTRATION_ONLY"
+  ) {
+    return "REGISTRATION_ONLY";
+  }
+
+  if (
+    normalized ===
     "NEW_INTAKE"
-    ? "NEW_INTAKE"
-    : "EXISTING_BATCH";
+  ) {
+    return "NEW_INTAKE";
+  }
+
+  return "EXISTING_BATCH";
 }
 
 function normalizeUpper(
   value:
-    string | null | undefined
+    | string
+    | null
+    | undefined
 ) {
-  return String(
-    value || ""
-  )
+  return String(value || "")
     .trim()
     .toUpperCase();
 }
 
 function isNewCurriculum(
   curriculumVersion:
-    string | null | undefined
+    | string
+    | null
+    | undefined
 ) {
   return (
     normalizeUpper(
@@ -177,10 +190,8 @@ function chooseBetterTranscriptParse(
     );
 
   const primaryScore =
-    primaryCourses.length *
-      10 +
-    primaryCompleted.length *
-      5 +
+    primaryCourses.length * 10 +
+    primaryCompleted.length * 5 +
     (
       primaryEarned !== null &&
       numbersClose(
@@ -192,10 +203,8 @@ function chooseBetterTranscriptParse(
     );
 
   const alternateScore =
-    alternateCourses.length *
-      10 +
-    alternateCompleted.length *
-      5 +
+    alternateCourses.length * 10 +
+    alternateCompleted.length * 5 +
     (
       alternateEarned !== null &&
       numbersClose(
@@ -296,6 +305,14 @@ export async function POST(
         ? registrationValue
         : null;
 
+    const isFullExistingBatch =
+      refreshMode ===
+      "EXISTING_BATCH";
+
+    const isRegistrationOnly =
+      refreshMode ===
+      "REGISTRATION_ONLY";
+
     if (!selectedProgramCode) {
       return NextResponse.json(
         {
@@ -309,8 +326,7 @@ export async function POST(
     }
 
     if (
-      refreshMode ===
-        "EXISTING_BATCH" &&
+      isFullExistingBatch &&
       (
         !transcriptFile ||
         !registrationFile
@@ -320,6 +336,36 @@ export async function POST(
         {
           error:
             "Existing batch refresh requires both the latest transcript PDF and latest registration PDF.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (
+      isRegistrationOnly &&
+      transcriptFile
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Registration-only refresh must not include a transcript PDF.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (
+      isRegistrationOnly &&
+      !registrationFile
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Registration-only refresh requires the registration PDF.",
         },
         {
           status: 400,
@@ -381,14 +427,6 @@ export async function POST(
       );
     }
 
-    /**
-     * S2-B3A:
-     * New incoming batches may only use the current
-     * NEW curriculum identity.
-     *
-     * OLD curriculum identities remain fully valid for
-     * EXISTING_BATCH refreshes.
-     */
     if (
       refreshMode ===
         "NEW_INTAKE" &&
@@ -408,9 +446,6 @@ export async function POST(
       );
     }
 
-    /**
-     * Preview must remain read-only.
-     */
     const canonicalProgram =
       await findCanonicalProgram({
         department_code:
@@ -741,42 +776,55 @@ export async function POST(
     }
 
     // ================================================================
-    // EXISTING BATCH
+    // EXISTING BATCH / REGISTRATION ONLY
     // ================================================================
 
-    const transcriptBuffer =
-      Buffer.from(
-        await transcriptFile!
-          .arrayBuffer()
-      );
+    let transcriptText = "";
+    let transcriptCourses:
+      ParsedTranscriptCourse[] =
+        [];
+    let transcriptEarnedCredits:
+      number | null = null;
+    let transcriptParserSource =
+      "not-required";
 
-    const transcriptVariants =
-      await extractPdfTextVariants(
-        transcriptBuffer
-      );
+    if (
+      isFullExistingBatch
+    ) {
+      const transcriptBuffer =
+        Buffer.from(
+          await transcriptFile!
+            .arrayBuffer()
+        );
 
-    const transcriptChoice =
-      chooseBetterTranscriptParse(
-        transcriptVariants.primary,
-        transcriptVariants.alternate
-      );
+      const transcriptVariants =
+        await extractPdfTextVariants(
+          transcriptBuffer
+        );
 
-    const transcriptText =
-      transcriptChoice
-        .chosenText;
+      const transcriptChoice =
+        chooseBetterTranscriptParse(
+          transcriptVariants.primary,
+          transcriptVariants.alternate
+        );
 
-    const transcriptCourses =
-      transcriptChoice
-        .transcriptCourses as
+      transcriptText =
+        transcriptChoice
+          .chosenText;
+
+      transcriptCourses =
+        transcriptChoice
+          .transcriptCourses as
           ParsedTranscriptCourse[];
 
-    const transcriptEarnedCredits =
-      transcriptChoice
-        .transcriptEarnedCredits;
+      transcriptEarnedCredits =
+        transcriptChoice
+          .transcriptEarnedCredits;
 
-    const transcriptParserSource =
-      transcriptChoice
-        .chosenSource;
+      transcriptParserSource =
+        transcriptChoice
+          .chosenSource;
+    }
 
     const registrationText =
       await extractPdfText(
@@ -907,6 +955,7 @@ export async function POST(
       );
 
     const completedCreditMismatch =
+      isFullExistingBatch &&
       transcriptEarnedCredits !==
         null &&
       !numbersClose(
@@ -915,19 +964,23 @@ export async function POST(
       );
 
     const failedOnlyCodes =
-      getFailedOnlyCodes(
-        transcriptCourses
-      );
+      isFullExistingBatch
+        ? getFailedOnlyCodes(
+            transcriptCourses
+          )
+        : [];
 
     const latestCompletedTerm =
-      getLatestTerm(
-        Array.from(
-          completedMap.values()
-        ).map(
-          (row) =>
-            row.semester
-        )
-      );
+      isFullExistingBatch
+        ? getLatestTerm(
+            Array.from(
+              completedMap.values()
+            ).map(
+              (row) =>
+                row.semester
+            )
+          )
+        : null;
 
     const currentRegistrationTerm =
       parseRegistrationSemester(
@@ -998,24 +1051,6 @@ export async function POST(
               course.course_title
             );
 
-          /**
-           * Curriculum-equivalence rule:
-           *
-           * A historical course satisfies the selected curriculum when
-           * either:
-           *
-           * 1. its normalized course code matches, OR
-           * 2. its normalized course title matches.
-           *
-           * Title matching is intentionally independent of whether the
-           * current master-course row has a course code. This is required
-           * for curriculum migrations where the same academic course was
-           * renumbered between OLD and NEW curricula.
-           *
-           * Historical transcript codes remain untouched in saved batch
-           * history. This rule affects only curriculum requirement
-           * matching / remaining-course calculation.
-           */
           const matchedCompleted =
             (
               Boolean(
@@ -1122,8 +1157,9 @@ export async function POST(
     }
 
     if (
+      isFullExistingBatch &&
       transcriptEarnedCredits ===
-      null
+        null
     ) {
       warningMessages.push(
         "Transcript earned-credit total could not be detected."
@@ -1135,6 +1171,14 @@ export async function POST(
     ) {
       warningMessages.push(
         `Transcript earned credits (${transcriptEarnedCredits}) do not match parsed completed credits (${parsedCompletedCredits}).`
+      );
+    }
+
+    if (
+      isRegistrationOnly
+    ) {
+      warningMessages.push(
+        "Registration-only mode: no transcript history will be written for this refresh."
       );
     }
 
@@ -1173,6 +1217,39 @@ export async function POST(
       );
     }
 
+    if (
+      isRegistrationOnly &&
+      existingBatch &&
+      currentRegistrationTerm &&
+      normalizeUpper(
+        existingBatch
+          .admission_term
+      ) !==
+        normalizeUpper(
+          currentRegistrationTerm
+        )
+    ) {
+      rolloverReady =
+        false;
+
+      warningMessages.push(
+        `Registration-only refresh is allowed only for a batch whose admission term matches its first registration term. Batch admission term is ${existingBatch.admission_term || "UNKNOWN"}, while the registration PDF is ${currentRegistrationTerm}.`
+      );
+    }
+
+    if (
+      isRegistrationOnly &&
+      registrationCourses.length ===
+        0
+    ) {
+      rolloverReady =
+        false;
+
+      warningMessages.push(
+        "No registration courses were parsed from the registration PDF."
+      );
+    }
+
     const offeringCandidateCourses =
       remainingCourses.map(
         (course) => ({
@@ -1189,7 +1266,9 @@ export async function POST(
             null,
 
           source:
-            "REMAINING_CURRICULUM",
+            isRegistrationOnly
+              ? "REMAINING_AFTER_FIRST_REGISTRATION"
+              : "REMAINING_CURRICULUM",
         })
       );
 
@@ -1351,9 +1430,11 @@ export async function POST(
 
       debug: {
         transcriptTextSample:
-          makeDebugTextSample(
-            transcriptText
-          ),
+          isRegistrationOnly
+            ? ""
+            : makeDebugTextSample(
+                transcriptText
+              ),
 
         registrationTextSample:
           makeDebugTextSample(
