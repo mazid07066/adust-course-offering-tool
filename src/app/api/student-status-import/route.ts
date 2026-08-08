@@ -998,13 +998,35 @@ export async function POST(
               course.course_title
             );
 
+          /**
+           * Curriculum-equivalence rule:
+           *
+           * A historical course satisfies the selected curriculum when
+           * either:
+           *
+           * 1. its normalized course code matches, OR
+           * 2. its normalized course title matches.
+           *
+           * Title matching is intentionally independent of whether the
+           * current master-course row has a course code. This is required
+           * for curriculum migrations where the same academic course was
+           * renumbered between OLD and NEW curricula.
+           *
+           * Historical transcript codes remain untouched in saved batch
+           * history. This rule affects only curriculum requirement
+           * matching / remaining-course calculation.
+           */
           const matchedCompleted =
-            completedComparableCodes
-              .has(
-                comparableCode
-              ) ||
             (
-              !comparableCode &&
+              Boolean(
+                comparableCode
+              ) &&
+              completedComparableCodes
+                .has(
+                  comparableCode
+                )
+            ) ||
+            (
               Boolean(
                 comparableTitle
               ) &&
@@ -1015,12 +1037,16 @@ export async function POST(
             );
 
           const matchedOngoing =
-            ongoingComparableCodes
-              .has(
-                comparableCode
-              ) ||
             (
-              !comparableCode &&
+              Boolean(
+                comparableCode
+              ) &&
+              ongoingComparableCodes
+                .has(
+                  comparableCode
+                )
+            ) ||
+            (
               Boolean(
                 comparableTitle
               ) &&
