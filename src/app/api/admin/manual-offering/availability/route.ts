@@ -36,12 +36,22 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
 
     const termName = normalizeUpper(searchParams.get("termName"));
-    const batchId = toNumber(searchParams.get("batchId"));
+    const batchIds = Array.from(
+      new Set(
+        String(searchParams.get("batchIds") || searchParams.get("batchId") || "")
+          .split(",")
+          .map((value) => toNumber(value))
+          .filter((value): value is number => value !== null)
+      )
+    );
     const teacherId = toNumber(searchParams.get("teacherId"));
+    const excludeOfferedCourseId = toNumber(
+      searchParams.get("excludeOfferedCourseId")
+    );
 
-    if (!termName || !batchId) {
+    if (!termName || batchIds.length === 0) {
       return NextResponse.json(
-        { error: "termName and batchId are required." },
+        { error: "termName and at least one batchId are required." },
         { status: 400 }
       );
     }
@@ -65,9 +75,12 @@ export async function GET(req: NextRequest) {
             academic_term_id: term.id,
             status: { in: SCHEDULE_CONFLICT_STATUSES },
           },
+          ...(excludeOfferedCourseId
+            ? { id: { not: excludeOfferedCourseId } }
+            : {}),
           offered_course_batches: {
             some: {
-              batch_id: batchId,
+              batch_id: { in: batchIds },
             },
           },
         },
@@ -80,6 +93,11 @@ export async function GET(req: NextRequest) {
             offered_course_teachers: {
               include: {
                 teachers: true,
+              },
+            },
+            offered_course_batches: {
+              include: {
+                batches: true,
               },
             },
           },
@@ -96,6 +114,9 @@ export async function GET(req: NextRequest) {
                 academic_term_id: term.id,
                 status: { in: SCHEDULE_CONFLICT_STATUSES },
               },
+              ...(excludeOfferedCourseId
+                ? { id: { not: excludeOfferedCourseId } }
+                : {}),
               offered_course_teachers: {
                 some: {
                   teacher_id: teacherId,
@@ -144,6 +165,9 @@ export async function GET(req: NextRequest) {
         courseCode: slot.offered_courses.master_courses.course_code,
         courseTitle: slot.offered_courses.master_courses.course_title,
         section: slot.offered_courses.section,
+        batchCodes: slot.offered_courses.offered_course_batches
+          .filter((row) => batchIds.includes(row.batch_id))
+          .map((row) => row.batches.batch_code),
         facultyText:
           slot.offered_courses.offered_course_teachers
             .map(
@@ -203,8 +227,8 @@ export async function GET(req: NextRequest) {
       suggestedOpenWindows,
       message:
         occupiedBatchSlots.length > 0
-          ? "Review occupied batch slots before adding a new manual section."
-          : "No existing occupied slot found for this batch in this term.",
+          ? "Review occupied slots for every selected batch before saving this shared section."
+          : "No existing occupied slot found for the selected batches in this term.",
     });
   } catch (error) {
     console.error("Manual offering availability failed:", error);

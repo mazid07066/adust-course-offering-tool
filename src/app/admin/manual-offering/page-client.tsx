@@ -74,6 +74,7 @@ type AvailabilitySlot = {
   startTime: string;
   endTime: string;
   roomCode: string;
+  batchCodes?: string[];
   courseCode: string;
   courseTitle: string;
   section: string;
@@ -131,6 +132,13 @@ type AvailabilityResponse = {
     dayOfWeek: string;
     warning: string;
   }>;
+};
+
+type AddBatchResponse = {
+  success?: boolean;
+  error?: string;
+  message?: string;
+  batches?: BatchOption[];
 };
 
 const DAY_OPTIONS = [
@@ -216,7 +224,7 @@ export default function ManualOfferingPageClient() {
   const [termName, setTermName] = useState("");
   const [programCode, setProgramCode] = useState("");
   const [targetOfferingId, setTargetOfferingId] = useState("");
-  const [batchId, setBatchId] = useState("");
+  const [batchIds, setBatchIds] = useState<string[]>([]);
   const [masterCourseId, setMasterCourseId] = useState("");
   const [section, setSection] = useState("1");
   const [teacherId, setTeacherId] = useState("");
@@ -229,6 +237,11 @@ export default function ManualOfferingPageClient() {
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [addBatchCourseId, setAddBatchCourseId] = useState<number | null>(null);
+  const [addBatchOptions, setAddBatchOptions] = useState<BatchOption[]>([]);
+  const [addBatchId, setAddBatchId] = useState("");
+  const [loadingAddBatch, setLoadingAddBatch] = useState(false);
+  const [savingAddBatch, setSavingAddBatch] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -274,7 +287,7 @@ export default function ManualOfferingPageClient() {
 
       if (batchConflict) {
         warnings.push(
-          `Batch conflict: ${batchConflict.dayOfWeek} ${batchConflict.startTime}-${batchConflict.endTime} already has ${batchConflict.courseCode} Sec-${batchConflict.section}.`
+          `Batch conflict${batchConflict.batchCodes?.length ? ` for ${batchConflict.batchCodes.join(", ")}` : ""}: ${batchConflict.dayOfWeek} ${batchConflict.startTime}-${batchConflict.endTime} already has ${batchConflict.courseCode} Sec-${batchConflict.section}.`
         );
       }
 
@@ -312,7 +325,7 @@ export default function ManualOfferingPageClient() {
   async function loadOptions(
     nextProgramCode = programCode,
     nextTermName = termName,
-    nextBatchId = batchId
+    nextBatchIds = batchIds
   ) {
     setLoadingOptions(true);
     setError("");
@@ -321,7 +334,9 @@ export default function ManualOfferingPageClient() {
       const qs = new URLSearchParams();
       if (nextProgramCode) qs.set("programCode", nextProgramCode);
       if (nextTermName) qs.set("termName", nextTermName);
-      if (nextBatchId) qs.set("batchId", nextBatchId);
+      if (nextBatchIds.length > 0) {
+        qs.set("batchIds", nextBatchIds.join(","));
+      }
 
       const res = await fetch(
         `/api/admin/manual-offering/options?${qs.toString()}`,
@@ -363,7 +378,7 @@ export default function ManualOfferingPageClient() {
   }
 
   async function loadAvailability() {
-    if (!termName || !batchId) {
+    if (!termName || batchIds.length === 0) {
       setAvailability(null);
       return;
     }
@@ -373,10 +388,13 @@ export default function ManualOfferingPageClient() {
     try {
       const qs = new URLSearchParams({
         termName,
-        batchId,
+        batchIds: batchIds.join(","),
       });
 
       if (teacherId) qs.set("teacherId", teacherId);
+      if (editingId !== null) {
+        qs.set("excludeOfferedCourseId", String(editingId));
+      }
 
       const res = await fetch(
         `/api/admin/manual-offering/availability?${qs.toString()}`,
@@ -430,18 +448,21 @@ export default function ManualOfferingPageClient() {
   }
 
   useEffect(() => {
-    loadOptions("", "", "");
+    loadOptions("", "", []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    setBatchId("");
+    setBatchIds([]);
     setMasterCourseId("");
     setTargetOfferingId("");
     setAvailability(null);
+    setAddBatchCourseId(null);
+    setAddBatchOptions([]);
+    setAddBatchId("");
 
     if (programCode || termName) {
-      loadOptions(programCode, termName, "");
+      loadOptions(programCode, termName, []);
     }
 
     if (termName) {
@@ -455,18 +476,18 @@ export default function ManualOfferingPageClient() {
       setMasterCourseId("");
     }
 
-    if (programCode && termName && batchId) {
-      loadOptions(programCode, termName, batchId);
+    if (programCode && termName && batchIds.length > 0) {
+      loadOptions(programCode, termName, batchIds);
     }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [termName, batchId]);
+  }, [termName, batchIds.join(",")]);
 
   useEffect(() => {
     loadAvailability();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [termName, batchId, teacherId]);
+  }, [termName, batchIds.join(","), teacherId, editingId]);
 
   function updateSlot(index: number, key: keyof SlotForm, value: string) {
     setSlots((prev) =>
@@ -502,7 +523,7 @@ export default function ManualOfferingPageClient() {
 
     setEditingId(row.offeredCourseId);
     setTargetOfferingId(String(row.offeringId));
-    setBatchId(String(row.batchIds[0]));
+    setBatchIds(row.batchIds.map((id) => String(id)));
     setMasterCourseId(String(row.masterCourseId));
     setSection(row.section);
     setTeacherId(row.teacherId === null ? "" : String(row.teacherId));
@@ -533,7 +554,7 @@ export default function ManualOfferingPageClient() {
 
   function cancelEdit() {
     setEditingId(null);
-    setBatchId("");
+    setBatchIds([]);
     setMasterCourseId("");
     setSection("1");
     setTeacherId("");
@@ -542,6 +563,113 @@ export default function ManualOfferingPageClient() {
     setAvailability(null);
     setError("");
     setMessage("");
+  }
+
+  async function startAddBatch(row: ManualRow) {
+    if (!row.isManualAddition) {
+      setError("Only manual additions can receive another batch here.");
+      return;
+    }
+
+    if (row.offeringStatus === "CONFIRMED") {
+      setError("Confirmed offerings are locked and cannot receive another batch.");
+      return;
+    }
+
+    if (!programCode) {
+      setError("Select the academic program first, then use Add Batch.");
+      return;
+    }
+
+    setLoadingAddBatch(true);
+    setAddBatchCourseId(row.offeredCourseId);
+    setAddBatchOptions([]);
+    setAddBatchId("");
+    setMessage("");
+    setError("");
+
+    try {
+      const qs = new URLSearchParams({
+        offeredCourseId: String(row.offeredCourseId),
+        programCode,
+      });
+
+      const res = await fetch(
+        `/api/admin/manual-offering/add-batch?${qs.toString()}`,
+        { cache: "no-store" }
+      );
+
+      const json: AddBatchResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to load eligible batches.");
+      }
+
+      setAddBatchOptions(json.batches || []);
+
+      if (!json.batches?.length) {
+        setMessage(
+          `No additional eligible batch is available for ${row.courseCode} Sec-${row.section}.`
+        );
+      }
+    } catch (err) {
+      setAddBatchCourseId(null);
+      setError(
+        err instanceof Error ? err.message : "Failed to load eligible batches."
+      );
+    } finally {
+      setLoadingAddBatch(false);
+    }
+  }
+
+  function cancelAddBatch() {
+    setAddBatchCourseId(null);
+    setAddBatchOptions([]);
+    setAddBatchId("");
+  }
+
+  async function handleAddBatch(row: ManualRow) {
+    if (!addBatchId) {
+      setError("Select a batch to add.");
+      return;
+    }
+
+    if (!programCode) {
+      setError("Select the academic program first.");
+      return;
+    }
+
+    setSavingAddBatch(true);
+    setMessage("");
+    setError("");
+
+    try {
+      const res = await fetch("/api/admin/manual-offering/add-batch", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          offeredCourseId: row.offeredCourseId,
+          programCode,
+          batchId: addBatchId,
+        }),
+      });
+
+      const json: AddBatchResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to add batch.");
+      }
+
+      setMessage(json.message || "Batch added successfully.");
+      cancelAddBatch();
+      await Promise.all([loadManualRows(), loadAvailability()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add batch.");
+    } finally {
+      setSavingAddBatch(false);
+    }
   }
 
   async function handleDelete(offeredCourseId: number) {
@@ -597,7 +725,7 @@ export default function ManualOfferingPageClient() {
         termName,
         programCode,
         targetOfferingId: targetOfferingId || null,
-        batchId,
+        batchIds,
         masterCourseId,
         section,
         teacherId: teacherId || null,
@@ -631,7 +759,7 @@ export default function ManualOfferingPageClient() {
             : "Manual offered course added successfully.")
       );
       setEditingId(null);
-      setBatchId("");
+      setBatchIds([]);
       setMasterCourseId("");
       setSection("1");
       setTeacherId("");
@@ -661,8 +789,8 @@ export default function ManualOfferingPageClient() {
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">
           {editingId !== null
-            ? "Update the batch, course, section, faculty assignment, load type, room, day, or time before the offering becomes confirmed."
-            : "Add backlog, special, project, replacement, or emergency courses into a selected offering. Choose the exact target offering when more than one offering exists for the same term/program."}
+            ? "Update the course, section, faculty assignment, load type, room, day, or time before the offering becomes confirmed. Batch links are managed separately with Add Batch."
+            : "Offer the course to one batch first. After saving, use Add Batch on the row below when another batch should attend the same section and schedule."}
         </p>
 
         {editingId !== null ? (
@@ -769,10 +897,12 @@ export default function ManualOfferingPageClient() {
                 Batch
               </label>
               <select
-                value={batchId}
-                onChange={(e) => setBatchId(e.target.value)}
+                value={batchIds[0] || ""}
+                onChange={(e) =>
+                  setBatchIds(e.target.value ? [e.target.value] : [])
+                }
                 className="w-full rounded-xl border px-3 py-3 text-sm"
-                disabled={!programCode || loadingOptions}
+                disabled={!programCode || loadingOptions || editingId !== null}
                 required
               >
                 <option value="">Select Batch</option>
@@ -783,6 +913,11 @@ export default function ManualOfferingPageClient() {
                   </option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-slate-500">
+                {editingId !== null
+                  ? "Existing batch links are preserved during Edit. Use Add Batch from the saved row to attach another batch."
+                  : "Offer this section to one batch first. You can attach more batches after saving."}
+              </p>
             </div>
 
             <div className="lg:col-span-2">
@@ -806,12 +941,12 @@ export default function ManualOfferingPageClient() {
             </div>
           </div>
 
-          {batchId ? (
+          {batchIds.length > 0 ? (
             <div className="rounded-3xl border border-amber-200 bg-amber-50 p-5">
               <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <h3 className="font-bold text-amber-900">
-                    Availability warning for selected batch
+                    Availability warning for selected batch(es)
                   </h3>
                   <p className="mt-1 text-sm text-amber-800">
                     {loadingAvailability
@@ -1103,7 +1238,7 @@ export default function ManualOfferingPageClient() {
                 submitting ||
                 !termName ||
                 !programCode ||
-                !batchId ||
+                batchIds.length === 0 ||
                 !masterCourseId ||
                 !section ||
                 selectedOffering?.status === "CONFIRMED"
@@ -1142,8 +1277,8 @@ export default function ManualOfferingPageClient() {
               Manual Additions for Selected Term
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              Edit or delete a mistaken manual section before the offering becomes
-              CONFIRMED.
+              Edit the saved section, attach another eligible batch to the same
+              class and schedule, or delete it before the offering becomes CONFIRMED.
             </p>
           </div>
 
@@ -1221,6 +1356,24 @@ export default function ManualOfferingPageClient() {
                         type="button"
                         disabled={
                           !row.isManualAddition ||
+                          row.offeringStatus === "CONFIRMED" ||
+                          submitting ||
+                          deletingId !== null ||
+                          savingAddBatch
+                        }
+                        onClick={() => startAddBatch(row)}
+                        className="rounded-xl bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Attach another eligible batch to this same course section and schedule."
+                      >
+                        {loadingAddBatch && addBatchCourseId === row.offeredCourseId
+                          ? "Loading..."
+                          : "Add Batch"}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={
+                          !row.isManualAddition ||
                           deletingId === row.offeredCourseId ||
                           row.offeringStatus === "CONFIRMED" ||
                           submitting
@@ -1240,6 +1393,66 @@ export default function ManualOfferingPageClient() {
                           : "Delete"}
                       </button>
                     </div>
+
+                    {addBatchCourseId === row.offeredCourseId ? (
+                      <div className="mt-3 min-w-64 rounded-xl border border-violet-200 bg-violet-50 p-3">
+                        <div className="text-xs font-semibold text-violet-900">
+                          Add another batch to {row.courseCode} Sec-{row.section}
+                        </div>
+
+                        <select
+                          value={addBatchId}
+                          onChange={(e) => setAddBatchId(e.target.value)}
+                          disabled={loadingAddBatch || savingAddBatch}
+                          className="mt-2 w-full rounded-lg border bg-white px-2 py-2 text-xs"
+                        >
+                          <option value="">Select eligible batch</option>
+                          {addBatchOptions.map((batch) => (
+                            <option key={batch.id} value={batch.id}>
+                              {batch.batchCode}
+                              {batch.admissionTerm
+                                ? ` | ${batch.admissionTerm}`
+                                : ""}
+                            </option>
+                          ))}
+                        </select>
+
+                        {!loadingAddBatch && !addBatchOptions.length ? (
+                          <div className="mt-2 text-xs text-slate-600">
+                            No additional eligible batch is available.
+                          </div>
+                        ) : null}
+
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleAddBatch(row)}
+                            disabled={
+                              savingAddBatch ||
+                              loadingAddBatch ||
+                              !addBatchId
+                            }
+                            className="rounded-lg bg-violet-700 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-800 disabled:opacity-50"
+                          >
+                            {savingAddBatch ? "Checking..." : "Attach Batch"}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={cancelAddBatch}
+                            disabled={savingAddBatch}
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+
+                        <p className="mt-2 text-[11px] leading-4 text-violet-800">
+                          The system checks course eligibility and schedule conflicts
+                          for the new batch before creating the batch link.
+                        </p>
+                      </div>
+                    ) : null}
                   </td>
                 </tr>
               ))}

@@ -212,7 +212,18 @@ export async function POST(req: NextRequest) {
 
     const termName = normalizeUpper(body.termName);
     const programCode = normalizeUpper(body.programCode);
-    const batchId = toNumber(body.batchId);
+    const rawBatchIds: unknown[] =
+      Array.isArray(body.batchIds)
+        ? body.batchIds
+        : [body.batchId];
+
+    const batchIds: number[] = Array.from(
+      new Set(
+        rawBatchIds
+          .map((value: unknown) => toNumber(value))
+          .filter((value): value is number => value !== null)
+      )
+    );
     const masterCourseId = toNumber(body.masterCourseId);
     const targetOfferingId = toNumber(body.targetOfferingId);
     const section = normalizeUpper(body.section || "1");
@@ -220,11 +231,27 @@ export async function POST(req: NextRequest) {
     const loadType = normalizeUpper(body.loadType || "MANUAL");
     const slots: SlotInput[] = Array.isArray(body.slots) ? body.slots : [];
 
-    if (!termName || !programCode || !batchId || !masterCourseId || !section) {
+    if (
+      !termName ||
+      !programCode ||
+      batchIds.length === 0 ||
+      !masterCourseId ||
+      !section
+    ) {
       return NextResponse.json(
         {
           error:
             "termName, programCode, batchId, masterCourseId, and section are required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (batchIds.length !== 1) {
+      return NextResponse.json(
+        {
+          error:
+            "Create the manual offering for one batch first. Use Add Batch after the offered course is saved.",
         },
         { status: 400 }
       );
@@ -239,13 +266,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const [term, batch, masterCourse] = await Promise.all([
+    const [term, selectedBatches, masterCourse] = await Promise.all([
       prisma.academic_terms.findFirst({
         where: { name: termName },
         select: { id: true, name: true },
       }),
-      prisma.batches.findUnique({
-        where: { id: batchId },
+      prisma.batches.findMany({
+        where: { id: { in: batchIds } },
         select: { id: true, program_id: true, batch_code: true },
       }),
       prisma.master_courses.findUnique({
@@ -268,139 +295,117 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!batch || !resolved.candidateIds.includes(batch.program_id)) {
+    if (selectedBatches.length !== batchIds.length) {
       return NextResponse.json(
-        { error: "Selected batch does not belong to selected program identity." },
+        { error: "One or more selected batches were not found." },
         { status: 400 }
       );
     }
 
+    const invalidBatch = selectedBatches.find(
+      (batch) => !resolved.candidateIds.includes(batch.program_id)
+    );
 
-    const excludedBatchIds =
-      await getExcludedBatchIdsForTerm(
-        term.id,
-        [batch.id]
-      );
-
-    if (excludedBatchIds.has(batch.id)) {
+    if (invalidBatch) {
       return NextResponse.json(
         {
-          error:
-            "Selected batch is excluded from course offering for this academic term.",
+          error: `Batch ${invalidBatch.batch_code} does not belong to the selected program identity.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    const excludedBatchIds = await getExcludedBatchIdsForTerm(term.id, batchIds);
+    const excludedBatch = selectedBatches.find((batch) =>
+      excludedBatchIds.has(batch.id)
+    );
+
+    if (excludedBatch) {
+      return NextResponse.json(
+        {
+          error: `Batch ${excludedBatch.batch_code} is excluded from course offering for this academic term.`,
         },
         { status: 409 }
       );
     }
 
-    if (
-      !masterCourse ||
-      !resolved.candidateIds.includes(masterCourse.program_id)
-    ) {
+    if (!masterCourse || !resolved.candidateIds.includes(masterCourse.program_id)) {
       return NextResponse.json(
         { error: "Selected course does not belong to selected program identity." },
         { status: 400 }
       );
     }
-    /*
-     * Normal manual offering must not re-offer a course that
-     * this logical batch has completed or is currently taking.
-     */
-    const logicalBatchRows = await prisma.batches.findMany({
-      where: {
-        program_id: {
-          in: resolved.candidateIds,
-        },
-        batch_code: batch.batch_code,
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    const logicalBatchIds = logicalBatchRows.map(
-      (item) => item.id
-    );
-
-    const [completedCourses, ongoingCourses] = await Promise.all([
-      prisma.batch_completed_courses.findMany({
-        where: {
-          batch_id: {
-            in: logicalBatchIds,
-          },
-        },
-        select: {
-          course_code: true,
-          course_title: true,
-          normalized_title: true,
-        },
-      }),
-
-      prisma.batch_current_registrations.findMany({
-        where: {
-          batch_id: {
-            in: logicalBatchIds,
-          },
-        },
-        select: {
-          course_code: true,
-          course_title: true,
-          normalized_title: true,
-        },
-      }),
-    ]);
 
     const normalizeEligibilityCode = (value: unknown) =>
-      String(value || "")
-        .replace(/\s+/g, "")
-        .trim()
-        .toUpperCase();
+      String(value || "").replace(/\s+/g, "").trim().toUpperCase();
 
     const normalizeEligibilityTitle = (value: unknown) =>
-      String(value || "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .toLowerCase();
+      String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
 
-    const selectedCourseCode =
-      normalizeEligibilityCode(masterCourse.course_code);
+    const selectedCourseCode = normalizeEligibilityCode(masterCourse.course_code);
+    const selectedCourseTitle = normalizeEligibilityTitle(masterCourse.course_title);
 
-    const selectedCourseTitle =
-      normalizeEligibilityTitle(masterCourse.course_title);
-
-    const alreadyCompleted = completedCourses.some(
-      (item) =>
-        normalizeEligibilityCode(item.course_code) === selectedCourseCode ||
-        normalizeEligibilityTitle(
-          item.normalized_title || item.course_title
-        ) === selectedCourseTitle
-    );
-
-    if (alreadyCompleted) {
-      return NextResponse.json(
-        {
-          error:
-            "Selected course is already completed by this batch and cannot be added through normal manual offering.",
+    for (const selectedBatch of selectedBatches) {
+      const logicalBatchRows = await prisma.batches.findMany({
+        where: {
+          program_id: { in: resolved.candidateIds },
+          batch_code: selectedBatch.batch_code,
         },
-        { status: 409 }
-      );
-    }
+        select: { id: true },
+      });
 
-    const currentlyOngoing = ongoingCourses.some(
-      (item) =>
-        normalizeEligibilityCode(item.course_code) === selectedCourseCode ||
-        normalizeEligibilityTitle(
-          item.normalized_title || item.course_title
-        ) === selectedCourseTitle
-    );
+      const logicalBatchIds = logicalBatchRows.map((item) => item.id);
 
-    if (currentlyOngoing) {
-      return NextResponse.json(
-        {
-          error:
-            "Selected course is currently ongoing for this batch and cannot be added to the next offering.",
-        },
-        { status: 409 }
+      const [completedCourses, ongoingCourses] = await Promise.all([
+        prisma.batch_completed_courses.findMany({
+          where: { batch_id: { in: logicalBatchIds } },
+          select: {
+            course_code: true,
+            course_title: true,
+            normalized_title: true,
+          },
+        }),
+        prisma.batch_current_registrations.findMany({
+          where: { batch_id: { in: logicalBatchIds } },
+          select: {
+            course_code: true,
+            course_title: true,
+            normalized_title: true,
+          },
+        }),
+      ]);
+
+      const alreadyCompleted = completedCourses.some(
+        (item) =>
+          normalizeEligibilityCode(item.course_code) === selectedCourseCode ||
+          normalizeEligibilityTitle(item.normalized_title || item.course_title) ===
+            selectedCourseTitle
       );
+
+      if (alreadyCompleted) {
+        return NextResponse.json(
+          {
+            error: `Selected course is already completed by batch ${selectedBatch.batch_code}.`,
+          },
+          { status: 409 }
+        );
+      }
+
+      const currentlyOngoing = ongoingCourses.some(
+        (item) =>
+          normalizeEligibilityCode(item.course_code) === selectedCourseCode ||
+          normalizeEligibilityTitle(item.normalized_title || item.course_title) ===
+            selectedCourseTitle
+      );
+
+      if (currentlyOngoing) {
+        return NextResponse.json(
+          {
+            error: `Selected course is currently ongoing for batch ${selectedBatch.batch_code}.`,
+          },
+          { status: 409 }
+        );
+      }
     }
 
 
@@ -509,26 +514,40 @@ export async function POST(req: NextRequest) {
         master_course_id: masterCourse.id,
         section,
         offered_course_batches: {
-          some: {
-            batch_id: batch.id,
-          },
+          some: { batch_id: { in: batchIds } },
         },
       },
       select: { id: true },
     });
 
     if (duplicate) {
+      const duplicateBatchLinks = await prisma.offered_course_batches.findMany({
+        where: {
+          offered_course_id: duplicate.id,
+          batch_id: { in: batchIds },
+        },
+        select: { batch_id: true },
+      });
+
+      const duplicateBatchIds = new Set(
+        duplicateBatchLinks.map((item) => item.batch_id)
+      );
+
+      const overlapping = selectedBatches
+        .filter((batch) => duplicateBatchIds.has(batch.id))
+        .map((batch) => batch.batch_code)
+        .join(", ");
+
       return NextResponse.json(
         {
-          error:
-            "This course, section, and batch already exists in the selected offering.",
+          error: `This course and section already exists for selected batch(es): ${overlapping || "unknown"}. Edit the existing offered course to add more batches.`,
         },
         { status: 409 }
       );
     }
 
     for (const slot of cleanSlots) {
-      const existingSlots = await prisma.offered_course_slots.findMany({
+      const roomSlots = await prisma.offered_course_slots.findMany({
         where: {
           day_of_week: slot.dayOfWeek,
           room_id: slot.roomId!,
@@ -540,17 +559,12 @@ export async function POST(req: NextRequest) {
           },
         },
         include: {
-          offered_courses: {
-            include: {
-              master_courses: true,
-              offerings: true,
-            },
-          },
+          offered_courses: { include: { master_courses: true } },
           rooms: true,
         },
       });
 
-      const conflict = existingSlots.find((existing) =>
+      const roomConflict = roomSlots.find((existing) =>
         hasTimeOverlap(
           slot.startTime,
           slot.endTime,
@@ -559,13 +573,118 @@ export async function POST(req: NextRequest) {
         )
       );
 
-      if (conflict) {
+      if (roomConflict) {
         return NextResponse.json(
           {
-            error: `Room conflict: ${conflict.rooms.room_code} already has ${conflict.offered_courses.master_courses.course_code} Sec-${conflict.offered_courses.section} at ${conflict.day_of_week} ${conflict.start_time}-${conflict.end_time}.`,
+            error: `Room conflict: ${roomConflict.rooms.room_code} already has ${roomConflict.offered_courses.master_courses.course_code} Sec-${roomConflict.offered_courses.section} at ${roomConflict.day_of_week} ${roomConflict.start_time}-${roomConflict.end_time}.`,
           },
           { status: 409 }
         );
+      }
+
+      const batchSlots = await prisma.offered_course_slots.findMany({
+        where: {
+          day_of_week: slot.dayOfWeek,
+          offered_courses: {
+            offerings: {
+              academic_term_id: term.id,
+              status: { in: SCHEDULE_CONFLICT_STATUSES },
+            },
+            offered_course_batches: {
+              some: { batch_id: { in: batchIds } },
+            },
+          },
+        },
+        select: {
+          offered_course_id: true,
+          day_of_week: true,
+          start_time: true,
+          end_time: true,
+        },
+      });
+
+      const batchConflict = batchSlots.find((existing) =>
+        hasTimeOverlap(
+          slot.startTime,
+          slot.endTime,
+          existing.start_time,
+          existing.end_time
+        )
+      );
+
+      if (batchConflict) {
+        const [conflictingCourse, conflictBatchLinks] = await Promise.all([
+          prisma.offered_courses.findUnique({
+            where: { id: batchConflict.offered_course_id },
+            select: {
+              section: true,
+              master_courses: {
+                select: { course_code: true },
+              },
+            },
+          }),
+          prisma.offered_course_batches.findMany({
+            where: {
+              offered_course_id: batchConflict.offered_course_id,
+              batch_id: { in: batchIds },
+            },
+            select: { batch_id: true },
+          }),
+        ]);
+
+        const conflictBatchIds = new Set(
+          conflictBatchLinks.map((item) => item.batch_id)
+        );
+
+        const conflictingBatches = selectedBatches
+          .filter((batch) => conflictBatchIds.has(batch.id))
+          .map((batch) => batch.batch_code)
+          .join(", ");
+
+        return NextResponse.json(
+          {
+            error: `Batch schedule conflict for batch(es) ${conflictingBatches || "unknown"}: ${conflictingCourse?.master_courses.course_code || "course"} Sec-${conflictingCourse?.section || "-"} already runs ${batchConflict.day_of_week} ${batchConflict.start_time}-${batchConflict.end_time}.`,
+          },
+          { status: 409 }
+        );
+      }
+
+      if (teacherId) {
+        const teacherSlots = await prisma.offered_course_slots.findMany({
+          where: {
+            day_of_week: slot.dayOfWeek,
+            offered_courses: {
+              offerings: {
+                academic_term_id: term.id,
+                status: { in: SCHEDULE_CONFLICT_STATUSES },
+              },
+              offered_course_teachers: {
+                some: { teacher_id: teacherId },
+              },
+            },
+          },
+          include: {
+            offered_courses: { include: { master_courses: true } },
+          },
+        });
+
+        const teacherConflict = teacherSlots.find((existing) =>
+          hasTimeOverlap(
+            slot.startTime,
+            slot.endTime,
+            existing.start_time,
+            existing.end_time
+          )
+        );
+
+        if (teacherConflict) {
+          return NextResponse.json(
+            {
+              error: `Faculty schedule conflict: selected faculty already has ${teacherConflict.offered_courses.master_courses.course_code} Sec-${teacherConflict.offered_courses.section} at ${teacherConflict.day_of_week} ${teacherConflict.start_time}-${teacherConflict.end_time}.`,
+            },
+            { status: 409 }
+          );
+        }
       }
     }
 
@@ -580,11 +699,11 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      await tx.offered_course_batches.create({
-        data: {
+      await tx.offered_course_batches.createMany({
+        data: batchIds.map((batchId) => ({
           offered_course_id: offeredCourse.id,
-          batch_id: batch.id,
-        },
+          batch_id: batchId,
+        })),
       });
 
       for (const slot of cleanSlots) {
@@ -618,7 +737,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Manual offered course added successfully into offering #${offering.id} (${offering.status}).`,
+      message: `Manual offered course added for batch ${selectedBatches[0].batch_code} into offering #${offering.id} (${offering.status}).`,
       offeredCourseId: created.id,
       offeringId: offering.id,
       offeringStatus: offering.status,

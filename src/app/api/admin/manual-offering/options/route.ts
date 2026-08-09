@@ -187,7 +187,14 @@ export async function GET(req: NextRequest) {
 
     const programCode = normalizeUpper(searchParams.get("programCode"));
     const termName = normalizeUpper(searchParams.get("termName"));
-    const selectedBatchId = Number(searchParams.get("batchId") || 0);
+    const selectedBatchIds = Array.from(
+      new Set(
+        String(searchParams.get("batchIds") || searchParams.get("batchId") || "")
+          .split(",")
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value > 0)
+      )
+    );
 
     const [terms, rooms, teachers, catalogProgramsFromDb] = await Promise.all([
       prisma.academic_terms.findMany({
@@ -397,33 +404,33 @@ export async function GET(req: NextRequest) {
     }
     let eligibleCourses = [...bestCourseByCode.values()];
 
-    if (selectedBatchId > 0) {
-      const selectedBatch = eligibleBatches.find(
-        (batch) => batch.id === selectedBatchId
+    if (selectedBatchIds.length > 0) {
+      const selectedBatches = eligibleBatches.filter((batch) =>
+        selectedBatchIds.includes(batch.id)
       );
 
-      if (!selectedBatch) {
+      if (selectedBatches.length !== selectedBatchIds.length) {
         eligibleCourses = [];
       } else {
         /*
-         * Historical and canonical program rows can contain the
-         * same logical batch. Check all matching batch IDs so the
-         * completion/ongoing history remains authoritative.
+         * Every selected batch will attend the SAME offered course section.
+         * Therefore a course is eligible only when none of the selected logical
+         * batches has completed it or is currently taking it.
          */
+        const selectedBatchCodes = new Set(
+          selectedBatches.map((batch) => String(batch.batch_code || "").trim())
+        );
+
         const logicalBatchIds = rawBatches
-          .filter(
-            (batch) =>
-              String(batch.batch_code || "").trim() ===
-              String(selectedBatch.batch_code || "").trim()
+          .filter((batch) =>
+            selectedBatchCodes.has(String(batch.batch_code || "").trim())
           )
           .map((batch) => batch.id);
 
         const [completedCourses, ongoingCourses] = await Promise.all([
           prisma.batch_completed_courses.findMany({
             where: {
-              batch_id: {
-                in: logicalBatchIds,
-              },
+              batch_id: { in: logicalBatchIds },
             },
             select: {
               course_code: true,
@@ -431,12 +438,9 @@ export async function GET(req: NextRequest) {
               normalized_title: true,
             },
           }),
-
           prisma.batch_current_registrations.findMany({
             where: {
-              batch_id: {
-                in: logicalBatchIds,
-              },
+              batch_id: { in: logicalBatchIds },
             },
             select: {
               course_code: true,
@@ -459,30 +463,23 @@ export async function GET(req: NextRequest) {
             .toLowerCase();
 
         eligibleCourses = eligibleCourses.filter((course) => {
-          const courseCode =
-            normalizeEligibilityCode(course.course_code);
-
-          const courseTitle =
-            normalizeEligibilityTitle(course.course_title);
+          const courseCode = normalizeEligibilityCode(course.course_code);
+          const courseTitle = normalizeEligibilityTitle(course.course_title);
 
           const completed = completedCourses.some(
             (item) =>
               normalizeEligibilityCode(item.course_code) === courseCode ||
-              normalizeEligibilityTitle(
-                item.normalized_title || item.course_title
-              ) === courseTitle
+              normalizeEligibilityTitle(item.normalized_title || item.course_title) ===
+                courseTitle
           );
 
-          if (completed) {
-            return false;
-          }
+          if (completed) return false;
 
           const ongoing = ongoingCourses.some(
             (item) =>
               normalizeEligibilityCode(item.course_code) === courseCode ||
-              normalizeEligibilityTitle(
-                item.normalized_title || item.course_title
-              ) === courseTitle
+              normalizeEligibilityTitle(item.normalized_title || item.course_title) ===
+                courseTitle
           );
 
           return !ongoing;
