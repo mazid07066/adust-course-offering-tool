@@ -15,7 +15,10 @@ type RouteContext = {
 };
 
 function normalizeText(value: unknown) {
-  return String(value ?? "").replace(/\s+/g, " ").trim().toUpperCase();
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
 }
 
 function isSlotOptionalCourse(course: {
@@ -24,8 +27,13 @@ function isSlotOptionalCourse(course: {
     course_type?: string | null;
   };
 }) {
-  const title = normalizeText(course.master_courses.course_title);
-  const type = normalizeText(course.master_courses.course_type);
+  const title = normalizeText(
+    course.master_courses.course_title
+  );
+
+  const type = normalizeText(
+    course.master_courses.course_type
+  );
 
   return (
     type.includes("PROJECT") ||
@@ -40,163 +48,309 @@ function isSlotOptionalCourse(course: {
   );
 }
 
-export async function POST(_req: NextRequest, context: RouteContext) {
-  const guard = await requireCoordinatorOrAdminApi();
-  if (guard instanceof Response) return guard;
+export async function POST(
+  _req: NextRequest,
+  context: RouteContext
+) {
+  const guard =
+    await requireCoordinatorOrAdminApi();
+
+  if (guard instanceof Response) {
+    return guard;
+  }
 
   try {
-    const params = await context.params;
-    const offeringId = Number(params.id);
+    const params =
+      await context.params;
 
-    if (!offeringId || Number.isNaN(offeringId)) {
-      clearReportingCacheWithLog("offering/reporting data changed");
+    const offeringId =
+      Number(params.id);
+
+    if (
+      !offeringId ||
+      Number.isNaN(offeringId)
+    ) {
+      clearReportingCacheWithLog(
+        "offering/reporting data changed"
+      );
+
       return NextResponse.json(
-        { ok: false, error: "Valid offering id is required." },
-        { status: 400 }
+        {
+          ok: false,
+          error:
+            "Valid offering id is required.",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
-    const offering = await prisma.offerings.findUnique({
-      where: {
-        id: offeringId,
-      },
-      include: {
-        academic_terms: true,
-        programs: true,
-        offered_courses: {
-          include: {
-            master_courses: true,
-            offered_course_batches: true,
-            offered_course_slots: true,
+    const offering =
+      await prisma.offerings.findUnique({
+        where: {
+          id: offeringId,
+        },
+
+        include: {
+          academic_terms: true,
+          programs: true,
+
+          offered_courses: {
+            include: {
+              master_courses: true,
+              offered_course_batches:
+                true,
+              offered_course_slots:
+                true,
+            },
           },
         },
-      },
-    });
+      });
 
     if (!offering) {
-      clearReportingCacheWithLog("offering/reporting data changed");
+      clearReportingCacheWithLog(
+        "offering/reporting data changed"
+      );
+
       return NextResponse.json(
-        { ok: false, error: "Offering not found." },
-        { status: 404 }
+        {
+          ok: false,
+          error:
+            "Offering not found.",
+        },
+        {
+          status: 404,
+        }
       );
     }
 
-    const currentStatus = normalizeText(offering.status);
+    const currentStatus =
+      normalizeText(
+        offering.status
+      );
 
-    if (currentStatus === OFFERING_STATUS.FACULTY_CHOICE_BUFFER) {
-      clearReportingCacheWithLog("offering/reporting data changed");
+    if (
+      currentStatus ===
+      OFFERING_STATUS.FACULTY_CHOICE_BUFFER
+    ) {
+      clearReportingCacheWithLog(
+        "offering/reporting data changed"
+      );
+
       return NextResponse.json({
         ok: true,
-        message: "Offering is already open for faculty choice.",
+
+        message:
+          "Offering is already open for faculty choice.",
+
         offering: {
           id: offering.id,
-          status: offering.status,
-          termName: offering.academic_terms.name,
-          programCode: offering.programs.short_name,
+          status:
+            offering.status,
+          termName:
+            offering
+              .academic_terms
+              .name,
+          programCode:
+            offering
+              .programs
+              .short_name,
         },
       });
     }
 
     if (
-      currentStatus !== OFFERING_STATUS.DRAFT &&
-      currentStatus !== OFFERING_STATUS.BUFFER_READY
+      currentStatus !==
+        OFFERING_STATUS.DRAFT &&
+      currentStatus !==
+        OFFERING_STATUS.BUFFER_READY
     ) {
-      clearReportingCacheWithLog("offering/reporting data changed");
+      clearReportingCacheWithLog(
+        "offering/reporting data changed"
+      );
+
       return NextResponse.json(
         {
           ok: false,
-          error: `Only DRAFT or BUFFER_READY offerings can be opened for faculty choice. Current status: ${offering.status}`,
+
+          error:
+            `Only DRAFT or BUFFER_READY offerings can be opened for faculty choice. Current status: ${offering.status}`,
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
-    const blockers: string[] = [];
+    const blockers: string[] =
+      [];
 
-    if (offering.academic_terms.name !== "SUMMER 2026") {
-      blockers.push("Only SUMMER 2026 is allowed for the current faculty-choice release.");
+    /*
+     * Faculty choice may only be opened for
+     * the academic term currently designated
+     * as the system current term.
+     *
+     * This replaces the old hard-coded
+     * SUMMER 2026 restriction and allows
+     * FALL 2026 now, while remaining valid
+     * for later semesters.
+     */
+    if (
+      !Boolean(
+        offering
+          .academic_terms
+          .is_current
+      )
+    ) {
+      blockers.push(
+        `Only the current academic term can be opened for faculty choice. ${offering.academic_terms.name} is not the current term.`
+      );
     }
 
-    if (offering.offered_courses.length === 0) {
-      blockers.push("Cannot open an empty offering for faculty choice.");
+    if (
+      offering
+        .offered_courses
+        .length === 0
+    ) {
+      blockers.push(
+        "Cannot open an empty offering for faculty choice."
+      );
     }
 
-    for (const course of offering.offered_courses) {
-      const isPrimary = !course.primary_offered_course_id;
-      const slotOptional = isSlotOptionalCourse(course);
+    for (
+      const course
+      of offering.offered_courses
+    ) {
+      const isPrimary =
+        !course
+          .primary_offered_course_id;
 
-      if (course.offered_course_batches.length === 0) {
+      const slotOptional =
+        isSlotOptionalCourse(
+          course
+        );
+
+      if (
+        course
+          .offered_course_batches
+          .length === 0
+      ) {
         blockers.push(
           `${course.master_courses.course_code} Sec-${course.section}: no batch assigned.`
         );
       }
 
-      if (isPrimary && !slotOptional && course.offered_course_slots.length === 0) {
+      if (
+        isPrimary &&
+        !slotOptional &&
+        course
+          .offered_course_slots
+          .length === 0
+      ) {
         blockers.push(
           `${course.master_courses.course_code} Sec-${course.section}: no meeting slot assigned.`
         );
       }
     }
 
-    if (blockers.length > 0) {
-      clearReportingCacheWithLog("offering/reporting data changed");
+    if (
+      blockers.length > 0
+    ) {
+      clearReportingCacheWithLog(
+        "offering/reporting data changed"
+      );
+
       return NextResponse.json(
         {
           ok: false,
-          error: "Offering is not ready for faculty choice.",
+
+          error:
+            "Offering is not ready for faculty choice.",
+
           blockers,
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
-    const updated = await prisma.offerings.update({
-      where: {
-        id: offeringId,
-      },
-      data: {
-        status: OFFERING_STATUS.FACULTY_CHOICE_BUFFER,
-      },
-      select: {
-        id: true,
-        status: true,
-        academic_terms: {
-          select: {
-            name: true,
-          },
+    const updated =
+      await prisma.offerings.update({
+        where: {
+          id: offeringId,
         },
-        programs: {
-          select: {
-            short_name: true,
-          },
-        },
-      },
-    });
 
-    clearReportingCacheWithLog("offering/reporting data changed");
+        data: {
+          status:
+            OFFERING_STATUS.FACULTY_CHOICE_BUFFER,
+        },
+
+        select: {
+          id: true,
+          status: true,
+
+          academic_terms: {
+            select: {
+              name: true,
+            },
+          },
+
+          programs: {
+            select: {
+              short_name: true,
+            },
+          },
+        },
+      });
+
+    clearReportingCacheWithLog(
+      "offering/reporting data changed"
+    );
+
     return NextResponse.json({
       ok: true,
-      message: "Offering is now open for faculty choice.",
+
+      message:
+        "Offering is now open for faculty choice.",
+
       offering: {
         id: updated.id,
-        status: updated.status,
-        termName: updated.academic_terms.name,
-        programCode: updated.programs.short_name,
+        status:
+          updated.status,
+        termName:
+          updated
+            .academic_terms
+            .name,
+        programCode:
+          updated
+            .programs
+            .short_name,
       },
     });
   } catch (error) {
-    console.error("Publish draft offering error:", error);
+    console.error(
+      "Publish draft offering error:",
+      error
+    );
 
-    clearReportingCacheWithLog("offering/reporting data changed");
+    clearReportingCacheWithLog(
+      "offering/reporting data changed"
+    );
+
     return NextResponse.json(
       {
         ok: false,
+
         error:
           error instanceof Error
             ? error.message
             : "Failed to open offering for faculty choice.",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }

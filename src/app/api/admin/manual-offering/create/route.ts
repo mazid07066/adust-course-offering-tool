@@ -8,6 +8,7 @@ import {
 } from "@/lib/course-schedule-policy";
 import { getCatalogProgramByCode } from "@/lib/academic-catalog";
 import { resolveCanonicalProgram } from "@/lib/canonical-program";
+import { getExcludedBatchIdsForTerm } from "@/lib/batch-term-offering-status";
 
 type SlotInput = {
   dayOfWeek?: string;
@@ -71,8 +72,8 @@ function uniqueById<T extends { id: number }>(rows: T[]) {
 }
 
 function sourcePriority(source: ProgramCandidate["source"]) {
-  if (source === "EXACT_PROGRAM_CODE") return 1;
-  if (source === "CANONICAL_PROGRAM") return 2;
+  if (source === "CANONICAL_PROGRAM") return 1;
+  if (source === "EXACT_PROGRAM_CODE") return 2;
   return 3;
 }
 
@@ -271,6 +272,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "Selected batch does not belong to selected program identity." },
         { status: 400 }
+      );
+    }
+
+
+    const excludedBatchIds =
+      await getExcludedBatchIdsForTerm(
+        term.id,
+        [batch.id]
+      );
+
+    if (excludedBatchIds.has(batch.id)) {
+      return NextResponse.json(
+        {
+          error:
+            "Selected batch is excluded from course offering for this academic term.",
+        },
+        { status: 409 }
       );
     }
 

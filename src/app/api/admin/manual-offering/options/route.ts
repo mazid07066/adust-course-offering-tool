@@ -6,6 +6,7 @@ import {
   getCatalogProgramOptions,
 } from "@/lib/academic-catalog";
 import { resolveCanonicalProgram } from "@/lib/canonical-program";
+import { getExcludedBatchIdsForTerm } from "@/lib/batch-term-offering-status";
 
 type ProgramCandidate = {
   id: number;
@@ -35,8 +36,8 @@ function uniqueById<T extends { id: number }>(rows: T[]) {
 }
 
 function sourcePriority(source: ProgramCandidate["source"]) {
-  if (source === "EXACT_PROGRAM_CODE") return 1;
-  if (source === "CANONICAL_PROGRAM") return 2;
+  if (source === "CANONICAL_PROGRAM") return 1;
+  if (source === "EXACT_PROGRAM_CODE") return 2;
   return 3;
 }
 
@@ -246,7 +247,7 @@ export async function GET(req: NextRequest) {
             programName: item.program_title,
             departmentCode: item.department_code,
             departmentName: item.department_name,
-            displayLabel: `${item.program_code} — ${item.display_label}`,
+            displayLabel: `${item.program_code} Ã¢â‚¬â€ ${item.display_label}`,
           }))
         : getCatalogProgramOptions().map((item, index) => ({
             id: index + 1,
@@ -254,7 +255,7 @@ export async function GET(req: NextRequest) {
             programName: item.programTitle,
             departmentCode: item.departmentCode,
             departmentName: item.departmentName,
-            displayLabel: `${item.programCode} — ${item.displayLabel}`,
+            displayLabel: `${item.programCode} Ã¢â‚¬â€ ${item.displayLabel}`,
           }));
 
     const selectedTerm = termName
@@ -359,6 +360,20 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const deduplicatedBatches = [...bestBatchByCode.values()];
+
+    const excludedBatchIds =
+      selectedTerm && deduplicatedBatches.length > 0
+        ? await getExcludedBatchIdsForTerm(
+            selectedTerm.id,
+            deduplicatedBatches.map((batch) => batch.id)
+          )
+        : new Set<number>();
+
+    const eligibleBatches = deduplicatedBatches.filter(
+      (batch) => !excludedBatchIds.has(batch.id)
+    );
+
     const bestCourseByCode = new Map<string, (typeof rawCourses)[number]>();
     for (const course of rawCourses) {
       const code = String(course.course_code || "").replace(/\s+/g, "").toUpperCase();
@@ -406,7 +421,7 @@ export async function GET(req: NextRequest) {
         programName: item.name,
         source: item.source,
       })),
-      batches: [...bestBatchByCode.values()].map((batch) => ({
+      batches: eligibleBatches.map((batch) => ({
         id: batch.id,
         batchCode: batch.batch_code,
         admissionTerm: batch.admission_term,
@@ -433,7 +448,7 @@ export async function GET(req: NextRequest) {
         designation: teacher.designation,
         seniorityLevel: teacher.seniority_level,
         departmentCode: teacher.departments?.short_name || "-",
-        displayLabel: `${teacher.teacher_code} — ${teacher.full_name}`,
+        displayLabel: `${teacher.teacher_code} Ã¢â‚¬â€ ${teacher.full_name}`,
       })),
       existingOfferings: sortedOfferings.map((offering) => ({
         id: offering.id,

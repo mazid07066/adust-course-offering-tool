@@ -290,7 +290,7 @@ async function resolveTargetProgram(requestedProgramCode: string) {
   }
 
   const finalCandidates = uniqueById(candidates);
-  const primaryProgram = exactProgram || canonicalProgram;
+  const primaryProgram = canonicalProgram;
 
   return {
     requestedProgramCode,
