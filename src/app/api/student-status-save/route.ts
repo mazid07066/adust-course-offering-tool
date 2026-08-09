@@ -1,4 +1,4 @@
-import {
+﻿import {
   NextRequest,
   NextResponse,
 } from "next/server";
@@ -849,6 +849,24 @@ export async function POST(
       );
     }
 
+    // ================================================================
+    // ROLLOVER ARCHIVE PROTECTION
+    //
+    // Normal path:
+    //   The state represented by the uploaded registration term must
+    //   already be protected by a FINALIZED rollover archive.
+    //
+    // Recovery path:
+    //   A historically missed batch may be exactly one refresh behind.
+    //   In that case, its CURRENT live registration term must:
+    //     1. be protected by a FINALIZED rollover archive,
+    //     2. be exactly one academic term before the uploaded
+    //        registration term.
+    //
+    // This preserves the archive safety rule while allowing a controlled
+    // one-semester catch-up. It does not permit arbitrary archive bypasses.
+    // ================================================================
+
     const finalizedArchives =
       await prisma
         .semester_archives
@@ -869,10 +887,15 @@ export async function POST(
           select: {
             id: true,
             snapshot_json: true,
+            academic_terms: {
+              select: {
+                name: true,
+              },
+            },
           },
         });
 
-    const protectedByArchive =
+    const protectedByNormalArchive =
       finalizedArchives.some(
         (archive) =>
           archiveContainsBatch(
@@ -881,16 +904,165 @@ export async function POST(
           )
       );
 
+    let protectedByRecoveryArchive =
+      false;
+
+    let recoveryArchiveTerm:
+      string | null =
+      null;
+
+    let recoveryArchiveId:
+      number | null =
+      null;
+
+    if (
+      !protectedByNormalArchive
+    ) {
+      const liveRegistrationRows =
+        await prisma
+          .batch_current_registrations
+          .findMany({
+            where: {
+              batch_id:
+                existingBatch.id,
+            },
+
+            select: {
+              academic_terms: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          });
+
+      const liveRegistrationTerms =
+        Array.from(
+          new Set(
+            liveRegistrationRows
+              .map(
+                (row) =>
+                  normalizeUpper(
+                    row.academic_terms
+                      .name
+                  )
+              )
+              .filter(Boolean)
+          )
+        );
+
+      if (
+        liveRegistrationTerms.length ===
+        1
+      ) {
+        const liveRegistrationTerm =
+          liveRegistrationTerms[0];
+
+        const expectedUploadedTerm =
+          getNextTerm(
+            liveRegistrationTerm
+          );
+
+        const isExactlyOneRefreshBehind =
+          expectedUploadedTerm ===
+          currentRegistrationTerm;
+
+        if (
+          isExactlyOneRefreshBehind
+        ) {
+          const recoveryArchives =
+            await prisma
+              .semester_archives
+              .findMany({
+                where: {
+                  status:
+                    "FINALIZED",
+
+                  snapshot_schema:
+                    "semester-rollover-v1",
+
+                  academic_terms: {
+                    name:
+                      liveRegistrationTerm,
+                  },
+                },
+
+                select: {
+                  id: true,
+                  snapshot_json: true,
+                  academic_terms: {
+                    select: {
+                      name: true,
+                    },
+                  },
+                },
+              });
+
+          const protectingRecoveryArchive =
+            recoveryArchives.find(
+              (archive) =>
+                archiveContainsBatch(
+                  archive.snapshot_json,
+                  existingBatch.id
+                )
+            );
+
+          if (
+            protectingRecoveryArchive
+          ) {
+            protectedByRecoveryArchive =
+              true;
+
+            recoveryArchiveTerm =
+              protectingRecoveryArchive
+                .academic_terms.name;
+
+            recoveryArchiveId =
+              protectingRecoveryArchive.id;
+          }
+        }
+      }
+    }
+
+    const protectedByArchive =
+      protectedByNormalArchive ||
+      protectedByRecoveryArchive;
+
     if (
       !protectedByArchive
     ) {
       return NextResponse.json(
         {
           error:
-            `Batch ${batchCode} cannot be refreshed because its ${currentRegistrationTerm} state is not protected by a finalized rollover archive.`,
+            `Batch ${batchCode} cannot be refreshed because its ${currentRegistrationTerm} state is not protected by a finalized rollover archive, and no valid one-semester recovery archive protects its current live state.`,
         },
         {
           status: 409,
+        }
+      );
+    }
+
+    if (
+      protectedByRecoveryArchive
+    ) {
+      console.info(
+        "One-semester batch refresh recovery accepted.",
+        {
+          batchId:
+            existingBatch.id,
+
+          batchCode,
+
+          liveProtectedTerm:
+            recoveryArchiveTerm,
+
+          uploadedRegistrationTerm:
+            currentRegistrationTerm,
+
+          targetCurrentTerm:
+            currentAcademicTerm.name,
+
+          recoveryArchiveId,
         }
       );
     }
