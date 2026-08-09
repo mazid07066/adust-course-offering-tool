@@ -85,12 +85,26 @@ type ManualRow = {
   offeringId: number;
   offeringStatus: string;
   programCode: string;
+  isManualAddition: boolean;
+  masterCourseId: number;
   courseCode: string;
   courseTitle: string;
   section: string;
   credit: number;
+  batchIds: number[];
   batchCodes: string[];
+  teacherId: number | null;
+  loadType: string;
   facultyText: string;
+  slots: Array<{
+    id: number;
+    dayOfWeek: string;
+    startTime: string;
+    endTime: string;
+    roomId: number;
+    roomCode: string;
+    slotType: string;
+  }>;
   scheduleText: string;
 };
 
@@ -214,6 +228,7 @@ export default function ManualOfferingPageClient() {
   const [loadingManualRows, setLoadingManualRows] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -436,7 +451,9 @@ export default function ManualOfferingPageClient() {
   }, [programCode, termName]);
 
   useEffect(() => {
-    setMasterCourseId("");
+    if (editingId === null) {
+      setMasterCourseId("");
+    }
 
     if (programCode && termName && batchId) {
       loadOptions(programCode, termName, batchId);
@@ -463,6 +480,68 @@ export default function ManualOfferingPageClient() {
 
   function removeSlot(index: number) {
     setSlots((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function startEdit(row: ManualRow) {
+    if (!row.isManualAddition) {
+      setError("Only manual additions can be edited from this correction tool.");
+      return;
+    }
+
+    if (row.offeringStatus === "CONFIRMED") {
+      setError("Confirmed offerings are locked and cannot be edited.");
+      return;
+    }
+
+    if (!row.batchIds.length) {
+      setError(
+        "This offered course does not have a batch link and cannot be edited here."
+      );
+      return;
+    }
+
+    setEditingId(row.offeredCourseId);
+    setTargetOfferingId(String(row.offeringId));
+    setBatchId(String(row.batchIds[0]));
+    setMasterCourseId(String(row.masterCourseId));
+    setSection(row.section);
+    setTeacherId(row.teacherId === null ? "" : String(row.teacherId));
+    setLoadType(row.loadType || "MANUAL");
+
+    setSlots(
+      row.slots.length
+        ? row.slots.map((slot) => ({
+            dayOfWeek: slot.dayOfWeek,
+            startTime: slot.startTime,
+            endTime: slot.endTime,
+            roomId: String(slot.roomId),
+            slotType: slot.slotType || "CLASS",
+          }))
+        : [createEmptySlot()]
+    );
+
+    setError("");
+    setMessage(
+      `Editing ${row.courseCode} Sec-${row.section} in offering #${row.offeringId}.`
+    );
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setBatchId("");
+    setMasterCourseId("");
+    setSection("1");
+    setTeacherId("");
+    setLoadType("MANUAL");
+    setSlots([createEmptySlot()]);
+    setAvailability(null);
+    setError("");
+    setMessage("");
   }
 
   async function handleDelete(offeredCourseId: number) {
@@ -507,7 +586,14 @@ export default function ManualOfferingPageClient() {
     setError("");
 
     try {
+      const isEditing = editingId !== null;
+
       const payload = {
+        ...(isEditing
+          ? {
+              offeredCourseId: editingId,
+            }
+          : {}),
         termName,
         programCode,
         targetOfferingId: targetOfferingId || null,
@@ -519,13 +605,18 @@ export default function ManualOfferingPageClient() {
         slots: slotOptional ? slots.filter((slot) => slot.roomId) : slots,
       };
 
-      const res = await fetch("/api/admin/manual-offering/create", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+      const res = await fetch(
+        isEditing
+          ? "/api/admin/manual-offering/update"
+          : "/api/admin/manual-offering/create",
+        {
+          method: isEditing ? "PATCH" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        }
+      );
 
       const json = await res.json();
 
@@ -533,7 +624,14 @@ export default function ManualOfferingPageClient() {
         throw new Error(json.error || "Failed to add manual offered course.");
       }
 
-      setMessage(json.message || "Manual offered course added successfully.");
+      setMessage(
+        json.message ||
+          (editingId !== null
+            ? "Manual offered course updated successfully."
+            : "Manual offered course added successfully.")
+      );
+      setEditingId(null);
+      setBatchId("");
       setMasterCourseId("");
       setSection("1");
       setTeacherId("");
@@ -557,13 +655,27 @@ export default function ManualOfferingPageClient() {
     <div className="space-y-6">
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-xl font-bold text-slate-900">
-          Add Manual Offered Course
+          {editingId !== null
+            ? "Edit Manual Offered Course"
+            : "Add Manual Offered Course"}
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          Add backlog, special, project, replacement, or emergency courses into a
-          selected offering. Choose the exact target offering when more than one
-          offering exists for the same term/program.
+          {editingId !== null
+            ? "Update the batch, course, section, faculty assignment, load type, room, day, or time before the offering becomes confirmed."
+            : "Add backlog, special, project, replacement, or emergency courses into a selected offering. Choose the exact target offering when more than one offering exists for the same term/program."}
         </p>
+
+        {editingId !== null ? (
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <div className="font-semibold">
+              Edit mode is active for offered course #{editingId}.
+            </div>
+            <div className="mt-1">
+              Saving will update the existing offered-course record rather than create
+              another course.
+            </div>
+          </div>
+        ) : null}
 
         {existingOfferings.length ? (
           <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
@@ -984,21 +1096,42 @@ export default function ManualOfferingPageClient() {
             </div>
           ) : null}
 
-          <button
-            type="submit"
-            disabled={
-              submitting ||
-              !termName ||
-              !programCode ||
-              !batchId ||
-              !masterCourseId ||
-              !section ||
-              selectedOffering?.status === "CONFIRMED"
-            }
-            className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-          >
-            {submitting ? "Saving..." : "Add Manual Offered Course"}
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="submit"
+              disabled={
+                submitting ||
+                !termName ||
+                !programCode ||
+                !batchId ||
+                !masterCourseId ||
+                !section ||
+                selectedOffering?.status === "CONFIRMED"
+              }
+              className={`rounded-xl px-5 py-3 text-sm font-semibold text-white disabled:opacity-60 ${
+                editingId !== null
+                  ? "bg-emerald-600 hover:bg-emerald-700"
+                  : "bg-slate-900 hover:bg-slate-800"
+              }`}
+            >
+              {submitting
+                ? "Saving..."
+                : editingId !== null
+                  ? "Save Changes"
+                  : "Add Manual Offered Course"}
+            </button>
+
+            {editingId !== null ? (
+              <button
+                type="button"
+                onClick={cancelEdit}
+                disabled={submitting}
+                className="rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel Edit
+              </button>
+            ) : null}
+          </div>
         </form>
       </div>
 
@@ -1009,7 +1142,8 @@ export default function ManualOfferingPageClient() {
               Manual Additions for Selected Term
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              Delete a mistaken manual section before the offering becomes CONFIRMED.
+              Edit or delete a mistaken manual section before the offering becomes
+              CONFIRMED.
             </p>
           </div>
 
@@ -1061,19 +1195,51 @@ export default function ManualOfferingPageClient() {
                   <td className="border-b px-3 py-2">{row.facultyText}</td>
                   <td className="border-b px-3 py-2">{row.scheduleText}</td>
                   <td className="border-b px-3 py-2">
-                    <button
-                      type="button"
-                      disabled={
-                        deletingId === row.offeredCourseId ||
-                        row.offeringStatus === "CONFIRMED"
-                      }
-                      onClick={() => handleDelete(row.offeredCourseId)}
-                      className="rounded-xl bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-                    >
-                      {deletingId === row.offeredCourseId
-                        ? "Deleting..."
-                        : "Delete"}
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={
+                          !row.isManualAddition ||
+                          row.offeringStatus === "CONFIRMED" ||
+                          submitting ||
+                          deletingId !== null
+                        }
+                        onClick={() => startEdit(row)}
+                        className="rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        title={
+                          !row.isManualAddition
+                            ? "Only manual additions can be edited here."
+                            : row.offeringStatus === "CONFIRMED"
+                              ? "Confirmed offerings are locked."
+                              : "Edit this manual offered course."
+                        }
+                      >
+                        {editingId === row.offeredCourseId ? "Editing" : "Edit"}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={
+                          !row.isManualAddition ||
+                          deletingId === row.offeredCourseId ||
+                          row.offeringStatus === "CONFIRMED" ||
+                          submitting
+                        }
+                        onClick={() => handleDelete(row.offeredCourseId)}
+                        className="rounded-xl bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        title={
+                          !row.isManualAddition
+                            ? "Only manual additions can be deleted here."
+                            : row.offeringStatus === "CONFIRMED"
+                              ? "Confirmed offerings are locked."
+                              : "Delete this manual offered course."
+                        }
+                      >
+                        {deletingId === row.offeredCourseId
+                          ? "Deleting..."
+                          : "Delete"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
