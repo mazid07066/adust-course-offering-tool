@@ -187,6 +187,7 @@ export async function GET(req: NextRequest) {
 
     const programCode = normalizeUpper(searchParams.get("programCode"));
     const termName = normalizeUpper(searchParams.get("termName"));
+    const selectedBatchId = Number(searchParams.get("batchId") || 0);
 
     const [terms, rooms, teachers, catalogProgramsFromDb] = await Promise.all([
       prisma.academic_terms.findMany({
@@ -394,6 +395,101 @@ export async function GET(req: NextRequest) {
         bestCourseByCode.set(code, course);
       }
     }
+    let eligibleCourses = [...bestCourseByCode.values()];
+
+    if (selectedBatchId > 0) {
+      const selectedBatch = eligibleBatches.find(
+        (batch) => batch.id === selectedBatchId
+      );
+
+      if (!selectedBatch) {
+        eligibleCourses = [];
+      } else {
+        /*
+         * Historical and canonical program rows can contain the
+         * same logical batch. Check all matching batch IDs so the
+         * completion/ongoing history remains authoritative.
+         */
+        const logicalBatchIds = rawBatches
+          .filter(
+            (batch) =>
+              String(batch.batch_code || "").trim() ===
+              String(selectedBatch.batch_code || "").trim()
+          )
+          .map((batch) => batch.id);
+
+        const [completedCourses, ongoingCourses] = await Promise.all([
+          prisma.batch_completed_courses.findMany({
+            where: {
+              batch_id: {
+                in: logicalBatchIds,
+              },
+            },
+            select: {
+              course_code: true,
+              course_title: true,
+              normalized_title: true,
+            },
+          }),
+
+          prisma.batch_current_registrations.findMany({
+            where: {
+              batch_id: {
+                in: logicalBatchIds,
+              },
+            },
+            select: {
+              course_code: true,
+              course_title: true,
+              normalized_title: true,
+            },
+          }),
+        ]);
+
+        const normalizeEligibilityCode = (value: unknown) =>
+          String(value || "")
+            .replace(/\s+/g, "")
+            .trim()
+            .toUpperCase();
+
+        const normalizeEligibilityTitle = (value: unknown) =>
+          String(value || "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase();
+
+        eligibleCourses = eligibleCourses.filter((course) => {
+          const courseCode =
+            normalizeEligibilityCode(course.course_code);
+
+          const courseTitle =
+            normalizeEligibilityTitle(course.course_title);
+
+          const completed = completedCourses.some(
+            (item) =>
+              normalizeEligibilityCode(item.course_code) === courseCode ||
+              normalizeEligibilityTitle(
+                item.normalized_title || item.course_title
+              ) === courseTitle
+          );
+
+          if (completed) {
+            return false;
+          }
+
+          const ongoing = ongoingCourses.some(
+            (item) =>
+              normalizeEligibilityCode(item.course_code) === courseCode ||
+              normalizeEligibilityTitle(
+                item.normalized_title || item.course_title
+              ) === courseTitle
+          );
+
+          return !ongoing;
+        });
+      }
+    }
+
 
     const sortedOfferings = [...rawOfferings].sort((a, b) => {
       const statusDiff =
@@ -426,7 +522,7 @@ export async function GET(req: NextRequest) {
         batchCode: batch.batch_code,
         admissionTerm: batch.admission_term,
       })),
-      courses: [...bestCourseByCode.values()].map((course) => ({
+      courses: eligibleCourses.map((course) => ({
         id: course.id,
         courseCode: course.course_code,
         courseTitle: course.course_title,

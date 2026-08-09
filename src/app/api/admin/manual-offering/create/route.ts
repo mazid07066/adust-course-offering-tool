@@ -301,6 +301,108 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+    /*
+     * Normal manual offering must not re-offer a course that
+     * this logical batch has completed or is currently taking.
+     */
+    const logicalBatchRows = await prisma.batches.findMany({
+      where: {
+        program_id: {
+          in: resolved.candidateIds,
+        },
+        batch_code: batch.batch_code,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    const logicalBatchIds = logicalBatchRows.map(
+      (item) => item.id
+    );
+
+    const [completedCourses, ongoingCourses] = await Promise.all([
+      prisma.batch_completed_courses.findMany({
+        where: {
+          batch_id: {
+            in: logicalBatchIds,
+          },
+        },
+        select: {
+          course_code: true,
+          course_title: true,
+          normalized_title: true,
+        },
+      }),
+
+      prisma.batch_current_registrations.findMany({
+        where: {
+          batch_id: {
+            in: logicalBatchIds,
+          },
+        },
+        select: {
+          course_code: true,
+          course_title: true,
+          normalized_title: true,
+        },
+      }),
+    ]);
+
+    const normalizeEligibilityCode = (value: unknown) =>
+      String(value || "")
+        .replace(/\s+/g, "")
+        .trim()
+        .toUpperCase();
+
+    const normalizeEligibilityTitle = (value: unknown) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+
+    const selectedCourseCode =
+      normalizeEligibilityCode(masterCourse.course_code);
+
+    const selectedCourseTitle =
+      normalizeEligibilityTitle(masterCourse.course_title);
+
+    const alreadyCompleted = completedCourses.some(
+      (item) =>
+        normalizeEligibilityCode(item.course_code) === selectedCourseCode ||
+        normalizeEligibilityTitle(
+          item.normalized_title || item.course_title
+        ) === selectedCourseTitle
+    );
+
+    if (alreadyCompleted) {
+      return NextResponse.json(
+        {
+          error:
+            "Selected course is already completed by this batch and cannot be added through normal manual offering.",
+        },
+        { status: 409 }
+      );
+    }
+
+    const currentlyOngoing = ongoingCourses.some(
+      (item) =>
+        normalizeEligibilityCode(item.course_code) === selectedCourseCode ||
+        normalizeEligibilityTitle(
+          item.normalized_title || item.course_title
+        ) === selectedCourseTitle
+    );
+
+    if (currentlyOngoing) {
+      return NextResponse.json(
+        {
+          error:
+            "Selected course is currently ongoing for this batch and cannot be added to the next offering.",
+        },
+        { status: 409 }
+      );
+    }
+
 
     let offering = targetOfferingId
       ? await prisma.offerings.findFirst({
