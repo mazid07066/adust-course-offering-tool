@@ -687,7 +687,7 @@ export default function ManualOfferingPageClient() {
                 <option value="">Select Course</option>
                 {courses.map((course) => (
                   <option key={course.id} value={course.id}>
-                    {course.courseCode} Ã¢â‚¬â€ {course.courseTitle} ({course.credit} cr)
+                    {course.courseCode} - {course.courseTitle} ({course.credit} cr)
                   </option>
                 ))}
               </select>
@@ -809,7 +809,7 @@ export default function ManualOfferingPageClient() {
           {selectedCourse ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
               <div className="font-semibold text-slate-900">
-                {selectedCourse.courseCode} Ã¢â‚¬â€ {selectedCourse.courseTitle}
+            {selectedCourse.courseCode} - {selectedCourse.courseTitle}
               </div>
               <div className="mt-1">
                 Credit: {selectedCourse.credit} | Type: {selectedCourse.courseType} |
