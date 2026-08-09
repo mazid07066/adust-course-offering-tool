@@ -247,7 +247,7 @@ export async function GET(req: NextRequest) {
             programName: item.program_title,
             departmentCode: item.department_code,
             departmentName: item.department_name,
-            displayLabel: `${item.program_code} Ã¢â‚¬â€ ${item.display_label}`,
+            displayLabel: `${item.program_code} - ${item.display_label}`,
           }))
         : getCatalogProgramOptions().map((item, index) => ({
             id: index + 1,
@@ -255,7 +255,7 @@ export async function GET(req: NextRequest) {
             programName: item.programTitle,
             departmentCode: item.departmentCode,
             departmentName: item.departmentName,
-            displayLabel: `${item.programCode} Ã¢â‚¬â€ ${item.displayLabel}`,
+            displayLabel: `${item.programCode} - ${item.displayLabel}`,
           }));
 
     const selectedTerm = termName
@@ -448,7 +448,7 @@ export async function GET(req: NextRequest) {
         designation: teacher.designation,
         seniorityLevel: teacher.seniority_level,
         departmentCode: teacher.departments?.short_name || "-",
-        displayLabel: `${teacher.teacher_code} Ã¢â‚¬â€ ${teacher.full_name}`,
+        displayLabel: `${teacher.teacher_code} - ${teacher.full_name}`,
       })),
       existingOfferings: sortedOfferings.map((offering) => ({
         id: offering.id,
