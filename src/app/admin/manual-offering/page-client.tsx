@@ -140,7 +140,11 @@ type AddBatchResponse = {
   error?: string;
   message?: string;
   batches?: BatchOption[];
-};
+
+  attachedBatches?: Array<{
+    batchId: number;
+    batchCode: string;
+  }>;};
 
 const DAY_OPTIONS = [
   "SATURDAY",
@@ -243,6 +247,21 @@ export default function ManualOfferingPageClient() {
   const [addBatchCourseId, setAddBatchCourseId] = useState<number | null>(null);
   const [addBatchOptions, setAddBatchOptions] = useState<BatchOption[]>([]);
   const [addBatchId, setAddBatchId] = useState("");
+
+  const [removeBatchCourseId, setRemoveBatchCourseId] =
+    useState<number | null>(null);
+
+  const [removeBatchOptions, setRemoveBatchOptions] = useState<
+    Array<{
+      batchId: number;
+      batchCode: string;
+    }>
+  >([]);
+
+  const [removeBatchId, setRemoveBatchId] = useState("");
+
+  const [removingBatch, setRemovingBatch] =
+    useState(false);
   const [loadingAddBatch, setLoadingAddBatch] = useState(false);
   const [savingAddBatch, setSavingAddBatch] = useState(false);
   const [message, setMessage] = useState("");
@@ -675,6 +694,194 @@ export default function ManualOfferingPageClient() {
     }
   }
 
+  async function startRemoveBatch(row: ManualRow) {
+    if (!row.isManualAddition) {
+      setError(
+        "Only manual additions can have a batch removed here."
+      );
+      return;
+    }
+
+    if (row.offeringStatus === "CONFIRMED") {
+      setError(
+        "Confirmed offerings are locked and cannot have a batch removed."
+      );
+      return;
+    }
+
+    if (!programCode) {
+      setError(
+        "Select the academic program first, then use Remove Batch."
+      );
+      return;
+    }
+
+    setRemoveBatchCourseId(
+      row.offeredCourseId
+    );
+
+    setRemoveBatchOptions([]);
+    setRemoveBatchId("");
+    setMessage("");
+    setError("");
+
+    try {
+      const qs =
+        new URLSearchParams({
+          offeredCourseId:
+            String(
+              row.offeredCourseId
+            ),
+          programCode,
+        });
+
+      const res = await fetch(
+        `/api/admin/manual-offering/add-batch?${qs.toString()}`,
+        {
+          cache: "no-store",
+        }
+      );
+
+      const json:
+        AddBatchResponse =
+        await res.json();
+
+      if (!res.ok) {
+        throw new Error(
+          json.error ||
+            "Failed to load attached batches."
+        );
+      }
+
+      const attached =
+        json.attachedBatches || [];
+
+      setRemoveBatchOptions(
+        attached
+      );
+
+      if (attached.length <= 1) {
+        setMessage(
+          `Only one batch is attached to ${row.courseCode} Sec-${row.section}. Delete the course instead if it is no longer required.`
+        );
+      }
+    } catch (err) {
+      setRemoveBatchCourseId(
+        null
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load attached batches."
+      );
+    }
+  }
+
+  function cancelRemoveBatch() {
+    setRemoveBatchCourseId(null);
+    setRemoveBatchOptions([]);
+    setRemoveBatchId("");
+  }
+
+  async function handleRemoveBatch(
+    row: ManualRow
+  ) {
+    if (!removeBatchId) {
+      setError(
+        "Select an attached batch to remove."
+      );
+      return;
+    }
+
+    if (!programCode) {
+      setError(
+        "Select the academic program first."
+      );
+      return;
+    }
+
+    const selected =
+      removeBatchOptions.find(
+        (batch) =>
+          String(batch.batchId) ===
+          removeBatchId
+      );
+
+    if (!selected) {
+      setError(
+        "Selected attached batch was not found."
+      );
+      return;
+    }
+
+    const yes =
+      window.confirm(
+        `Remove batch ${selected.batchCode} from ${row.courseCode} Sec-${row.section}? The course, faculty, room, schedule and co-offering relationship will remain unchanged.`
+      );
+
+    if (!yes) {
+      return;
+    }
+
+    setRemovingBatch(true);
+    setMessage("");
+    setError("");
+
+    try {
+      const res = await fetch(
+        "/api/admin/manual-offering/add-batch",
+        {
+          method: "DELETE",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+
+          body: JSON.stringify({
+            offeredCourseId:
+              row.offeredCourseId,
+
+            programCode,
+
+            batchId:
+              removeBatchId,
+          }),
+        }
+      );
+
+      const json =
+        await res.json();
+
+      if (!res.ok) {
+        throw new Error(
+          json.error ||
+            "Failed to remove batch."
+        );
+      }
+
+      setMessage(
+        json.message ||
+          "Batch removed successfully."
+      );
+
+      cancelRemoveBatch();
+
+      await Promise.all([
+        loadManualRows(),
+        loadAvailability(),
+      ]);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to remove batch."
+      );
+    } finally {
+      setRemovingBatch(false);
+    }
+  }
   async function handleDelete(offeredCourseId: number) {
     const yes = window.confirm(
       "Delete this manually added offered course? This removes its slots, batch link, and teacher assignment."
@@ -797,8 +1004,8 @@ export default function ManualOfferingPageClient() {
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">
           {editingId !== null
-            ? "Update the course, section, faculty assignment, load type, room, day, or time before the offering becomes confirmed. Batch links are managed separately with Add Batch."
-            : "Offer the course to one batch first. After saving, use Add Batch on the row below when another batch should attend the same section and schedule."}
+            ? "Update the course, section, faculty assignment, load type, room, day, or time before the offering becomes confirmed. Batch links are managed separately with Add Batch and Remove Batch."
+            : "Offer the course to one batch first. After saving, use Add Batch or Remove Batch on the row below to manage which batches attend the same section and schedule."}
         </p>
 
         {editingId !== null ? (
@@ -923,7 +1130,7 @@ export default function ManualOfferingPageClient() {
               </select>
               <p className="mt-1 text-xs text-slate-500">
                 {editingId !== null
-                  ? "Existing batch links are preserved during Edit. Use Add Batch from the saved row to attach another batch."
+                  ? "Existing batch links are preserved during Edit. Use Add Batch or Remove Batch from the saved row to manage batch links."
                   : "Offer this section to one batch first. You can attach more batches after saving."}
               </p>
             </div>
@@ -1405,6 +1612,24 @@ export default function ManualOfferingPageClient() {
                         type="button"
                         disabled={
                           !row.isManualAddition ||
+                          row.offeringStatus === "CONFIRMED" ||
+                          submitting ||
+                          deletingId !== null ||
+                          savingAddBatch ||
+                          removingBatch
+                        }
+                        onClick={() =>
+                          startRemoveBatch(row)
+                        }
+                        className="rounded-xl bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Remove one already attached batch while keeping the offered course."
+                      >
+                        Remove Batch
+                      </button>
+                      <button
+                        type="button"
+                        disabled={
+                          !row.isManualAddition ||
                           deletingId === row.offeredCourseId ||
                           row.offeringStatus === "CONFIRMED" ||
                           submitting
@@ -1425,6 +1650,92 @@ export default function ManualOfferingPageClient() {
                       </button>
                     </div>
 
+                    {removeBatchCourseId === row.offeredCourseId ? (
+                      <div className="mt-3 min-w-64 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                        <div className="text-xs font-semibold text-amber-900">
+                          Remove an attached batch from {row.courseCode} Sec-{row.section}
+                        </div>
+
+                        <select
+                          value={removeBatchId}
+                          onChange={(e) =>
+                            setRemoveBatchId(
+                              e.target.value
+                            )
+                          }
+                          disabled={
+                            removingBatch ||
+                            removeBatchOptions.length <= 1
+                          }
+                          className="mt-2 w-full rounded-lg border bg-white px-2 py-2 text-xs"
+                        >
+                          <option value="">
+                            Select attached batch
+                          </option>
+
+                          {removeBatchOptions.map(
+                            (batch) => (
+                              <option
+                                key={
+                                  batch.batchId
+                                }
+                                value={
+                                  batch.batchId
+                                }
+                              >
+                                {
+                                  batch.batchCode
+                                }
+                              </option>
+                            )
+                          )}
+                        </select>
+
+                        {removeBatchOptions.length <= 1 ? (
+                          <div className="mt-2 text-xs text-amber-800">
+                            The final remaining batch cannot be removed here. Delete the complete offered course instead if required.
+                          </div>
+                        ) : null}
+
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleRemoveBatch(
+                                row
+                              )
+                            }
+                            disabled={
+                              removingBatch ||
+                              !removeBatchId ||
+                              removeBatchOptions.length <= 1
+                            }
+                            className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-800 disabled:opacity-50"
+                          >
+                            {removingBatch
+                              ? "Removing..."
+                              : "Remove Batch"}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={
+                              cancelRemoveBatch
+                            }
+                            disabled={
+                              removingBatch
+                            }
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+
+                        <p className="mt-2 text-[11px] leading-4 text-amber-800">
+                          Only the selected batch-course link will be removed. Course, section, faculty, room, schedule and co-offering relationship remain unchanged.
+                        </p>
+                      </div>
+                    ) : null}
                     {addBatchCourseId === row.offeredCourseId ? (
                       <div className="mt-3 min-w-64 rounded-xl border border-violet-200 bg-violet-50 p-3">
                         <div className="text-xs font-semibold text-violet-900">

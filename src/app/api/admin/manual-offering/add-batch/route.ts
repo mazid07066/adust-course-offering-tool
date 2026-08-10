@@ -561,7 +561,16 @@ export async function GET(req: NextRequest) {
         offeredCourse.master_courses.course_code,
       section:
         offeredCourse.section,
+
       batches: eligible,
+
+      attachedBatches:
+        offeredCourse.offered_course_batches.map((item) => ({
+          batchId:
+            item.batch_id,
+          batchCode:
+            item.batches.batch_code,
+        })),
     });
   } catch (error) {
     console.error(
@@ -583,6 +592,158 @@ export async function GET(req: NextRequest) {
   }
 }
 
+export async function DELETE(req: NextRequest) {
+  const guard = await requireCoordinatorOrAdminApi();
+
+  if (guard instanceof Response) {
+    return guard;
+  }
+
+  try {
+    const body = await req.json();
+
+    const offeredCourseId = toNumber(
+      body.offeredCourseId
+    );
+
+    const programCode = normalizeUpper(
+      body.programCode
+    );
+
+    const batchId = toNumber(
+      body.batchId
+    );
+
+    if (
+      !offeredCourseId ||
+      !programCode ||
+      !batchId
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "offeredCourseId, programCode, and batchId are required.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const {
+      resolved,
+      offeredCourse,
+    } = await getOfferedCourseContext(
+      offeredCourseId,
+      programCode
+    );
+
+    const attachedLinks =
+      offeredCourse.offered_course_batches;
+
+    if (attachedLinks.length <= 1) {
+      return NextResponse.json(
+        {
+          error:
+            "The final remaining batch cannot be removed. Delete the offered course instead if it is no longer required.",
+        },
+        {
+          status: 409,
+        }
+      );
+    }
+
+    const selectedLink =
+      attachedLinks.find(
+        (item) =>
+          item.batch_id === batchId
+      );
+
+    if (!selectedLink) {
+      return NextResponse.json(
+        {
+          error:
+            "The selected batch is not attached to this offered course.",
+        },
+        {
+          status: 404,
+        }
+      );
+    }
+
+    const selectedBatch =
+      await prisma.batches.findFirst({
+        where: {
+          id: batchId,
+          program_id: {
+            in: resolved.candidateIds,
+          },
+        },
+
+        select: {
+          id: true,
+          batch_code: true,
+        },
+      });
+
+    if (!selectedBatch) {
+      return NextResponse.json(
+        {
+          error:
+            "Selected batch does not belong to the current academic program identity.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    await prisma.offered_course_batches.deleteMany({
+      where: {
+        offered_course_id:
+          offeredCourseId,
+        batch_id:
+          batchId,
+      },
+    });
+
+    clearReportingCacheWithLog(
+      "manual offered course batch removed"
+    );
+
+    return NextResponse.json({
+      success: true,
+
+      message:
+        `Batch ${selectedBatch.batch_code} removed from ${offeredCourse.master_courses.course_code} Sec-${offeredCourse.section}. The course, section, faculty, schedule, room, and co-offering relationship remain unchanged.`,
+
+      offeredCourseId,
+
+      batchId:
+        selectedBatch.id,
+
+      batchCode:
+        selectedBatch.batch_code,
+    });
+  } catch (error) {
+    console.error(
+      "Manual offering remove-batch failed:",
+      error
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to remove batch from manual offered course.",
+      },
+      {
+        status: 500,
+      }
+    );
+  }
+}
 export async function POST(req: NextRequest) {
   const guard = await requireCoordinatorOrAdminApi();
 
