@@ -22,6 +22,7 @@ type RoutineRow = {
   batchCodes: string[];
 
   programCode: string;
+  programLabel: string;
 
   courseCode: string;
   courseTitle: string;
@@ -60,7 +61,10 @@ type ApiResponse = {
 
   batchOptions?: string[];
 
-  programOptions?: string[];
+  programOptions?: Array<{
+    value: string;
+    label: string;
+  }>;
 
   summary?: {
     totalRows: number;
@@ -167,7 +171,12 @@ export default function BatchRoutinePageClient() {
     programOptions,
     setProgramOptions,
   ] =
-    useState<string[]>([]);
+    useState<
+      Array<{
+        value: string;
+        label: string;
+      }>
+    >([]);
 
   const [
     rows,
@@ -588,14 +597,14 @@ export default function BatchRoutinePageClient() {
                   ) => (
                     <option
                       key={
-                        option
+                        option.value
                       }
                       value={
-                        option
+                        option.value
                       }
                     >
                       {
-                        option
+                        option.label
                       }
                     </option>
                   )
@@ -924,9 +933,11 @@ export default function BatchRoutinePageClient() {
                     </td>
 
                     <td className="border-b px-3 py-2">
-                      {
-                        row.programCode
-                      }
+                      <div className="font-medium text-slate-900">
+                        {
+                          row.programLabel
+                        }
+                      </div>
                     </td>
 
                     <td className="border-b px-3 py-2">
