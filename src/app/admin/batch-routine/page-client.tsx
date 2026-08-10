@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import {
   useEffect,
@@ -66,6 +66,25 @@ type ApiResponse = {
     label: string;
   }>;
 
+  programOfferingSummary?: Array<{
+    programCode: string;
+    programLabel: string;
+
+    totalCourses: number;
+    totalCredits: number;
+
+    theoryCourses: number;
+    theoryCredits: number;
+
+    labCourses: number;
+    labCredits: number;
+
+    projectCourses: number;
+    projectCredits: number;
+
+    primaryCourses: number;
+    secondaryCourses: number;
+  }>;
   summary?: {
     totalRows: number;
     totalBatches: number;
@@ -186,6 +205,15 @@ export default function BatchRoutinePageClient() {
       []
     );
 
+  const [
+    programOfferingSummary,
+    setProgramOfferingSummary,
+  ] =
+    useState<
+      NonNullable<
+        ApiResponse["programOfferingSummary"]
+      >
+    >([]);
   const [
     summary,
     setSummary,
@@ -313,6 +341,10 @@ export default function BatchRoutinePageClient() {
         json.rows || []
       );
 
+      setProgramOfferingSummary(
+        json.programOfferingSummary || []
+      );
+
       setSummary(
         json.summary ||
           null
@@ -333,6 +365,10 @@ export default function BatchRoutinePageClient() {
       );
 
       setRows(
+        []
+      );
+
+      setProgramOfferingSummary(
         []
       );
 
@@ -775,6 +811,199 @@ export default function BatchRoutinePageClient() {
         )}
 
 
+        {programOfferingSummary.length > 0 && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Program-wise Offering Load Summary
+                </h3>
+
+                <p className="mt-1 text-sm text-slate-600">
+                  Unique offered courses are counted once even when a course has multiple classes or lab slots.
+                  The calculation follows the selected academic term, offering view, program and batch.
+                </p>
+              </div>
+
+              <div className="text-xs text-slate-500">
+                Schedule Type filter does not reduce these totals.
+              </div>
+            </div>
+
+            <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="border-b px-3 py-3 text-left">
+                      Program
+                    </th>
+
+                    <th className="border-b px-3 py-3 text-center">
+                      Total Courses
+                    </th>
+
+                    <th className="border-b px-3 py-3 text-center">
+                      Total Credits
+                    </th>
+
+                    <th className="border-b px-3 py-3 text-center">
+                      Theory Courses
+                    </th>
+
+                    <th className="border-b px-3 py-3 text-center">
+                      Theory Credits
+                    </th>
+
+                    <th className="border-b px-3 py-3 text-center">
+                      Lab Courses
+                    </th>
+
+                    <th className="border-b px-3 py-3 text-center">
+                      Lab Credits
+                    </th>
+
+                    <th className="border-b px-3 py-3 text-center">
+                      Project Courses
+                    </th>
+
+                    <th className="border-b px-3 py-3 text-center">
+                      Project Credits
+                    </th>
+
+                    <th className="border-b px-3 py-3 text-center">
+                      Co-offered Secondary
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {programOfferingSummary.map(
+                    (item) => (
+                      <tr
+                        key={item.programCode}
+                        className="border-b last:border-b-0"
+                      >
+                        <td className="px-3 py-3">
+                          <div className="font-semibold text-slate-900">
+                            {item.programLabel}
+                          </div>
+
+                          <div className="mt-1 text-xs text-slate-500">
+                            {item.programCode}
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-3 text-center font-semibold">
+                          {item.totalCourses}
+                        </td>
+
+                        <td className="px-3 py-3 text-center">
+                          <span className="rounded-full bg-slate-900 px-3 py-1 font-bold text-white">
+                            {item.totalCredits}
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-3 text-center">
+                          {item.theoryCourses}
+                        </td>
+
+                        <td className="px-3 py-3 text-center font-medium text-blue-700">
+                          {item.theoryCredits}
+                        </td>
+
+                        <td className="px-3 py-3 text-center">
+                          {item.labCourses}
+                        </td>
+
+                        <td className="px-3 py-3 text-center font-medium text-violet-700">
+                          {item.labCredits}
+                        </td>
+
+                        <td className="px-3 py-3 text-center">
+                          {item.projectCourses}
+                        </td>
+
+                        <td className="px-3 py-3 text-center font-medium text-emerald-700">
+                          {item.projectCredits}
+                        </td>
+
+                        <td className="px-3 py-3 text-center">
+                          {item.secondaryCourses}
+                        </td>
+                      </tr>
+                    )
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Overall Credits
+                </div>
+
+                <div className="mt-1 text-xl font-bold text-slate-900">
+                  {Number(
+                    programOfferingSummary
+                      .reduce(
+                        (sum, item) =>
+                          sum +
+                          item.totalCredits,
+                        0
+                      )
+                      .toFixed(2)
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
+                <div className="text-xs font-medium uppercase tracking-wide text-blue-600">
+                  Theory Courses
+                </div>
+
+                <div className="mt-1 text-xl font-bold text-blue-900">
+                  {programOfferingSummary.reduce(
+                    (sum, item) =>
+                      sum +
+                      item.theoryCourses,
+                    0
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-violet-200 bg-violet-50 p-3">
+                <div className="text-xs font-medium uppercase tracking-wide text-violet-600">
+                  Lab Courses
+                </div>
+
+                <div className="mt-1 text-xl font-bold text-violet-900">
+                  {programOfferingSummary.reduce(
+                    (sum, item) =>
+                      sum +
+                      item.labCourses,
+                    0
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                <div className="text-xs font-medium uppercase tracking-wide text-emerald-600">
+                  Project Courses
+                </div>
+
+                <div className="mt-1 text-xl font-bold text-emerald-900">
+                  {programOfferingSummary.reduce(
+                    (sum, item) =>
+                      sum +
+                      item.projectCourses,
+                    0
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {summary && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
 

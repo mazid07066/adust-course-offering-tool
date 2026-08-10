@@ -1,4 +1,4 @@
-﻿import {
+import {
   NextRequest,
   NextResponse,
 } from "next/server";
@@ -296,6 +296,33 @@ export async function GET(
         statuses,
       });
 
+    /*
+     * Program offering credit/load summary must always represent
+     * the complete academic offering composition.
+     *
+     * Therefore it follows:
+     * - academic term
+     * - view/status
+     * - selected batch
+     * - selected academic program
+     *
+     * but deliberately ignores the Schedule Type filter.
+     */
+    const summarySourceRows =
+      scheduleKind === "ALL"
+        ? rows
+        : await getScheduleRowsForReporting({
+            termName,
+
+            batchCode:
+              batchCode ||
+              undefined,
+
+            scheduleKind:
+              "ALL",
+
+            statuses,
+          });
     const catalogRows =
       await prisma
         .academic_catalog_entries
@@ -476,6 +503,224 @@ export async function GET(
       );
     };
 
+    /*
+     * Apply the same academic program/batch identity filters used
+     * by the visible report, but keep all schedule kinds so that
+     * theory/lab/project totals remain complete.
+     */
+    const summaryFilteredRows =
+      summarySourceRows.filter(
+        (row) => {
+          if (
+            batchCode &&
+            !row.batchCodes.some(
+              (value) =>
+                clean(value) ===
+                batchCode
+            )
+          ) {
+            return false;
+          }
+
+          if (
+            selectedAcademicProgramCode
+          ) {
+            if (
+              selectedReportProgramCodes
+                .length === 0
+            ) {
+              return false;
+            }
+
+            if (
+              !selectedReportProgramCodes.some(
+                (code) =>
+                  clean(code) ===
+                  clean(
+                    row.programCode
+                  )
+              )
+            ) {
+              return false;
+            }
+          }
+
+          return true;
+        }
+      );
+
+    /*
+     * A course with several weekly slots produces several schedule
+     * rows. Credits and course counts must be counted once per
+     * offeredCourseId, never once per slot.
+     */
+    const uniqueSummaryCourses =
+      new Map<
+        number,
+        (typeof summaryFilteredRows)[number]
+      >();
+
+    for (
+      const row of
+      summaryFilteredRows
+    ) {
+      if (
+        !uniqueSummaryCourses.has(
+          row.offeredCourseId
+        )
+      ) {
+        uniqueSummaryCourses.set(
+          row.offeredCourseId,
+          row
+        );
+      }
+    }
+
+    type ProgramOfferingAccumulator = {
+      programCode: string;
+      programLabel: string;
+
+      totalCourses: number;
+      totalCredits: number;
+
+      theoryCourses: number;
+      theoryCredits: number;
+
+      labCourses: number;
+      labCredits: number;
+
+      projectCourses: number;
+      projectCredits: number;
+
+      primaryCourses: number;
+      secondaryCourses: number;
+    };
+
+    const programSummaryMap =
+      new Map<
+        string,
+        ProgramOfferingAccumulator
+      >();
+
+    for (
+      const course of
+      uniqueSummaryCourses.values()
+    ) {
+      const key =
+        clean(
+          course.programCode
+        );
+
+      let item =
+        programSummaryMap.get(
+          key
+        );
+
+      if (!item) {
+        item = {
+          programCode:
+            course.programCode,
+
+          programLabel:
+            academicLabelForRow(
+              course.programCode
+            ),
+
+          totalCourses: 0,
+          totalCredits: 0,
+
+          theoryCourses: 0,
+          theoryCredits: 0,
+
+          labCourses: 0,
+          labCredits: 0,
+
+          projectCourses: 0,
+          projectCredits: 0,
+
+          primaryCourses: 0,
+          secondaryCourses: 0,
+        };
+
+        programSummaryMap.set(
+          key,
+          item
+        );
+      }
+
+      const credit =
+        Number(
+          course.credit || 0
+        );
+
+      item.totalCourses += 1;
+      item.totalCredits += credit;
+
+      if (
+        course.role ===
+        "SECONDARY"
+      ) {
+        item.secondaryCourses += 1;
+      } else {
+        item.primaryCourses += 1;
+      }
+
+      if (
+        course.scheduleKind ===
+        "LAB"
+      ) {
+        item.labCourses += 1;
+        item.labCredits += credit;
+      } else if (
+        course.scheduleKind ===
+        "PROJECT"
+      ) {
+        item.projectCourses += 1;
+        item.projectCredits += credit;
+      } else {
+        item.theoryCourses += 1;
+        item.theoryCredits += credit;
+      }
+    }
+
+    const programOfferingSummary =
+      [...programSummaryMap.values()]
+        .map((item) => ({
+          ...item,
+
+          totalCredits:
+            Number(
+              item.totalCredits.toFixed(
+                2
+              )
+            ),
+
+          theoryCredits:
+            Number(
+              item.theoryCredits.toFixed(
+                2
+              )
+            ),
+
+          labCredits:
+            Number(
+              item.labCredits.toFixed(
+                2
+              )
+            ),
+
+          projectCredits:
+            Number(
+              item.projectCredits.toFixed(
+                2
+              )
+            ),
+        }))
+        .sort((a, b) =>
+          a.programLabel.localeCompare(
+            b.programLabel
+          )
+        );
     const batchOptions =
       uniqueStrings(
         rows.flatMap(
@@ -530,6 +775,8 @@ export async function GET(
               option.label,
           })
         ),
+
+      programOfferingSummary,
 
       summary: {
         totalRows:
