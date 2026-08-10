@@ -161,20 +161,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const primaryCredit = Number(primary.master_courses.credit || 0);
-    const secondaryCredit = Number(secondary.master_courses.credit || 0);
-
-    if (primaryCredit !== secondaryCredit) {
-      clearReportingCacheWithLog("offering/reporting data changed");
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "Primary and secondary sections must have the same credit value for co-offering.",
-        },
-        { status: 400 }
-      );
-    }
 
     await prisma.$transaction(async (tx) => {
       await tx.offered_courses.update({

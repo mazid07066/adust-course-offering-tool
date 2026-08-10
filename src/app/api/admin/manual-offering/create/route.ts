@@ -226,6 +226,9 @@ export async function POST(req: NextRequest) {
     );
     const masterCourseId = toNumber(body.masterCourseId);
     const targetOfferingId = toNumber(body.targetOfferingId);
+    const coOfferPrimaryOfferedCourseId = toNumber(
+      body.coOfferPrimaryOfferedCourseId
+    );
     const section = normalizeUpper(body.section || "1");
     const teacherId = toNumber(body.teacherId);
     const loadType = normalizeUpper(body.loadType || "MANUAL");
@@ -465,6 +468,86 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    let coOfferPrimary: { id: number } | null = null;
+
+    if (coOfferPrimaryOfferedCourseId) {
+      const primary = await prisma.offered_courses.findUnique({
+        where: {
+          id: coOfferPrimaryOfferedCourseId,
+        },
+        include: {
+          offerings: true,
+          master_courses: true,
+        },
+      });
+
+      if (!primary) {
+        return NextResponse.json(
+          {
+            error:
+              "Selected existing co-offering course was not found.",
+          },
+          { status: 404 }
+        );
+      }
+
+      const allowedCoOfferingStatuses = [
+        "DRAFT",
+        "BUFFER_READY",
+        "FACULTY_CHOICE_BUFFER",
+      ];
+
+      if (
+        !allowedCoOfferingStatuses.includes(
+          primary.offerings.status
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "The selected existing course is not in an editable co-offering state.",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (
+        primary.offerings.academic_term_id !== term.id
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Primary and secondary co-offered courses must belong to the same academic term.",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (primary.offering_id === offering.id) {
+        return NextResponse.json(
+          {
+            error:
+              "The primary co-offered course must belong to another program offering.",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (primary.primary_offered_course_id) {
+        return NextResponse.json(
+          {
+            error:
+              "The selected existing course is already a secondary co-offered course and cannot be used as the primary.",
+          },
+          { status: 400 }
+        );
+      }
+
+      coOfferPrimary = {
+        id: primary.id,
+      };
+    }
+
     const slotOptional = isSlotOptionalCourse({
       course_code: masterCourse.course_code,
       course_title: masterCourse.course_title,
@@ -489,14 +572,16 @@ export async function POST(req: NextRequest) {
           timeToMinutes(slot.endTime) !== null
       );
 
-    if (!slotOptional && cleanSlots.length === 0) {
+    if (!coOfferPrimary && !slotOptional && cleanSlots.length === 0) {
       return NextResponse.json(
         { error: "This course requires at least one valid slot." },
         { status: 400 }
       );
     }
 
-    for (const slot of cleanSlots) {
+    const effectiveSlots = coOfferPrimary ? [] : cleanSlots;
+
+    for (const slot of effectiveSlots) {
       const start = timeToMinutes(slot.startTime);
       const end = timeToMinutes(slot.endTime);
 
@@ -546,7 +631,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    for (const slot of cleanSlots) {
+    for (const slot of effectiveSlots) {
       const roomSlots = await prisma.offered_course_slots.findMany({
         where: {
           day_of_week: slot.dayOfWeek,
@@ -694,7 +779,9 @@ export async function POST(req: NextRequest) {
           offering_id: offering.id,
           master_course_id: masterCourse.id,
           section,
-          is_cooffered: false,
+          is_cooffered: Boolean(coOfferPrimary),
+          primary_offered_course_id:
+            coOfferPrimary?.id ?? null,
           notes: "MANUAL_ADDITION",
         },
       });
@@ -706,7 +793,7 @@ export async function POST(req: NextRequest) {
         })),
       });
 
-      for (const slot of cleanSlots) {
+      for (const slot of effectiveSlots) {
         await tx.offered_course_slots.create({
           data: {
             offered_course_id: offeredCourse.id,
@@ -719,13 +806,22 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      if (teacherId) {
+      if (teacherId && !coOfferPrimary) {
         await tx.offered_course_teachers.create({
           data: {
             offered_course_id: offeredCourse.id,
             teacher_id: teacherId,
             assigned_credit: Number(masterCourse.credit || 0),
             load_type: loadType || "MANUAL",
+          },
+        });
+      }
+
+      if (coOfferPrimary) {
+        await tx.offered_courses.update({
+          where: { id: coOfferPrimary.id },
+          data: {
+            is_cooffered: true,
           },
         });
       }
@@ -737,7 +833,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Manual offered course added for batch ${selectedBatches[0].batch_code} into offering #${offering.id} (${offering.status}).`,
+      message: coOfferPrimary
+        ? `Manual offered course added for batch ${selectedBatches[0].batch_code} and linked to the selected primary course. Schedule, room, and faculty are controlled by the primary co-offering.`
+        : `Manual offered course added for batch ${selectedBatches[0].batch_code} into offering #${offering.id} (${offering.status}).`,
       offeredCourseId: created.id,
       offeringId: offering.id,
       offeringStatus: offering.status,

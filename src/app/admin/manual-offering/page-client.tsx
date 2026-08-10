@@ -1,5 +1,6 @@
 "use client";
 
+import PrecreateManualCoOffer from "@/components/offerings/precreate-manual-co-offer";
 import { useEffect, useMemo, useState } from "react";
 
 type TermOption = {
@@ -224,6 +225,8 @@ export default function ManualOfferingPageClient() {
   const [termName, setTermName] = useState("");
   const [programCode, setProgramCode] = useState("");
   const [targetOfferingId, setTargetOfferingId] = useState("");
+  const [precreateCoOfferPrimaryId, setPrecreateCoOfferPrimaryId] =
+    useState("");
   const [batchIds, setBatchIds] = useState<string[]>([]);
   const [masterCourseId, setMasterCourseId] = useState("");
   const [section, setSection] = useState("1");
@@ -725,6 +728,10 @@ export default function ManualOfferingPageClient() {
         termName,
         programCode,
         targetOfferingId: targetOfferingId || null,
+        coOfferPrimaryOfferedCourseId:
+          !isEditing && precreateCoOfferPrimaryId
+            ? precreateCoOfferPrimaryId
+            : null,
         batchIds,
         masterCourseId,
         section,
@@ -758,6 +765,7 @@ export default function ManualOfferingPageClient() {
             ? "Manual offered course updated successfully."
             : "Manual offered course added successfully.")
       );
+      setPrecreateCoOfferPrimaryId("");
       setEditingId(null);
       setBatchIds([]);
       setMasterCourseId("");
@@ -941,7 +949,20 @@ export default function ManualOfferingPageClient() {
             </div>
           </div>
 
-          {batchIds.length > 0 ? (
+          {selectedCourse && editingId === null ? (
+            <PrecreateManualCoOffer
+              termName={termName}
+              currentProgramCode={programCode}
+              courseCode={selectedCourse.courseCode}
+              courseTitle={selectedCourse.courseTitle}
+              credit={selectedCourse.credit}
+              programs={programs}
+              value={precreateCoOfferPrimaryId}
+              onChange={setPrecreateCoOfferPrimaryId}
+            />
+          ) : null}
+
+          {batchIds.length > 0 && !precreateCoOfferPrimaryId ? (
             <div className="rounded-3xl border border-amber-200 bg-amber-50 p-5">
               <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
                 <div>
@@ -1031,26 +1052,28 @@ export default function ManualOfferingPageClient() {
               />
             </div>
 
-            <div className="lg:col-span-2">
-              <label className="mb-2 block text-sm font-medium text-slate-700">
-                Faculty Assignment Optional
-              </label>
-              <select
-                value={teacherId}
-                onChange={(e) => setTeacherId(e.target.value)}
-                className="w-full rounded-xl border px-3 py-3 text-sm"
-              >
-                <option value="">No faculty now</option>
-                {teachers.map((teacher) => (
-                  <option key={teacher.id} value={teacher.id}>
-                    {teacher.displayLabel}
-                    {teacher.seniorityLevel
-                      ? ` | Level ${teacher.seniorityLevel}`
-                      : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {!precreateCoOfferPrimaryId ? (
+              <div className="lg:col-span-2">
+                <label className="mb-2 block text-sm font-medium text-slate-700">
+                  Faculty Assignment Optional
+                </label>
+                <select
+                  value={teacherId}
+                  onChange={(e) => setTeacherId(e.target.value)}
+                  className="w-full rounded-xl border px-3 py-3 text-sm"
+                >
+                  <option value="">No faculty now</option>
+                  {teachers.map((teacher) => (
+                    <option key={teacher.id} value={teacher.id}>
+                      {teacher.displayLabel}
+                      {teacher.seniorityLevel
+                        ? ` | Level ${teacher.seniorityLevel}`
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
           </div>
 
           {selectedCourse ? (
@@ -1062,7 +1085,11 @@ export default function ManualOfferingPageClient() {
                 Credit: {selectedCourse.credit} | Type: {selectedCourse.courseType} |
                 Level/Term: {selectedCourse.levelTerm || "-"}
               </div>
-              {slotOptional ? (
+              {precreateCoOfferPrimaryId ? (
+                <div className="mt-2 font-semibold text-emerald-700">
+                  Co-offered secondary course. Schedule, room and faculty are inherited from the selected primary course.
+                </div>
+              ) : slotOptional ? (
                 <div className="mt-2 font-semibold text-emerald-700">
                   Slot optional course detected. You may save without slots.
                 </div>
@@ -1074,28 +1101,31 @@ export default function ManualOfferingPageClient() {
             </div>
           ) : null}
 
-          <div>
-            <label className="mb-2 block text-sm font-medium text-slate-700">
-              Load Type
-            </label>
-            <select
-              value={loadType}
-              onChange={(e) => setLoadType(e.target.value)}
-              className="w-full rounded-xl border px-3 py-3 text-sm"
-            >
-              {LOAD_TYPES.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </div>
+          {!precreateCoOfferPrimaryId ? (
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Load Type
+              </label>
+              <select
+                value={loadType}
+                onChange={(e) => setLoadType(e.target.value)}
+                className="w-full rounded-xl border px-3 py-3 text-sm"
+              >
+                {LOAD_TYPES.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
 
-          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">
-                  Optional / Required Slots
+          {!precreateCoOfferPrimaryId ? (
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Optional / Required Slots
                 </h3>
                 <p className="mt-1 text-sm text-slate-600">
                   Warnings are shown before saving; server-side conflict checks still
@@ -1216,8 +1246,9 @@ export default function ManualOfferingPageClient() {
                   </div>
                 </div>
               ))}
+              </div>
             </div>
-          </div>
+          ) : null}
 
           {message ? (
             <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
