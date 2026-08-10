@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin-layout";
@@ -668,7 +668,7 @@ export default function OfferingDraftsPageClient() {
 
   async function publishDraft(id: number) {
     const ok = window.confirm(
-      "Move this offering to BUFFER_READY so it becomes ready for the faculty-choice phase?"
+      "Finalize this draft and move it to BUFFER_READY? After this, use Faculty Choice Control to open it to faculty."
     );
     if (!ok) return;
 
@@ -933,7 +933,7 @@ export default function OfferingDraftsPageClient() {
               <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">
-                    {draft.programs.short_name} — {draft.academic_terms.name}
+                    {draft.programs.short_name} â€” {draft.academic_terms.name}
                   </h3>
                   <p className="text-sm text-slate-500">
                     Draft ID: {draft.id} | Status: {draft.status}
@@ -986,7 +986,7 @@ export default function OfferingDraftsPageClient() {
                                     Primary
                                   </div>
                                   <div className="mt-1 font-medium text-slate-900">
-                                    {group.primary_course.master_course.course_code} — {group.primary_course.master_course.course_title}
+                                    {group.primary_course.master_course.course_code} â€” {group.primary_course.master_course.course_title}
                                   </div>
                                   <div className="mt-1 text-xs text-slate-600">
                                     Program: {group.primary_course.master_course.program_code}
@@ -1106,7 +1106,7 @@ export default function OfferingDraftsPageClient() {
                                           Linked Secondary
                                         </div>
                                         <div className="mt-1 font-medium text-slate-900">
-                                          {linked.master_course.course_code} — {linked.master_course.course_title}
+                                          {linked.master_course.course_code} â€” {linked.master_course.course_title}
                                         </div>
                                         <div className="mt-1 text-xs text-slate-600">
                                           Program: {linked.master_course.program_code}

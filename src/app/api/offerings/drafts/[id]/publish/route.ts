@@ -1,4 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
+
 import { prisma } from "@/lib/prisma";
 import { requireCoordinatorOrAdminApi } from "@/lib/auth-guard";
 import { OFFERING_STATUS } from "@/lib/offering-status";
@@ -14,7 +18,9 @@ type RouteContext = {
   }>;
 };
 
-function normalizeText(value: unknown) {
+function normalizeText(
+  value: unknown
+) {
   return String(value ?? "")
     .replace(/\s+/g, " ")
     .trim()
@@ -27,20 +33,26 @@ function isSlotOptionalCourse(course: {
     course_type?: string | null;
   };
 }) {
-  const title = normalizeText(
-    course.master_courses.course_title
-  );
+  const title =
+    normalizeText(
+      course.master_courses
+        .course_title
+    );
 
-  const type = normalizeText(
-    course.master_courses.course_type
-  );
+  const type =
+    normalizeText(
+      course.master_courses
+        .course_type
+    );
 
   return (
     type.includes("PROJECT") ||
     type.includes("INTERNSHIP") ||
     type.includes("THESIS") ||
     type.includes("VIVA") ||
-    title.includes("FINAL YEAR DESIGN PROJECT") ||
+    title.includes(
+      "FINAL YEAR DESIGN PROJECT"
+    ) ||
     title.includes("FYDP") ||
     title.includes("INTERNSHIP") ||
     title.includes("THESIS") ||
@@ -55,7 +67,9 @@ export async function POST(
   const guard =
     await requireCoordinatorOrAdminApi();
 
-  if (guard instanceof Response) {
+  if (
+    guard instanceof Response
+  ) {
     return guard;
   }
 
@@ -68,12 +82,10 @@ export async function POST(
 
     if (
       !offeringId ||
-      Number.isNaN(offeringId)
+      Number.isNaN(
+        offeringId
+      )
     ) {
-      clearReportingCacheWithLog(
-        "offering/reporting data changed"
-      );
-
       return NextResponse.json(
         {
           ok: false,
@@ -87,32 +99,35 @@ export async function POST(
     }
 
     const offering =
-      await prisma.offerings.findUnique({
-        where: {
-          id: offeringId,
-        },
+      await prisma.offerings
+        .findUnique({
+          where: {
+            id: offeringId,
+          },
 
-        include: {
-          academic_terms: true,
-          programs: true,
+          include: {
+            academic_terms:
+              true,
 
-          offered_courses: {
-            include: {
-              master_courses: true,
-              offered_course_batches:
-                true,
-              offered_course_slots:
-                true,
+            programs:
+              true,
+
+            offered_courses: {
+              include: {
+                master_courses:
+                  true,
+
+                offered_course_batches:
+                  true,
+
+                offered_course_slots:
+                  true,
+              },
             },
           },
-        },
-      });
+        });
 
     if (!offering) {
-      clearReportingCacheWithLog(
-        "offering/reporting data changed"
-      );
-
       return NextResponse.json(
         {
           ok: false,
@@ -132,26 +147,25 @@ export async function POST(
 
     if (
       currentStatus ===
-      OFFERING_STATUS.FACULTY_CHOICE_BUFFER
+      OFFERING_STATUS.BUFFER_READY
     ) {
-      clearReportingCacheWithLog(
-        "offering/reporting data changed"
-      );
-
       return NextResponse.json({
         ok: true,
 
         message:
-          "Offering is already open for faculty choice.",
+          "Offering is already finalized and ready for faculty choice.",
 
         offering: {
           id: offering.id,
+
           status:
             offering.status,
+
           termName:
             offering
               .academic_terms
               .name,
+
           programCode:
             offering
               .programs
@@ -162,20 +176,14 @@ export async function POST(
 
     if (
       currentStatus !==
-        OFFERING_STATUS.DRAFT &&
-      currentStatus !==
-        OFFERING_STATUS.BUFFER_READY
+      OFFERING_STATUS.DRAFT
     ) {
-      clearReportingCacheWithLog(
-        "offering/reporting data changed"
-      );
-
       return NextResponse.json(
         {
           ok: false,
 
           error:
-            `Only DRAFT or BUFFER_READY offerings can be opened for faculty choice. Current status: ${offering.status}`,
+            `Only DRAFT offerings can be finalized. Current status: ${offering.status}`,
         },
         {
           status: 400,
@@ -183,19 +191,9 @@ export async function POST(
       );
     }
 
-    const blockers: string[] =
-      [];
+    const blockers:
+      string[] = [];
 
-    /*
-     * Faculty choice may only be opened for
-     * the academic term currently designated
-     * as the system current term.
-     *
-     * This replaces the old hard-coded
-     * SUMMER 2026 restriction and allows
-     * FALL 2026 now, while remaining valid
-     * for later semesters.
-     */
     if (
       !Boolean(
         offering
@@ -204,7 +202,7 @@ export async function POST(
       )
     ) {
       blockers.push(
-        `Only the current academic term can be opened for faculty choice. ${offering.academic_terms.name} is not the current term.`
+        `Only the current academic term can be finalized. ${offering.academic_terms.name} is not the current term.`
       );
     }
 
@@ -214,13 +212,13 @@ export async function POST(
         .length === 0
     ) {
       blockers.push(
-        "Cannot open an empty offering for faculty choice."
+        "Cannot finalize an empty offering."
       );
     }
 
     for (
-      const course
-      of offering.offered_courses
+      const course of
+      offering.offered_courses
     ) {
       const isPrimary =
         !course
@@ -257,16 +255,12 @@ export async function POST(
     if (
       blockers.length > 0
     ) {
-      clearReportingCacheWithLog(
-        "offering/reporting data changed"
-      );
-
       return NextResponse.json(
         {
           ok: false,
 
           error:
-            "Offering is not ready for faculty choice.",
+            "Offering is not ready to be finalized.",
 
           blockers,
         },
@@ -277,33 +271,35 @@ export async function POST(
     }
 
     const updated =
-      await prisma.offerings.update({
-        where: {
-          id: offeringId,
-        },
-
-        data: {
-          status:
-            OFFERING_STATUS.FACULTY_CHOICE_BUFFER,
-        },
-
-        select: {
-          id: true,
-          status: true,
-
-          academic_terms: {
-            select: {
-              name: true,
-            },
+      await prisma.offerings
+        .update({
+          where: {
+            id: offeringId,
           },
 
-          programs: {
-            select: {
-              short_name: true,
+          data: {
+            status:
+              OFFERING_STATUS.BUFFER_READY,
+          },
+
+          select: {
+            id: true,
+            status: true,
+
+            academic_terms: {
+              select: {
+                name: true,
+              },
+            },
+
+            programs: {
+              select: {
+                short_name:
+                  true,
+              },
             },
           },
-        },
-      });
+        });
 
     clearReportingCacheWithLog(
       "offering/reporting data changed"
@@ -313,16 +309,20 @@ export async function POST(
       ok: true,
 
       message:
-        "Offering is now open for faculty choice.",
+        "Draft finalized successfully. Offering is now BUFFER_READY and may be opened for faculty choice.",
 
       offering: {
-        id: updated.id,
+        id:
+          updated.id,
+
         status:
           updated.status,
+
         termName:
           updated
             .academic_terms
             .name,
+
         programCode:
           updated
             .programs
@@ -331,7 +331,7 @@ export async function POST(
     });
   } catch (error) {
     console.error(
-      "Publish draft offering error:",
+      "Finalize draft offering error:",
       error
     );
 
@@ -346,7 +346,7 @@ export async function POST(
         error:
           error instanceof Error
             ? error.message
-            : "Failed to open offering for faculty choice.",
+            : "Failed to finalize offering.",
       },
       {
         status: 500,
