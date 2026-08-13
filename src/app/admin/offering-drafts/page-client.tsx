@@ -451,6 +451,32 @@ export default function OfferingDraftsPageClient() {
         endTime,
       });
 
+      /*
+       * Give room availability the current offering context.
+       *
+       * This keeps room checking inside the same academic term.
+       */
+      if (slotEditorCourseId) {
+        params.set(
+          "offeredCourseId",
+          String(slotEditorCourseId)
+        );
+      }
+
+      /*
+       * While editing, exclude the slot itself from occupancy.
+       *
+       * Otherwise its current room is incorrectly removed from
+       * the available-room list and the UI auto-selects another
+       * room.
+       */
+      if (editingSlotId) {
+        params.set(
+          "excludeSlotId",
+          String(editingSlotId)
+        );
+      }
+
       const res = await fetch(`/api/rooms/options?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
