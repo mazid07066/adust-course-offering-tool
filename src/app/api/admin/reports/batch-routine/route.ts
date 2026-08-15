@@ -1,4 +1,4 @@
-import {
+﻿import {
   NextRequest,
   NextResponse,
 } from "next/server";
@@ -838,6 +838,9 @@ export async function GET(
 
             courseTitle:
               row.courseTitle,
+
+            credit:
+              row.credit,
 
             section:
               row.section,

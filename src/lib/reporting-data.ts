@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+﻿import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   compareDayTime,
@@ -322,6 +322,97 @@ function applyRowFilters(
   });
 }
 
+type ProgramIdentity = {
+  isEEE: boolean;
+  isRAE: boolean;
+  isEvening: boolean;
+  isRegular: boolean;
+  isNew: boolean;
+  isOld: boolean;
+};
+
+function detectProgramIdentity(
+  values: Array<string | null | undefined>
+): ProgramIdentity {
+  const text = values
+    .map((value) => cleanCode(value))
+    .join(" ");
+
+  return {
+    isEEE: text.includes("EEE"),
+    isRAE:
+      text.includes("RAE") ||
+      text.includes("ROBOTICSANDAUTOMATION"),
+    isEvening:
+      text.includes("EVE") ||
+      text.includes("EVENING"),
+    isRegular:
+      text.includes("REG") ||
+      text.includes("REGULAR"),
+    isNew: text.includes("NEW"),
+    isOld: text.includes("OLD"),
+  };
+}
+
+function programIdentityMatches(
+  selectedProgramCode: string,
+  course: OfferedCourseReportPayload
+) {
+  const selected = detectProgramIdentity([
+    selectedProgramCode,
+  ]);
+
+  const courseIdentity = detectProgramIdentity([
+    course.offerings.programs.short_name,
+    course.offerings.programs.name,
+    course.master_courses.program.short_name,
+    course.master_courses.program.name,
+  ]);
+
+  if (selected.isEEE && !courseIdentity.isEEE) {
+    return false;
+  }
+
+  if (selected.isRAE && !courseIdentity.isRAE) {
+    return false;
+  }
+
+  if (selected.isEvening && !courseIdentity.isEvening) {
+    return false;
+  }
+
+  if (
+    selected.isRegular &&
+    courseIdentity.isEvening
+  ) {
+    return false;
+  }
+
+  /*
+   * RAE currently shares one canonical operational identity
+   * across NEW and OLD curriculum variants.
+   *
+   * Therefore NEW/OLD must not reject RAE reporting rows.
+   */
+  if (!selected.isRAE) {
+    if (
+      selected.isNew &&
+      courseIdentity.isOld
+    ) {
+      return false;
+    }
+
+    if (
+      selected.isOld &&
+      courseIdentity.isNew
+    ) {
+      return false;
+    }
+  }
+
+  return selected.isEEE || selected.isRAE;
+}
+
 export async function getReportTerm(termName: string) {
   const cleanTermName = normalizeReportParam(termName);
 
@@ -359,42 +450,79 @@ export async function getOfferedCoursesForReporting(
       ? filters.statuses.map(normalizeReportParam)
       : REPORT_VISIBLE_OFFERING_STATUSES;
 
-  return prisma.offered_courses.findMany({
-    where: {
-      offerings: {
-        academic_term_id: term.id,
-        status: {
-          in: statuses,
+  /*
+   * Program identity must not be filtered directly against
+   * offerings.programs.short_name.
+   *
+   * UniFlow currently contains:
+   *
+   * Academic/catalog identity:
+   *   BSC-EEE-REG-NEW
+   *
+   * Operational offering identity:
+   *   CANON-EEE-REG-BSCEEE
+   *
+   * Master-course/report identity:
+   *   BSC-EEE-REG-NEW
+   *
+   * Therefore a direct Prisma equality comparison between
+   * selected academic programCode and the operational program
+   * removes valid rows.
+   *
+   * We first retrieve correctly scoped term/status/batch data,
+   * then apply the academic identity filter using both
+   * operational and master-course identities.
+   */
+
+  const courses =
+    await prisma.offered_courses.findMany({
+      where: {
+        offerings: {
+          academic_term_id: term.id,
+          status: {
+            in: statuses,
+          },
         },
-        ...(programCode
+
+        ...(batchCode
           ? {
-              programs: {
-                short_name: programCode,
+              offered_course_batches: {
+                some: {
+                  batches: {
+                    batch_code: batchCode,
+                  },
+                },
               },
             }
           : {}),
       },
-      ...(batchCode
-        ? {
-            offered_course_batches: {
-              some: {
-                batches: {
-                  batch_code: batchCode,
-                },
-              },
-            },
-          }
-        : {}),
-    },
-    include: offeredCourseReportInclude,
-    orderBy: [
-      { offering_id: "asc" },
-      { section: "asc" },
-      { id: "asc" },
-    ],
-  });
-}
 
+      include: offeredCourseReportInclude,
+
+      orderBy: [
+        {
+          offering_id: "asc",
+        },
+        {
+          section: "asc",
+        },
+        {
+          id: "asc",
+        },
+      ],
+    });
+
+  if (!programCode) {
+    return courses;
+  }
+
+  return courses.filter((course) =>
+    programIdentityMatches(
+      programCode,
+      course
+    )
+  );
+}
 import { getCacheKey, getCached, setCache } from "@/lib/reporting-cache";
 
 export async function getScheduleRowsForReporting(

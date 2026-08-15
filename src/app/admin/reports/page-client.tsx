@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -474,7 +474,36 @@ export default function ReportsPageClient() {
 
     try {
       const api = getReportApi(activeTab);
-      const qs = buildQuery(queryParams);
+
+      /*
+       * The Professional Reporting Center must show
+       * report-visible offering lifecycle states.
+       *
+       * The Batch Routine API has its own DRAFT mode
+       * and defaults to DRAFT when viewMode is omitted.
+       * That behavior is correct for draft-management
+       * workflows but wrong for this reporting dashboard.
+       *
+       * Therefore only the Batch-wise reporting tab
+       * explicitly requests FINAL mode.
+       *
+       * FINAL mode includes:
+       * - FACULTY_CHOICE_BUFFER
+       * - FACULTY_CHOICE_FINALIZED
+       * - CONFIRMED
+       *
+       * This changes only report visibility.
+       * It does not modify offering lifecycle data.
+       */
+      const reportQueryParams =
+        activeTab === "BATCH"
+          ? {
+              ...queryParams,
+              viewMode: "FINAL",
+            }
+          : queryParams;
+
+      const qs = buildQuery(reportQueryParams);
 
       const res = await fetch(`${api}?${qs}`, { cache: "no-store" });
       const json = await res.json();
