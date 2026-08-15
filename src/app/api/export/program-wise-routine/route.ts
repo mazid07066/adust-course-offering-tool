@@ -44,7 +44,22 @@ export async function GET(req: NextRequest) {
     const targetPrograms = programCode ? [programCode] : programs;
 
     for (const program of targetPrograms) {
-      const programRows = rows.filter((row) => row.programCode === program);
+      /*
+       * When a programCode is supplied, getScheduleRowsForReporting()
+       * has already applied UniFlow's academic/canonical program
+       * identity matching.
+       *
+       * Do not compare row.programCode to the selected catalog code
+       * again here. RAE NEW/OLD currently use a shared canonical
+       * operational/reporting identity, so an exact comparison would
+       * incorrectly remove valid rows from the Excel export.
+       *
+       * When no program is selected, retain normal per-program
+       * worksheet grouping.
+       */
+      const programRows = programCode
+        ? rows
+        : rows.filter((row) => row.programCode === program);
       const sheet = setupWorksheet(workbook, safeFileName(program).slice(0, 31));
 
       sheet.pageSetup = {
@@ -70,7 +85,7 @@ export async function GET(req: NextRequest) {
       sheet.getCell("A1").alignment = { horizontal: "center", vertical: "middle" };
 
       sheet.mergeCells("A2:K2");
-      sheet.getCell("A2").value = `Program-wise Complete Routine — ${program}`;
+      sheet.getCell("A2").value = `Program-wise Complete Routine â€” ${program}`;
       sheet.getCell("A2").font = { bold: true, size: 14 };
       sheet.getCell("A2").alignment = { horizontal: "center", vertical: "middle" };
 
