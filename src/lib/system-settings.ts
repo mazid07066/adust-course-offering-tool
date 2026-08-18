@@ -15,11 +15,42 @@ export type FacultyLevelCreditPolicy = {
   maxCredits: number | null;
 };
 
+/**
+ * Read a required system setting.
+ *
+ * Performance note:
+ *
+ * The previous implementation used Prisma upsert() for every read.
+ * With PostgreSQL/Prisma this caused multiple SQL statements even when
+ * the setting already existed.
+ *
+ * System settings are read very frequently during faculty login,
+ * dashboard loading, faculty-turn calculation and course choice.
+ *
+ * Normal reads now use findUnique(), which results in one database
+ * lookup. The upsert path is only used when the setting does not yet
+ * exist, preserving the previous automatic-default creation behavior.
+ */
 export async function getSetting(key: string): Promise<string> {
+  const existing = await prisma.systemSetting.findUnique({
+    where: {
+      settingKey: key,
+    },
+    select: {
+      settingValue: true,
+    },
+  });
+
+  if (existing) {
+    return existing.settingValue;
+  }
+
   const defaultValue = DEFAULT_SETTINGS[key] ?? "";
 
-  const setting = await prisma.systemSetting.upsert({
-    where: { settingKey: key },
+  const created = await prisma.systemSetting.upsert({
+    where: {
+      settingKey: key,
+    },
     update: {},
     create: {
       settingKey: key,
@@ -30,12 +61,14 @@ export async function getSetting(key: string): Promise<string> {
     },
   });
 
-  return setting.settingValue;
+  return created.settingValue;
 }
 
 export async function getOptionalSetting(key: string): Promise<string | null> {
   const setting = await prisma.systemSetting.findUnique({
-    where: { settingKey: key },
+    where: {
+      settingKey: key,
+    },
     select: {
       settingValue: true,
     },
@@ -50,7 +83,9 @@ export async function setSetting(
   userId?: number
 ) {
   return prisma.systemSetting.upsert({
-    where: { settingKey: key },
+    where: {
+      settingKey: key,
+    },
     update: {
       settingValue: value,
       updatedByUserId: userId,
@@ -66,6 +101,7 @@ export async function setSetting(
 export async function getSettingNumber(key: string): Promise<number> {
   const value = await getSetting(key);
   const num = Number(value);
+
   return Number.isNaN(num) ? 0 : num;
 }
 
@@ -79,6 +115,7 @@ export async function getOptionalSettingNumber(
   }
 
   const num = Number(value);
+
   return Number.isNaN(num) ? null : num;
 }
 
@@ -106,6 +143,7 @@ export async function getFacultyAutoAdvanceOnExpiry(): Promise<boolean> {
   const raw = (await getSetting("FACULTY_AUTO_ADVANCE_ON_EXPIRY"))
     .trim()
     .toLowerCase();
+
   return raw === "true";
 }
 
@@ -117,13 +155,22 @@ export function getFacultyLevelMaxKey(level: number) {
   return `FACULTY_LEVEL_${level}_MAX_CREDITS`;
 }
 
+/**
+ * Minimum and maximum credit limits are independent settings, so load
+ * them concurrently instead of paying two sequential remote database
+ * round trips.
+ */
 export async function getFacultyLevelCreditPolicy(
   level: number | null | undefined
 ): Promise<FacultyLevelCreditPolicy | null> {
-  if (!level) return null;
+  if (!level) {
+    return null;
+  }
 
-  const minCredits = await getOptionalSettingNumber(getFacultyLevelMinKey(level));
-  const maxCredits = await getOptionalSettingNumber(getFacultyLevelMaxKey(level));
+  const [minCredits, maxCredits] = await Promise.all([
+    getOptionalSettingNumber(getFacultyLevelMinKey(level)),
+    getOptionalSettingNumber(getFacultyLevelMaxKey(level)),
+  ]);
 
   return {
     level,
@@ -138,6 +185,7 @@ export async function getAllFacultyLevelCreditPolicies(
   const items = await Promise.all(
     levels.map(async (level) => {
       const policy = await getFacultyLevelCreditPolicy(level);
+
       return (
         policy || {
           level,
@@ -158,10 +206,25 @@ export async function setFacultyLevelCreditPolicy(
   userId?: number
 ) {
   const minValue =
-    minCredits === null || Number.isNaN(minCredits) ? "" : String(minCredits);
-  const maxValue =
-    maxCredits === null || Number.isNaN(maxCredits) ? "" : String(maxCredits);
+    minCredits === null || Number.isNaN(minCredits)
+      ? ""
+      : String(minCredits);
 
-  await setSetting(getFacultyLevelMinKey(level), minValue, userId);
-  await setSetting(getFacultyLevelMaxKey(level), maxValue, userId);
+  const maxValue =
+    maxCredits === null || Number.isNaN(maxCredits)
+      ? ""
+      : String(maxCredits);
+
+  await Promise.all([
+    setSetting(
+      getFacultyLevelMinKey(level),
+      minValue,
+      userId
+    ),
+    setSetting(
+      getFacultyLevelMaxKey(level),
+      maxValue,
+      userId
+    ),
+  ]);
 }

@@ -10,6 +10,37 @@ export type SessionUser = {
   teacher_id: number | null;
 };
 
+type SessionUserLookupRow = {
+  user_id: number;
+  username: string;
+  full_name: string;
+  role: string;
+  is_active: boolean | null;
+  teacher_id: number | null;
+  expires_at: Date;
+  revoked_at: Date | null;
+};
+
+/**
+ * Resolve the currently authenticated UniFlow user.
+ *
+ * The active authentication flow uses the existing
+ * `faculty_login_sessions` table.
+ *
+ * Previously this function performed two sequential database
+ * round trips:
+ *
+ *   1. faculty_login_sessions lookup
+ *   2. users lookup
+ *
+ * Faculty pages call several authenticated APIs in parallel, so
+ * removing one database round trip from every API request reduces
+ * repeated remote database latency.
+ *
+ * This keeps the same table, cookie, session policy, and return
+ * shape while resolving the session and user in one parameterized
+ * JOIN query.
+ */
 export async function getSessionUser(): Promise<SessionUser | null> {
   const cookieStore = await cookies();
   const sessionToken = cookieStore.get("sessionToken")?.value;
@@ -18,48 +49,47 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     return null;
   }
 
-  const session = await prisma.faculty_login_sessions.findUnique({
-    where: {
-      session_token: sessionToken,
-    },
-  });
+  const rows = await prisma.$queryRaw<SessionUserLookupRow[]>`
+    SELECT
+      u.id AS user_id,
+      u.username,
+      u.full_name,
+      u.role,
+      u.is_active,
+      u.teacher_id,
+      s.expires_at,
+      s.revoked_at
+    FROM faculty_login_sessions AS s
+    INNER JOIN users AS u
+      ON u.id = s.user_id
+    WHERE s.session_token = ${sessionToken}
+    LIMIT 1
+  `;
 
-  if (!session) {
+  const row = rows[0];
+
+  if (!row) {
     return null;
   }
 
-  if (session.revoked_at) {
+  if (row.revoked_at) {
     return null;
   }
 
-  if (new Date(session.expires_at).getTime() <= Date.now()) {
+  if (new Date(row.expires_at).getTime() <= Date.now()) {
     return null;
   }
 
-  const user = await prisma.users.findUnique({
-    where: {
-      id: session.user_id,
-    },
-    select: {
-      id: true,
-      username: true,
-      full_name: true,
-      role: true,
-      is_active: true,
-      teacher_id: true,
-    },
-  });
-
-  if (!user || !user.is_active) {
+  if (!row.is_active) {
     return null;
   }
 
   return {
-    id: user.id,
-    username: user.username,
-    full_name: user.full_name,
-    role: user.role,
-    is_active: user.is_active,
-    teacher_id: user.teacher_id ?? null,
+    id: row.user_id,
+    username: row.username,
+    full_name: row.full_name,
+    role: row.role,
+    is_active: row.is_active,
+    teacher_id: row.teacher_id ?? null,
   };
 }
