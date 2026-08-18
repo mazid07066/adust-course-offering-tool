@@ -1,5 +1,6 @@
 "use client";
 
+import UniFlowLogo from "@/components/uniflow-logo";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -417,32 +418,19 @@ function NavigationContent({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-slate-800/80 px-5 py-5">
+      <div className="shrink-0 border-b border-cyan-950/60 px-5 py-5">
         <div className="flex items-start justify-between gap-3">
-          <Link
-            href="/admin"
-            onClick={onNavigate}
-            className="min-w-0 flex-1"
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-lg font-black text-white shadow-lg shadow-blue-950/30">
-                U
-              </div>
+          <div className="min-w-0 flex-1">
+  <UniFlowLogo
+    href="/admin"
+    compact
+    darkSurface
+  />
 
-              <div className="min-w-0">
-                <div className="truncate text-xl font-bold tracking-tight text-white">
-                  UniFlow
-                </div>
-                <div className="mt-0.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                  Academic Planner
-                </div>
-              </div>
-            </div>
-
-            <p className="mt-4 text-xs leading-5 text-slate-400">
-              Academic operations, offering, scheduling and reporting workspace
-            </p>
-          </Link>
+  <p className="mt-3 max-w-[250px] text-xs leading-5 text-cyan-50/65">
+    Integrated academic planning, administration, scheduling, and analytics.
+  </p>
+</div>
 
           {mobile ? (
             <button
@@ -467,7 +455,7 @@ function NavigationContent({
             onChange={(event) => setSearchQuery(event.target.value)}
             placeholder="Find an admin tool..."
             aria-label="Search admin navigation"
-            className="w-full rounded-xl border border-slate-700 bg-slate-900 py-2.5 pl-9 pr-9 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+            className="w-full rounded-xl border border-cyan-900/70 bg-[#0b2f5f] py-2.5 pl-9 pr-9 text-sm text-white outline-none transition placeholder:text-cyan-100/40 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20"
           />
 
           {searchQuery ? (
@@ -539,7 +527,7 @@ function NavigationContent({
                         className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
                           groupHasActiveItem
                             ? "bg-blue-500/20 text-blue-200"
-                            : "bg-slate-800 text-slate-400"
+                            : "bg-slate-800 text-cyan-50/55"
                         }`}
                       >
                         {group.items.length}
@@ -559,7 +547,7 @@ function NavigationContent({
                     }`}
                   >
                     <div className="overflow-hidden">
-                      <div className="space-y-1 border-t border-slate-800/80 px-2.5 py-2.5">
+                      <div className="space-y-1 border-t border-cyan-950/60 px-2.5 py-2.5">
                         {group.items.map((item) => {
                           const active = item.href === activeHref;
 
@@ -716,7 +704,7 @@ export default function AdminLayout({
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
       <div className="mx-auto flex min-h-screen max-w-[1600px]">
-        <aside className="hidden w-80 shrink-0 border-r border-slate-800 bg-slate-950 text-white lg:block">
+        <aside className="hidden w-80 shrink-0 border-r border-slate-800 bg-[#071b3c] text-white lg:block">
           <div className="sticky top-0 h-screen">
             <NavigationContent
               activeHref={activeHref}
@@ -764,7 +752,7 @@ export default function AdminLayout({
                   </button>
 
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">
+                    <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#0867b2]">
                       UniFlow Academic Planner
                     </p>
 
@@ -827,7 +815,7 @@ export default function AdminLayout({
                     </summary>
 
                     <div className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
-                      <div className="px-2 pb-2 pt-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                      <div className="px-2 pb-2 pt-1 text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-50/55">
                         Frequently Used
                       </div>
 
@@ -851,13 +839,6 @@ export default function AdminLayout({
                   >
                     <HomeIcon />
                     <span className="hidden sm:inline">Dashboard</span>
-                  </Link>
-
-                  <Link
-                    href="/"
-                    className="hidden rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 sm:inline-flex"
-                  >
-                    Public Home
                   </Link>
 
                   <Link

@@ -13,8 +13,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ADUST Course Offering Tool",
-  description: "Course offering, master course import, transcript parsing, routine and faculty load management",
+  title: {
+    default: "UniFlow Academic Planner",
+    template: "%s | UniFlow Academic Planner",
+  },
+  description:
+    "Integrated academic planning, course offering, faculty workload, scheduling, student administration, reporting, and accreditation management platform.",
 };
 
 export default function RootLayout({
@@ -26,7 +30,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body
         suppressHydrationWarning
-        className={`${geistSans.variable} ${geistMono.variable} min-h-screen bg-slate-100 text-slate-900 antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} min-h-screen antialiased`}
       >
         {children}
       </body>

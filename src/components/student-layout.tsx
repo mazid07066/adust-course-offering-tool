@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import UniFlowLogo from "@/components/uniflow-logo";
 
 type StudentLayoutProps = {
   title?: string;
@@ -11,13 +12,28 @@ type StudentLayoutProps = {
 };
 
 const navItems = [
-  { href: "/student/dashboard", label: "Dashboard" },
-  { href: "/student/profile", label: "My Profile" },
-  { href: "/student/change-password", label: "Change Password" },
+  {
+    href: "/student/dashboard",
+    label: "Dashboard",
+  },
+  {
+    href: "/student/profile",
+    label: "My Profile",
+  },
+  {
+    href: "/student/change-password",
+    label: "Change Password",
+  },
 ];
 
-function isActive(pathname: string, href: string) {
-  return pathname === href || pathname.startsWith(`${href}/`);
+function isActive(
+  pathname: string,
+  href: string
+) {
+  return (
+    pathname === href ||
+    pathname.startsWith(`${href}/`)
+  );
 }
 
 export default function StudentLayout({
@@ -25,98 +41,127 @@ export default function StudentLayout({
   subtitle = "Academic profile and account workspace",
   children,
 }: StudentLayoutProps) {
-  const pathname = usePathname();
+  const pathname =
+    usePathname();
 
   async function handleLogout() {
     try {
-      await fetch("/api/student-auth/logout", {
-        method: "POST",
-      });
+      await fetch(
+        "/api/student-auth/logout",
+        {
+          method: "POST",
+        }
+      );
     } finally {
-      window.location.href = "/student/login";
+      window.location.href =
+        "/student/login";
     }
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900">
+    <div className="min-h-screen bg-[#f4f8fc] text-slate-900">
       <div className="mx-auto flex min-h-screen max-w-[1500px]">
-        <aside className="hidden w-72 shrink-0 border-r border-slate-800 bg-slate-950 text-white lg:block">
+        <aside className="hidden w-72 shrink-0 border-r border-cyan-950/50 bg-[#071b3c] text-white lg:block">
           <div className="sticky top-0 h-screen overflow-y-auto px-5 py-6">
-            <Link href="/student/dashboard" className="block">
-              <div className="text-2xl font-bold tracking-tight">
-                UniFlow Student
-              </div>
-              <p className="mt-2 text-sm leading-5 text-slate-300">
-                ADUST student portal workspace
-              </p>
-            </Link>
+            <UniFlowLogo
+              href="/student/dashboard"
+              compact
+              darkSurface
+            />
+
+            <p className="mt-4 text-xs leading-5 text-cyan-50/60">
+              Student academic identity,
+              profile, registration, and
+              academic service workspace.
+            </p>
 
             <nav className="mt-8 space-y-1">
-              {navItems.map((item) => {
-                const active = isActive(pathname, item.href);
+              {navItems.map(
+                (item) => {
+                  const active =
+                    isActive(
+                      pathname,
+                      item.href
+                    );
 
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`block rounded-xl px-4 py-3 text-sm font-medium transition ${
-                      active
-                        ? "bg-blue-600 text-white shadow"
-                        : "text-slate-200 hover:bg-slate-800 hover:text-white"
-                    }`}
-                  >
-                    {item.label}
-                  </Link>
-                );
-              })}
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={`block rounded-xl px-4 py-3 text-sm font-semibold transition ${
+                        active
+                          ? "bg-[#0867b2] text-white shadow-lg shadow-black/10"
+                          : "text-cyan-50/75 hover:bg-[#0b2f5f] hover:text-white"
+                      }`}
+                    >
+                      {item.label}
+                    </Link>
+                  );
+                }
+              )}
             </nav>
 
-            <div className="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-300">
-              Registration, billing, attendance, grades, admit card, and result
-              features are intentionally locked for later ERP checkpoints.
+            <div className="mt-8 rounded-2xl border border-cyan-900/60 bg-[#0b2f5f]/70 p-4 text-sm leading-6 text-cyan-50/70">
+              Additional student ERP
+              services will become
+              available as the relevant
+              academic modules are
+              activated.
             </div>
           </div>
         </aside>
 
         <main className="min-w-0 flex-1">
-          <header className="border-b border-slate-200 bg-white">
-            <div className="px-4 py-5 sm:px-6 lg:px-8">
+          <header className="sticky top-0 z-30 border-b border-[#d9e5f0] bg-white/95 backdrop-blur">
+            <div className="px-4 py-4 sm:px-6 lg:px-8">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">
-                    ADUST UniFlow Student Portal
+                  <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#079db8]">
+                    UniFlow Student Portal
                   </p>
-                  <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
+
+                  <h1 className="mt-1 text-2xl font-black tracking-tight text-[#071b3c]">
                     {title}
                   </h1>
+
                   {subtitle && (
-                    <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {subtitle}
+                    </p>
                   )}
                 </div>
 
-                <div className="flex flex-wrap gap-3">
-                  {navItems.map((item) => (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 lg:hidden"
-                    >
-                      {item.label}
-                    </Link>
-                  ))}
+                <div className="flex flex-wrap gap-2">
+                  {navItems.map(
+                    (item) => (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className="rounded-xl border border-[#d9e5f0] bg-white px-4 py-2 text-sm font-semibold text-[#071b3c] transition hover:border-[#079db8]/40 hover:bg-[#eafafb] lg:hidden"
+                      >
+                        {item.label}
+                      </Link>
+                    )
+                  )}
 
                   <button
-                    onClick={handleLogout}
-                    className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+                    onClick={
+                      handleLogout
+                    }
+                    className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100"
                   >
                     Logout
                   </button>
                 </div>
               </div>
             </div>
+
+            <div className="h-1 w-full bg-gradient-to-r from-[#0867b2] via-[#079db8] to-[#4dc21f]" />
           </header>
 
-          <section className="px-4 py-6 sm:px-6 lg:px-8">{children}</section>
+          <section className="px-4 py-6 sm:px-6 lg:px-8">
+            {children}
+          </section>
         </main>
       </div>
     </div>

@@ -494,9 +494,11 @@ export default function AdminDashboardPage() {
 
             <Link
               href="/admin/reports"
-              className="mt-6 inline-flex rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-blue-800 transition hover:bg-blue-50"
+              className="mt-6 inline-flex items-center rounded-xl border border-white/80 bg-white px-4 py-2.5 text-sm font-semibold shadow-sm transition hover:bg-blue-50"
             >
-              Access Academic Reports
+              <span style={{ color: "#1e3a8a" }}>
+                Access Academic Reports
+              </span>
             </Link>
           </div>
         </section>

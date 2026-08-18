@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import UniFlowLogo from "@/components/uniflow-logo";
 import { useEffect, useMemo, useState } from "react";
 
 type FacultyDetail = {
@@ -162,31 +163,41 @@ export default function FacultySchedulePageClient() {
   }, [termName, teacherId, dayOfWeek]);
 
   return (
-    <main className="min-h-screen bg-slate-100 text-slate-950">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-6 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.35em] text-blue-700">
-              UniFlow Academic Planner
-            </p>
-            <h1 className="mt-2 text-3xl font-black">
-              Faculty-wise Public Routine
-            </h1>
-            <p className="mt-2 text-sm text-slate-600">
-              View confirmed class and lab schedules by faculty member.
-            </p>
+    <main className="min-h-screen bg-[#f4f8fc] text-slate-950">
+      <header className="relative border-b border-[#d9e5f0] bg-white">
+        <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#0867b2] via-[#079db8] to-[#4dc21f]" />
+
+        <div className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-6 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+            <UniFlowLogo />
+
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#079db8]">
+                Official Faculty Schedule
+              </p>
+
+              <h1 className="mt-2 text-3xl font-black tracking-tight text-[#071b3c]">
+                Faculty-wise Public Routine
+              </h1>
+
+              <p className="mt-2 text-sm text-slate-600">
+                View official confirmed class and lab schedules by faculty member.
+              </p>
+
+              {termName ? (
+                <div className="mt-3 inline-flex rounded-full border border-[#079db8]/20 bg-[#eafafb] px-3 py-1 text-xs font-bold text-[#0867b2]">
+                  Official Semester · {termName}
+                </div>
+              ) : null}
+            </div>
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            
-
-            <Link
-              href="/schedule"
-              className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700"
-            >
-              Student Routine
-            </Link>
-          </div>
+          <Link
+            href="/schedule"
+            className="inline-flex rounded-xl bg-[#0867b2] px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#075491]"
+          >
+            Student Routine
+          </Link>
         </div>
       </header>
 

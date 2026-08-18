@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import FacultyTeachingPlanner from "./FacultyTeachingPlanner";
+import UniFlowLogo from "@/components/uniflow-logo";
 
 type NotificationItem = {
   id: number;
@@ -1648,30 +1649,30 @@ export default function FacultyDashboardPageClient() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-slate-100">
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 shadow-sm backdrop-blur">
+    <main className="min-h-screen bg-[#f4f8fc]">
+      <header className="sticky top-0 z-40 border-b border-[#d9e5f0] bg-white/95 shadow-sm backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-sm font-black text-white">
-              U
-            </div>
+            <UniFlowLogo
+              href="/faculty/dashboard"
+              compact
+            />
 
-            <div className="min-w-0">
-              <div className="truncate text-base font-bold text-slate-950">
-                UniFlow Faculty
+            <div className="hidden min-w-0 xl:block">
+              <div className="text-xs font-bold uppercase tracking-[0.18em] text-[#079db8]">
+                Faculty Workspace
               </div>
 
-              <div className="truncate text-xs text-slate-500">
-                {activeTermName ||
-                  "Faculty workspace"}
+              <div className="mt-1 truncate text-xs font-medium text-slate-500">
+                {activeTermName || "Academic operations"}
               </div>
             </div>
           </div>
 
-          <nav className="hidden items-center gap-1 rounded-xl bg-slate-100 p-1 md:flex">
+          <nav className="hidden items-center gap-1 rounded-xl border border-[#d9e5f0] bg-[#f4f8fc] p-1 md:flex">
             <a
               href="/faculty/dashboard"
-              className="rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-950 shadow-sm"
+              className="rounded-lg bg-[#0867b2] px-3 py-2 text-sm font-semibold text-white shadow-sm"
             >
               Dashboard
             </a>
@@ -1878,7 +1879,7 @@ export default function FacultyDashboardPageClient() {
                 }}
                 className="flex h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white pl-1.5 pr-2.5 text-slate-700 transition hover:bg-slate-50"
               >
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 text-xs font-bold uppercase text-white">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#0867b2] text-xs font-bold uppercase text-white">
                   {facultyInitial}
                 </span>
 
@@ -1893,7 +1894,7 @@ export default function FacultyDashboardPageClient() {
                 <div className="absolute right-0 top-12 z-50 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
                   <div className="border-b border-slate-100 px-4 py-4">
                     <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-sm font-black uppercase text-white">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#0867b2] text-sm font-black uppercase text-white">
                         {facultyInitial}
                       </div>
 
@@ -1986,11 +1987,11 @@ export default function FacultyDashboardPageClient() {
           </>
         ) : dashboard ? (
           <>
-            <section className="overflow-hidden rounded-3xl border border-blue-100 bg-gradient-to-br from-white via-blue-50 to-indigo-50 text-slate-900 shadow-sm">
+            <section className="overflow-hidden rounded-3xl border border-[#079db8]/20 bg-gradient-to-br from-white via-[#edf6ff] to-[#eafafb] text-slate-900 shadow-sm">
               <div className="relative p-6 sm:p-8">
-                <div className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full bg-blue-300/30 blur-3xl" />
+                <div className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full bg-[#079db8]/20 blur-3xl" />
 
-                <div className="pointer-events-none absolute -bottom-28 left-1/3 h-64 w-64 rounded-full bg-indigo-200/40 blur-3xl" />
+                <div className="pointer-events-none absolute -bottom-28 left-1/3 h-64 w-64 rounded-full bg-[#4dc21f]/10 blur-3xl" />
 
                 <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
                   <div className="max-w-3xl">
@@ -2029,7 +2030,7 @@ export default function FacultyDashboardPageClient() {
                       )}
                     </div>
 
-                    <div className="mt-5 text-sm font-semibold uppercase tracking-[0.18em] text-blue-600">
+                    <div className="mt-5 text-sm font-semibold uppercase tracking-[0.18em] text-[#0867b2]">
                       FALL 2026
                     </div>
 
@@ -2068,7 +2069,7 @@ export default function FacultyDashboardPageClient() {
                   <div className="flex flex-wrap gap-2">
                     <a
                       href="#weekly-routine"
-                      className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                      className="inline-flex items-center justify-center rounded-xl bg-[#0867b2] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#075491] focus:outline-none focus:ring-2 focus:ring-[#079db8]/30"
                     >
                       View Weekly Routine
                     </a>

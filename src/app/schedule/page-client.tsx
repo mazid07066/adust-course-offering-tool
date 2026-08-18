@@ -1,5 +1,7 @@
 "use client";
 
+import UniFlowLogo from "@/components/uniflow-logo";
+
 import { useEffect, useMemo, useState } from "react";
 
 type FacultyDetail = {
@@ -229,30 +231,39 @@ export default function PublicSchedulePageClient() {
   }, [rows]);
 
   return (
-    <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-900">
+    <main className="min-h-screen bg-[#f4f8fc] px-4 py-8 text-slate-900">
       <div className="mx-auto max-w-7xl space-y-6">
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">
-                UniFlow Academic Planner
-              </p>
-              <h1 className="mt-2 text-3xl font-bold tracking-tight">
-                Public Batch-wise Routine
-              </h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-                Students can view the finalized batch-wise class and lab routine
-                by academic term, academic program, batch, and day. This page is
-                only for viewing the routine.
-              </p>
+        <section className="relative overflow-hidden rounded-3xl border border-[#079db8]/20 bg-white shadow-sm">
+          <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#0867b2] via-[#079db8] to-[#4dc21f]" />
+
+          <div className="flex flex-col gap-6 p-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+              <UniFlowLogo />
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#079db8]">
+                  Official Public Schedule
+                </p>
+
+                <h1 className="mt-2 text-3xl font-black tracking-tight text-[#071b3c]">
+                  Public Batch-wise Routine
+                </h1>
+
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                  View the official semester class and lab routine by academic
+                  program, batch, and day.
+                </p>
+              </div>
             </div>
 
-            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-              Public routine source
-              <br />
-              <span className="font-semibold">
-                {termName || "Select an academic term"}
-              </span>
+            <div className="rounded-2xl border border-[#079db8]/20 bg-[#eafafb] px-5 py-4 text-sm text-[#071b3c]">
+              <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#079db8]">
+                Official Semester
+              </div>
+
+              <div className="mt-1 text-lg font-black">
+                {termName || "Schedule not released"}
+              </div>
             </div>
           </div>
         </section>
