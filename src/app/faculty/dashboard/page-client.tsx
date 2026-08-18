@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 type NotificationItem = {
   id: number;
@@ -61,6 +66,18 @@ type DashboardResponse = {
   };
 };
 
+type ScheduleRow = {
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  credit: number;
+  category: "THEORY" | "LAB" | "PROJECT";
+  dayOfWeek: string;
+  timeText: string;
+  roomText: string;
+  batchCodes: string[];
+};
+
 type SheetResponse = {
   success?: boolean;
   error?: string;
@@ -91,18 +108,55 @@ type SheetResponse = {
     totalCredits: number;
   }>;
 
-  scheduleRows?: Array<{
-    courseCode: string;
-    courseTitle: string;
-    section: string;
-    credit: number;
-    category: "THEORY" | "LAB" | "PROJECT";
-    dayOfWeek: string;
-    timeText: string;
-    roomText: string;
-    batchCodes: string[];
-  }>;
+  scheduleRows?: ScheduleRow[];
 };
+
+type CourseSummary = {
+  key: string;
+  courseCode: string;
+  courseTitle: string;
+  section: string;
+  credit: number;
+  category: ScheduleRow["category"];
+  batchCodes: string[];
+  meetings: ScheduleRow[];
+};
+
+type ScheduleOccurrence = {
+  row: ScheduleRow;
+  start: Date;
+  end: Date | null;
+};
+
+const FALL_2026_START = new Date(
+  2026,
+  8,
+  1,
+  0,
+  0,
+  0,
+  0
+);
+
+const DAY_NUMBER: Record<string, number> = {
+  SUNDAY: 0,
+  MONDAY: 1,
+  TUESDAY: 2,
+  WEDNESDAY: 3,
+  THURSDAY: 4,
+  FRIDAY: 5,
+  SATURDAY: 6,
+};
+
+const DAY_LABELS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
 
 function badgeClasses(status: string) {
   if (status === "OPEN") {
@@ -110,7 +164,7 @@ function badgeClasses(status: string) {
   }
 
   if (status === "CLOSED") {
-    return "bg-red-100 text-red-700";
+    return "bg-slate-100 text-slate-700";
   }
 
   if (status === "FINAL_LOCKED") {
@@ -120,31 +174,246 @@ function badgeClasses(status: string) {
   return "bg-slate-100 text-slate-700";
 }
 
-function numberText(value: number | null | undefined) {
-  return value === null || value === undefined ? "-" : String(value);
+function numberText(
+  value: number | null | undefined
+) {
+  return value === null || value === undefined
+    ? "-"
+    : String(value);
+}
+
+function normalizeDay(value: string) {
+  const upper = String(value || "")
+    .trim()
+    .toUpperCase();
+
+  if (DAY_NUMBER[upper] !== undefined) {
+    return DAY_LABELS[DAY_NUMBER[upper]];
+  }
+
+  return "";
+}
+
+function parseClockPart(value: string) {
+  const cleaned = value
+    .trim()
+    .replace(/\./g, "")
+    .toUpperCase();
+
+  const match = cleaned.match(
+    /^(\d{1,2}):(\d{2})\s*(AM|PM)?$/
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const suffix = match[3];
+
+  if (
+    Number.isNaN(hour) ||
+    Number.isNaN(minute) ||
+    hour > 23 ||
+    minute > 59
+  ) {
+    return null;
+  }
+
+  if (suffix) {
+    if (hour > 12) {
+      return null;
+    }
+
+    if (suffix === "AM" && hour === 12) {
+      hour = 0;
+    }
+
+    if (suffix === "PM" && hour !== 12) {
+      hour += 12;
+    }
+  }
+
+  return {
+    hour,
+    minute,
+  };
+}
+
+function parseTimeRange(value: string) {
+  const normalized = String(value || "")
+    .replace(/[–—]/g, "-")
+    .trim();
+
+  const parts = normalized
+    .split("-")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length < 1) {
+    return null;
+  }
+
+  const start = parseClockPart(parts[0]);
+
+  if (!start) {
+    return null;
+  }
+
+  const end =
+    parts.length > 1
+      ? parseClockPart(parts[1])
+      : null;
+
+  return {
+    start,
+    end,
+  };
+}
+
+function startOfLocalDay(value: Date) {
+  return new Date(
+    value.getFullYear(),
+    value.getMonth(),
+    value.getDate(),
+    0,
+    0,
+    0,
+    0
+  );
+}
+
+function differenceInCalendarDays(
+  later: Date,
+  earlier: Date
+) {
+  const a = startOfLocalDay(later).getTime();
+  const b = startOfLocalDay(earlier).getTime();
+
+  return Math.round(
+    (a - b) / (24 * 60 * 60 * 1000)
+  );
+}
+
+function getSemesterContext(now: Date) {
+  const daysUntilStart =
+    differenceInCalendarDays(
+      FALL_2026_START,
+      now
+    );
+
+  if (daysUntilStart > 1) {
+    return {
+      phase: "PRE_SEMESTER" as const,
+      eyebrow: "Semester preparation",
+      title: `Semester begins in ${daysUntilStart} days`,
+      subtitle:
+        "FALL 2026 begins on 1 September 2026.",
+      daysUntilStart,
+      weekNumber: null,
+    };
+  }
+
+  if (daysUntilStart === 1) {
+    return {
+      phase: "PRE_SEMESTER" as const,
+      eyebrow: "Semester preparation",
+      title: "Semester begins tomorrow",
+      subtitle:
+        "FALL 2026 begins on 1 September 2026.",
+      daysUntilStart,
+      weekNumber: null,
+    };
+  }
+
+  if (daysUntilStart === 0) {
+    return {
+      phase: "START_DAY" as const,
+      eyebrow: "Semester opening day",
+      title: "FALL 2026 starts today",
+      subtitle:
+        "The semester begins today, 1 September 2026.",
+      daysUntilStart,
+      weekNumber: 1,
+    };
+  }
+
+  const elapsedDays =
+    differenceInCalendarDays(
+      now,
+      FALL_2026_START
+    );
+
+  const weekNumber =
+    Math.floor(elapsedDays / 7) + 1;
+
+  return {
+    phase: "IN_PROGRESS" as const,
+    eyebrow: "Semester in progress",
+    title: `Week ${weekNumber} of FALL 2026`,
+    subtitle: `${elapsedDays + 1} day${
+      elapsedDays === 0 ? "" : "s"
+    } since semester start.`,
+    daysUntilStart,
+    weekNumber,
+  };
+}
+
+function formatDisplayDate(value: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(value);
+}
+
+function formatShortDate(value: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  }).format(value);
+}
+
+function formatClock(value: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(value);
 }
 
 function timeAgo(value: string) {
   const date = new Date(value);
-  const difference = Date.now() - date.getTime();
 
   if (Number.isNaN(date.getTime())) {
     return "";
   }
 
-  const seconds = Math.max(0, Math.floor(difference / 1000));
+  const difference =
+    Date.now() - date.getTime();
+
+  const seconds = Math.max(
+    0,
+    Math.floor(difference / 1000)
+  );
 
   if (seconds < 60) {
     return "Just now";
   }
 
-  const minutes = Math.floor(seconds / 60);
+  const minutes = Math.floor(
+    seconds / 60
+  );
 
   if (minutes < 60) {
     return `${minutes}m ago`;
   }
 
-  const hours = Math.floor(minutes / 60);
+  const hours = Math.floor(
+    minutes / 60
+  );
 
   if (hours < 24) {
     return `${hours}h ago`;
@@ -157,6 +426,204 @@ function timeAgo(value: string) {
   }
 
   return date.toLocaleDateString();
+}
+
+function countdownText(
+  target: Date,
+  now: Date
+) {
+  const difference =
+    target.getTime() - now.getTime();
+
+  if (difference <= 0) {
+    return "Now";
+  }
+
+  const minutes = Math.floor(
+    difference / 60000
+  );
+
+  if (minutes < 60) {
+    return `${Math.max(
+      1,
+      minutes
+    )} min`;
+  }
+
+  const hours = Math.floor(
+    minutes / 60
+  );
+
+  const remainingMinutes =
+    minutes % 60;
+
+  if (hours < 24) {
+    if (remainingMinutes === 0) {
+      return `${hours}h`;
+    }
+
+    return `${hours}h ${remainingMinutes}m`;
+  }
+
+  const days = Math.floor(
+    hours / 24
+  );
+
+  return `${days} day${
+    days === 1 ? "" : "s"
+  }`;
+}
+
+function getOccurrenceForDate(
+  row: ScheduleRow,
+  date: Date
+): ScheduleOccurrence | null {
+  const day = normalizeDay(
+    row.dayOfWeek
+  );
+
+  if (!day) {
+    return null;
+  }
+
+  const range = parseTimeRange(
+    row.timeText
+  );
+
+  if (!range) {
+    return null;
+  }
+
+  const start = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    range.start.hour,
+    range.start.minute,
+    0,
+    0
+  );
+
+  const end = range.end
+    ? new Date(
+        date.getFullYear(),
+        date.getMonth(),
+        date.getDate(),
+        range.end.hour,
+        range.end.minute,
+        0,
+        0
+      )
+    : null;
+
+  return {
+    row,
+    start,
+    end,
+  };
+}
+
+function getNextOccurrence(
+  rows: ScheduleRow[],
+  now: Date,
+  semesterStarted: boolean
+) {
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const searchStart = semesterStarted
+    ? new Date(now)
+    : new Date(FALL_2026_START);
+
+  let best:
+    | ScheduleOccurrence
+    | null = null;
+
+  for (let dayOffset = 0; dayOffset <= 7; dayOffset += 1) {
+    const date = new Date(
+      searchStart.getFullYear(),
+      searchStart.getMonth(),
+      searchStart.getDate() +
+        dayOffset,
+      0,
+      0,
+      0,
+      0
+    );
+
+    const dateDay = date.getDay();
+
+    for (const row of rows) {
+      const normalizedDay =
+        normalizeDay(row.dayOfWeek);
+
+      if (!normalizedDay) {
+        continue;
+      }
+
+      const rowDay =
+        DAY_NUMBER[
+          normalizedDay.toUpperCase()
+        ];
+
+      if (rowDay !== dateDay) {
+        continue;
+      }
+
+      const occurrence =
+        getOccurrenceForDate(
+          row,
+          date
+        );
+
+      if (!occurrence) {
+        continue;
+      }
+
+      const lowerBoundary =
+        semesterStarted
+          ? now
+          : FALL_2026_START;
+
+      if (
+        occurrence.start.getTime() <
+        lowerBoundary.getTime()
+      ) {
+        continue;
+      }
+
+      if (
+        !best ||
+        occurrence.start.getTime() <
+          best.start.getTime()
+      ) {
+        best = occurrence;
+      }
+    }
+  }
+
+  return best;
+}
+
+function uniqueCourseKey(
+  row: ScheduleRow
+) {
+  return `${row.courseCode}::${row.section}`;
+}
+
+function categoryBadgeClasses(
+  category: ScheduleRow["category"]
+) {
+  if (category === "LAB") {
+    return "bg-violet-100 text-violet-700";
+  }
+
+  if (category === "PROJECT") {
+    return "bg-amber-100 text-amber-700";
+  }
+
+  return "bg-blue-100 text-blue-700";
 }
 
 function BellIcon() {
@@ -174,6 +641,7 @@ function BellIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+
       <path
         d="M10 21h4"
         stroke="currentColor"
@@ -198,6 +666,7 @@ function RefreshIcon() {
         strokeWidth="1.8"
         strokeLinecap="round"
       />
+
       <path
         d="M20 5v6h-6"
         stroke="currentColor"
@@ -209,341 +678,602 @@ function RefreshIcon() {
   );
 }
 
-function InfoBox({
+function ChevronIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className="h-4 w-4"
+    >
+      <path
+        d="M6 9l6 6 6-6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className="h-5 w-5"
+    >
+      <rect
+        x="3"
+        y="5"
+        width="18"
+        height="16"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.7"
+      />
+
+      <path
+        d="M7 3v4M17 3v4M3 10h18"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function ClockIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className="h-5 w-5"
+    >
+      <circle
+        cx="12"
+        cy="12"
+        r="9"
+        stroke="currentColor"
+        strokeWidth="1.7"
+      />
+
+      <path
+        d="M12 7v5l3 2"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function BookIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className="h-5 w-5"
+    >
+      <path
+        d="M4 5.5A2.5 2.5 0 016.5 3H11v16H6.5A2.5 2.5 0 004 21.5v-16z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+      />
+
+      <path
+        d="M20 5.5A2.5 2.5 0 0017.5 3H13v16h4.5a2.5 2.5 0 012.5 2.5v-16z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+      />
+    </svg>
+  );
+}
+
+function MetricCard({
   label,
   value,
+  helper,
+  icon,
   emphasis = false,
 }: {
   label: string;
   value: string;
+  helper?: string;
+  icon: React.ReactNode;
   emphasis?: boolean;
 }) {
   return (
     <div
-      className={`rounded-2xl border p-4 transition ${
+      className={`rounded-2xl border p-5 shadow-sm transition ${
         emphasis
-          ? "border-blue-200 bg-blue-50 shadow-sm"
-          : "border-slate-200 bg-white shadow-sm"
+          ? "border-blue-200 bg-blue-50"
+          : "border-slate-200 bg-white"
       }`}
     >
-      <div
-        className={`text-sm ${
-          emphasis ? "text-blue-700" : "text-slate-500"
-        }`}
-      >
-        {label}
-      </div>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div
+            className={`text-sm font-medium ${
+              emphasis
+                ? "text-blue-700"
+                : "text-slate-500"
+            }`}
+          >
+            {label}
+          </div>
 
-      <div
-        className={`mt-1 font-semibold ${
-          emphasis ? "text-blue-950" : "text-slate-900"
-        }`}
-      >
-        {value}
+          <div
+            className={`mt-2 text-2xl font-bold tracking-tight ${
+              emphasis
+                ? "text-blue-950"
+                : "text-slate-950"
+            }`}
+          >
+            {value}
+          </div>
+
+          {helper && (
+            <div
+              className={`mt-1 text-xs ${
+                emphasis
+                  ? "text-blue-700"
+                  : "text-slate-500"
+              }`}
+            >
+              {helper}
+            </div>
+          )}
+        </div>
+
+        <div
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+            emphasis
+              ? "bg-blue-100 text-blue-700"
+              : "bg-slate-100 text-slate-600"
+          }`}
+        >
+          {icon}
+        </div>
       </div>
     </div>
   );
 }
 
-function renderSheetCard(
-  title: string,
-  subtitle: string,
-  exportLabel: string,
-  exportHref: string,
-  sheet: SheetResponse | null
-) {
+function SkeletonCard() {
   return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-950">{title}</h2>
-
-          <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
-        </div>
-
-        <a
-          href={exportHref}
-          className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
-        >
-          {exportLabel}
-        </a>
-      </div>
-
-      {sheet?.success && sheet.faculty ? (
-        <div className="space-y-7 p-5">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <InfoBox
-              label="Faculty Department"
-              value={`${sheet.faculty.departmentCode} | ${sheet.faculty.departmentName}`}
-            />
-
-            <InfoBox label="Semester" value={sheet.termName || "-"} />
-
-            <InfoBox
-              label="Date and Time"
-              value={
-                sheet.assignedAt
-                  ? new Date(sheet.assignedAt).toLocaleString()
-                  : sheet.submittedAt
-                    ? new Date(sheet.submittedAt).toLocaleString()
-                    : "-"
-              }
-            />
-
-            <InfoBox
-              label="Faculty Full Name"
-              value={sheet.faculty.fullName}
-            />
-
-            <InfoBox
-              label="Designation"
-              value={sheet.faculty.designation}
-            />
-
-            <InfoBox
-              label="Faculty Initial"
-              value={sheet.faculty.initial}
-            />
-
-            <InfoBox
-              label="Theory Credits"
-              value={String(sheet.totals?.theoryCredits ?? 0)}
-            />
-
-            <InfoBox
-              label="Lab Credits"
-              value={String(sheet.totals?.labCredits ?? 0)}
-            />
-
-            <InfoBox
-              label="Total Credits"
-              value={String(sheet.totals?.totalCredits ?? 0)}
-              emphasis
-            />
-          </div>
-
-          <div>
-            <h3 className="text-base font-semibold text-slate-900">
-              Program-wise Credit Distribution
-            </h3>
-
-            <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 text-slate-600">
-                  <tr>
-                    <th className="border-b px-4 py-3 text-left font-semibold">
-                      Program
-                    </th>
-
-                    <th className="border-b px-4 py-3 text-left font-semibold">
-                      Theory
-                    </th>
-
-                    <th className="border-b px-4 py-3 text-left font-semibold">
-                      Lab
-                    </th>
-
-                    <th className="border-b px-4 py-3 text-left font-semibold">
-                      Total
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {(sheet.programTallies || []).map((item) => (
-                    <tr
-                      key={item.programCode}
-                      className="transition hover:bg-slate-50"
-                    >
-                      <td className="border-b border-slate-100 px-4 py-3 font-medium text-slate-900">
-                        {item.programCode}
-                      </td>
-
-                      <td className="border-b border-slate-100 px-4 py-3">
-                        {item.theoryCredits}
-                      </td>
-
-                      <td className="border-b border-slate-100 px-4 py-3">
-                        {item.labCredits}
-                      </td>
-
-                      <td className="border-b border-slate-100 px-4 py-3 font-semibold">
-                        {item.totalCredits}
-                      </td>
-                    </tr>
-                  ))}
-
-                  {(sheet.programTallies || []).length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={4}
-                        className="px-4 py-7 text-center text-slate-500"
-                      >
-                        No program tally found.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-base font-semibold text-slate-900">
-              Full Course Schedule
-            </h3>
-
-            <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 text-slate-600">
-                  <tr>
-                    <th className="border-b px-4 py-3 text-left font-semibold">
-                      Course Code
-                    </th>
-
-                    <th className="border-b px-4 py-3 text-left font-semibold">
-                      Section
-                    </th>
-
-                    <th className="border-b px-4 py-3 text-left font-semibold">
-                      Credit
-                    </th>
-
-                    <th className="border-b px-4 py-3 text-left font-semibold">
-                      Day
-                    </th>
-
-                    <th className="border-b px-4 py-3 text-left font-semibold">
-                      Time
-                    </th>
-
-                    <th className="border-b px-4 py-3 text-left font-semibold">
-                      Room
-                    </th>
-
-                    <th className="border-b px-4 py-3 text-left font-semibold">
-                      Category
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {(sheet.scheduleRows || []).map((item, index) => (
-                    <tr
-                      key={`${item.courseCode}-${item.section}-${index}`}
-                      className="transition hover:bg-slate-50"
-                    >
-                      <td className="border-b border-slate-100 px-4 py-3 font-semibold text-slate-900">
-                        {item.courseCode}
-                      </td>
-
-                      <td className="border-b border-slate-100 px-4 py-3">
-                        {item.section}
-                      </td>
-
-                      <td className="border-b border-slate-100 px-4 py-3">
-                        {item.credit}
-                      </td>
-
-                      <td className="border-b border-slate-100 px-4 py-3">
-                        {item.dayOfWeek}
-                      </td>
-
-                      <td className="border-b border-slate-100 px-4 py-3">
-                        {item.timeText}
-                      </td>
-
-                      <td className="border-b border-slate-100 px-4 py-3">
-                        {item.roomText}
-                      </td>
-
-                      <td className="border-b border-slate-100 px-4 py-3">
-                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                          {item.category}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-
-                  {(sheet.scheduleRows || []).length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={7}
-                        className="px-4 py-7 text-center text-slate-500"
-                      >
-                        No rows found for this term.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="m-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-          No sheet data found for this semester.
-        </div>
-      )}
-    </section>
+    <div className="animate-pulse rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="h-3 w-24 rounded bg-slate-200" />
+      <div className="mt-4 h-7 w-20 rounded bg-slate-200" />
+      <div className="mt-3 h-3 w-32 rounded bg-slate-100" />
+    </div>
   );
 }
 
 export default function FacultyDashboardPageClient() {
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState("");
+  const [loading, setLoading] =
+    useState(false);
+
+  const [refreshing, setRefreshing] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
 
   const [dashboard, setDashboard] =
-    useState<DashboardResponse | null>(null);
+    useState<DashboardResponse | null>(
+      null
+    );
 
   const [approvedSheet, setApprovedSheet] =
-    useState<SheetResponse | null>(null);
+    useState<SheetResponse | null>(
+      null
+    );
 
   const [choiceSheet, setChoiceSheet] =
-    useState<SheetResponse | null>(null);
+    useState<SheetResponse | null>(
+      null
+    );
 
-  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [
+    notificationOpen,
+    setNotificationOpen,
+  ] = useState(false);
 
-  const notificationPanelRef = useRef<HTMLDivElement | null>(null);
+  const [profileOpen, setProfileOpen] =
+    useState(false);
+
+  const [selectedDay, setSelectedDay] =
+    useState("");
+
+  const [now, setNow] = useState(
+    () => new Date()
+  );
+
+  const notificationPanelRef =
+    useRef<HTMLDivElement | null>(
+      null
+    );
+
+  const profilePanelRef =
+    useRef<HTMLDivElement | null>(
+      null
+    );
 
   const activeTermName =
-    dashboard?.visibleOfferingPool?.activeTermName || "";
+    dashboard?.visibleOfferingPool
+      ?.activeTermName || "";
 
-  const preassignedCredits = approvedSheet?.success
-    ? Number(approvedSheet.totals?.totalCredits || 0)
-    : 0;
+  const effectiveSheet =
+    approvedSheet?.success
+      ? approvedSheet
+      : choiceSheet?.success
+        ? choiceSheet
+        : null;
 
-  const facultyChoiceCredits = choiceSheet?.success
-    ? Number(choiceSheet.totals?.totalCredits || 0)
-    : 0;
+  const scheduleRows = useMemo(
+    () =>
+      effectiveSheet?.scheduleRows ||
+      [],
+    [effectiveSheet]
+  );
 
-  const maxCredits =
-    dashboard?.policy?.creditPolicy?.maxCredits ?? null;
-
-  const remainingChoiceCapacity =
-    maxCredits === null || maxCredits === undefined
-      ? null
-      : Number(
-          Math.max(0, maxCredits - preassignedCredits).toFixed(2)
-        );
+  const approvedRows =
+    approvedSheet?.scheduleRows || [];
 
   const hasApprovedAssignedRows =
     Boolean(approvedSheet?.success) &&
-    Boolean(approvedSheet?.scheduleRows) &&
-    (approvedSheet?.scheduleRows?.length || 0) > 0;
+    approvedRows.length > 0;
+
+  const choiceIsOpen =
+    dashboard?.policy?.windowStatus ===
+    "OPEN";
+
+  const semesterContext =
+    useMemo(
+      () => getSemesterContext(now),
+      [now]
+    );
+
+  const semesterStarted =
+    semesterContext.phase !==
+      "PRE_SEMESTER";
+
+  const assignmentReady =
+    hasApprovedAssignedRows;
+
+  const assignmentStatusText =
+    assignmentReady
+      ? "Faculty assignment finalized"
+      : effectiveSheet?.success
+        ? "Faculty load prepared"
+        : "Assignment preparation in progress";
+
+  const totalCredits =
+    effectiveSheet?.totals?.totalCredits ??
+    0;
+
+  const theoryCredits =
+    effectiveSheet?.totals?.theoryCredits ??
+    0;
+
+  const labCredits =
+    effectiveSheet?.totals?.labCredits ??
+    0;
+
+  const maxCredits =
+    dashboard?.policy?.creditPolicy
+      ?.maxCredits ?? null;
+
+  const minCredits =
+    dashboard?.policy?.creditPolicy
+      ?.minCredits ?? null;
+
+  const courseSummaries =
+    useMemo<CourseSummary[]>(() => {
+      const map = new Map<
+        string,
+        CourseSummary
+      >();
+
+      for (const row of scheduleRows) {
+        const key =
+          uniqueCourseKey(row);
+
+        const existing =
+          map.get(key);
+
+        if (existing) {
+          existing.meetings.push(row);
+
+          existing.batchCodes =
+            Array.from(
+              new Set([
+                ...existing.batchCodes,
+                ...(row.batchCodes || []),
+              ])
+            );
+
+          continue;
+        }
+
+        map.set(key, {
+          key,
+          courseCode: row.courseCode,
+          courseTitle: row.courseTitle,
+          section: row.section,
+          credit: Number(
+            row.credit || 0
+          ),
+          category: row.category,
+          batchCodes:
+            row.batchCodes || [],
+          meetings: [row],
+        });
+      }
+
+      return Array.from(
+        map.values()
+      ).sort((a, b) =>
+        a.courseCode.localeCompare(
+          b.courseCode
+        )
+      );
+    }, [scheduleRows]);
+
+  const teachingDays =
+    useMemo(() => {
+      const set = new Set<string>();
+
+      for (const row of scheduleRows) {
+        const day =
+          normalizeDay(
+            row.dayOfWeek
+          );
+
+        if (day) {
+          set.add(day);
+        }
+      }
+
+      return Array.from(set).sort(
+        (a, b) =>
+          DAY_NUMBER[
+            a.toUpperCase()
+          ] -
+          DAY_NUMBER[
+            b.toUpperCase()
+          ]
+      );
+    }, [scheduleRows]);
+
+  const todayLabel =
+    DAY_LABELS[now.getDay()];
+
+  const todayRows =
+    useMemo(() => {
+      if (!semesterStarted) {
+        return [];
+      }
+
+      return scheduleRows
+        .filter(
+          (row) =>
+            normalizeDay(
+              row.dayOfWeek
+            ) === todayLabel
+        )
+        .sort((a, b) => {
+          const aRange =
+            parseTimeRange(
+              a.timeText
+            );
+
+          const bRange =
+            parseTimeRange(
+              b.timeText
+            );
+
+          if (!aRange || !bRange) {
+            return 0;
+          }
+
+          return (
+            aRange.start.hour * 60 +
+            aRange.start.minute -
+            (bRange.start.hour * 60 +
+              bRange.start.minute)
+          );
+        });
+    }, [
+      scheduleRows,
+      semesterStarted,
+      todayLabel,
+    ]);
+
+  const nextOccurrence =
+    useMemo(
+      () =>
+        getNextOccurrence(
+          scheduleRows,
+          now,
+          semesterStarted
+        ),
+      [
+        scheduleRows,
+        now,
+        semesterStarted,
+      ]
+    );
+
+  const filteredDayRows =
+    useMemo(() => {
+      if (!selectedDay) {
+        return [];
+      }
+
+      return scheduleRows
+        .filter(
+          (row) =>
+            normalizeDay(
+              row.dayOfWeek
+            ) === selectedDay
+        )
+        .sort((a, b) => {
+          const aRange =
+            parseTimeRange(
+              a.timeText
+            );
+
+          const bRange =
+            parseTimeRange(
+              b.timeText
+            );
+
+          if (!aRange || !bRange) {
+            return 0;
+          }
+
+          return (
+            aRange.start.hour * 60 +
+            aRange.start.minute -
+            (bRange.start.hour * 60 +
+              bRange.start.minute)
+          );
+        });
+    }, [
+      scheduleRows,
+      selectedDay,
+    ]);
 
   const notifications =
-    dashboard?.notifications?.recent || [];
+    dashboard?.notifications?.recent ||
+    [];
 
   const unreadCount =
-    dashboard?.notifications?.unreadCount || 0;
+    dashboard?.notifications
+      ?.unreadCount || 0;
 
-  async function loadSheets(term: string) {
-    const qs = new URLSearchParams();
+  const facultyInitial =
+    dashboard?.teacher?.teacherCode ||
+    effectiveSheet?.faculty?.initial ||
+    "F";
+
+  const facultyFullName =
+    dashboard?.teacher?.fullName ||
+    effectiveSheet?.faculty?.fullName ||
+    "Faculty";
+
+  const designation =
+    dashboard?.teacher?.designation ||
+    effectiveSheet?.faculty
+      ?.designation ||
+    "";
+
+  const departmentCode =
+    dashboard?.teacher
+      ?.departmentCode ||
+    effectiveSheet?.faculty
+      ?.departmentCode ||
+    "";
+
+  const sessionRemainingText =
+    useMemo(() => {
+      if (
+        !choiceIsOpen ||
+        !dashboard?.session
+          ?.expiresAt
+      ) {
+        return "";
+      }
+
+      const expiry = new Date(
+        dashboard.session.expiresAt
+      );
+
+      if (
+        Number.isNaN(
+          expiry.getTime()
+        )
+      ) {
+        return "";
+      }
+
+      const difference =
+        expiry.getTime() -
+        now.getTime();
+
+      if (difference <= 0) {
+        return "Session expired";
+      }
+
+      const totalMinutes =
+        Math.max(
+          1,
+          Math.ceil(
+            difference / 60000
+          )
+        );
+
+      if (totalMinutes < 60) {
+        return `${totalMinutes} min`;
+      }
+
+      const hours = Math.floor(
+        totalMinutes / 60
+      );
+
+      const minutes =
+        totalMinutes % 60;
+
+      return minutes > 0
+        ? `${hours}h ${minutes}m`
+        : `${hours}h`;
+    }, [
+      choiceIsOpen,
+      dashboard?.session?.expiresAt,
+      now,
+    ]);
+
+  const loadProgress =
+    useMemo(() => {
+      if (
+        maxCredits === null ||
+        maxCredits <= 0
+      ) {
+        return 0;
+      }
+
+      return Math.min(
+        100,
+        Math.max(
+          0,
+          (totalCredits /
+            maxCredits) *
+            100
+        )
+      );
+    }, [
+      totalCredits,
+      maxCredits,
+    ]);
+
+  async function loadSheets(
+    term: string
+  ) {
+    const qs =
+      new URLSearchParams();
+
     qs.set("termName", term);
 
-    const [approvedRes, choiceRes] = await Promise.all([
+    const [
+      approvedRes,
+      choiceRes,
+    ] = await Promise.all([
       fetch(
         `/api/faculty/my-approved-assignment?${qs.toString()}`,
         {
@@ -551,9 +1281,12 @@ export default function FacultyDashboardPageClient() {
         }
       ),
 
-      fetch(`/api/faculty/my-load-sheet?${qs.toString()}`, {
-        cache: "no-store",
-      }),
+      fetch(
+        `/api/faculty/my-load-sheet?${qs.toString()}`,
+        {
+          cache: "no-store",
+        }
+      ),
     ]);
 
     const approvedJson: SheetResponse =
@@ -563,18 +1296,24 @@ export default function FacultyDashboardPageClient() {
       await choiceRes.json();
 
     setApprovedSheet(
-      approvedRes.ok ? approvedJson : null
+      approvedRes.ok
+        ? approvedJson
+        : null
     );
 
     setChoiceSheet(
-      choiceRes.ok ? choiceJson : null
+      choiceRes.ok
+        ? choiceJson
+        : null
     );
   }
 
-  async function loadDashboard(options?: {
-    loadSheets?: boolean;
-    showLoading?: boolean;
-  }) {
+  async function loadDashboard(
+    options?: {
+      loadSheets?: boolean;
+      showLoading?: boolean;
+    }
+  ) {
     const shouldLoadSheets =
       options?.loadSheets ?? false;
 
@@ -588,12 +1327,13 @@ export default function FacultyDashboardPageClient() {
     setError("");
 
     try {
-      const dashboardRes = await fetch(
-        "/api/faculty/dashboard",
-        {
-          cache: "no-store",
-        }
-      );
+      const dashboardRes =
+        await fetch(
+          "/api/faculty/dashboard",
+          {
+            cache: "no-store",
+          }
+        );
 
       const dashboardJson: DashboardResponse =
         await dashboardRes.json();
@@ -605,10 +1345,13 @@ export default function FacultyDashboardPageClient() {
         );
       }
 
-      setDashboard(dashboardJson);
+      setDashboard(
+        dashboardJson
+      );
 
       const term =
-        dashboardJson.visibleOfferingPool
+        dashboardJson
+          .visibleOfferingPool
           ?.activeTermName || "";
 
       if (shouldLoadSheets) {
@@ -663,38 +1406,45 @@ export default function FacultyDashboardPageClient() {
     }
 
     setDashboard((current) => {
-      if (!current?.notifications) {
+      if (
+        !current?.notifications
+      ) {
         return current;
       }
 
       return {
         ...current,
         notifications: {
-          unreadCount: Math.max(
-            0,
-            current.notifications.unreadCount - 1
-          ),
+          unreadCount:
+            Math.max(
+              0,
+              current.notifications
+                .unreadCount - 1
+            ),
 
-          recent: current.notifications.recent.map(
-            (item) =>
-              item.id === notification.id
-                ? {
-                    ...item,
-                    is_read: true,
-                  }
-                : item
-          ),
+          recent:
+            current.notifications.recent.map(
+              (item) =>
+                item.id ===
+                notification.id
+                  ? {
+                      ...item,
+                      is_read: true,
+                    }
+                  : item
+            ),
         },
       };
     });
 
     try {
-      const response = await fetch(
-        `/api/faculty/notifications/${notification.id}/read`,
-        {
-          method: "POST",
-        }
-      );
+      const response =
+        await fetch(
+          `/api/faculty/notifications/${notification.id}/read`,
+          {
+            method: "POST",
+          }
+        );
 
       if (!response.ok) {
         await loadDashboard({
@@ -716,7 +1466,9 @@ export default function FacultyDashboardPageClient() {
     }
 
     setDashboard((current) => {
-      if (!current?.notifications) {
+      if (
+        !current?.notifications
+      ) {
         return current;
       }
 
@@ -725,23 +1477,25 @@ export default function FacultyDashboardPageClient() {
         notifications: {
           unreadCount: 0,
 
-          recent: current.notifications.recent.map(
-            (item) => ({
-              ...item,
-              is_read: true,
-            })
-          ),
+          recent:
+            current.notifications.recent.map(
+              (item) => ({
+                ...item,
+                is_read: true,
+              })
+            ),
         },
       };
     });
 
     try {
-      const response = await fetch(
-        "/api/faculty/notifications/clear",
-        {
-          method: "POST",
-        }
-      );
+      const response =
+        await fetch(
+          "/api/faculty/notifications/clear",
+          {
+            method: "POST",
+          }
+        );
 
       if (!response.ok) {
         await loadDashboard({
@@ -759,11 +1513,15 @@ export default function FacultyDashboardPageClient() {
 
   async function logout() {
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-      });
+      await fetch(
+        "/api/auth/logout",
+        {
+          method: "POST",
+        }
+      );
     } finally {
-      window.location.href = "/auth/login";
+      window.location.href =
+        "/auth/login";
     }
   }
 
@@ -774,37 +1532,83 @@ export default function FacultyDashboardPageClient() {
     });
   }, []);
 
-  /*
-   * Keep turn/session/notification information fresh,
-   * but do not repeatedly reload the expensive schedule
-   * sheets every minute.
-   */
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      loadDashboard({
-        loadSheets: false,
-        showLoading: false,
-      });
-    }, 60000);
+    const timer =
+      window.setInterval(() => {
+        loadDashboard({
+          loadSheets: false,
+          showLoading: false,
+        });
+      }, 60000);
 
     return () => {
       window.clearInterval(timer);
     };
   }, []);
 
-  /*
-   * Close the notification panel when the user clicks
-   * anywhere outside it.
-   */
   useEffect(() => {
-    function handleOutsideClick(event: MouseEvent) {
+    const timer =
+      window.setInterval(() => {
+        setNow(new Date());
+      }, 60000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      teachingDays.length === 0
+    ) {
+      setSelectedDay("");
+      return;
+    }
+
+    if (
+      teachingDays.includes(
+        todayLabel
+      )
+    ) {
+      setSelectedDay(
+        todayLabel
+      );
+      return;
+    }
+
+    setSelectedDay(
+      teachingDays[0]
+    );
+  }, [
+    teachingDays,
+    todayLabel,
+  ]);
+
+  useEffect(() => {
+    function handleOutsideClick(
+      event: MouseEvent
+    ) {
+      const target =
+        event.target as Node;
+
       if (
         notificationPanelRef.current &&
         !notificationPanelRef.current.contains(
-          event.target as Node
+          target
         )
       ) {
-        setNotificationOpen(false);
+        setNotificationOpen(
+          false
+        );
+      }
+
+      if (
+        profilePanelRef.current &&
+        !profilePanelRef.current.contains(
+          target
+        )
+      ) {
+        setProfileOpen(false);
       }
     }
 
@@ -823,55 +1627,89 @@ export default function FacultyDashboardPageClient() {
 
   return (
     <main className="min-h-screen bg-slate-100">
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 shadow-sm backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-2xl font-bold tracking-tight text-slate-950">
-              Faculty Dashboard
-            </h1>
+      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 shadow-sm backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-sm font-black text-white">
+              U
+            </div>
 
-            <p className="mt-0.5 text-sm text-slate-500">
-              Current Semester:{" "}
-              <span className="font-semibold text-slate-800">
+            <div className="min-w-0">
+              <div className="truncate text-base font-bold text-slate-950">
+                UniFlow Faculty
+              </div>
+
+              <div className="truncate text-xs text-slate-500">
                 {activeTermName ||
-                  "Not opened by coordinator/admin yet"}
-              </span>
-            </p>
+                  "Faculty workspace"}
+              </div>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <nav className="hidden items-center gap-1 rounded-xl bg-slate-100 p-1 md:flex">
+            <a
+              href="/faculty/dashboard"
+              className="rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-950 shadow-sm"
+            >
+              Dashboard
+            </a>
+
+            <a
+              href="#weekly-routine"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-white hover:text-slate-950"
+            >
+              My Routine
+            </a>
+
+            <a
+              href="/faculty/course-choice"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-white hover:text-slate-950"
+            >
+              {choiceIsOpen
+                ? "Course Choice"
+                : "Final Choices"}
+            </a>
+          </nav>
+
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={manualRefresh}
               disabled={refreshing}
-              className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label="Refresh dashboard"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
             >
               <span
                 className={
-                  refreshing ? "animate-spin" : ""
+                  refreshing
+                    ? "animate-spin"
+                    : ""
                 }
               >
                 <RefreshIcon />
               </span>
-
-              <span className="hidden sm:inline">
-                Refresh
-              </span>
             </button>
 
             <div
-              ref={notificationPanelRef}
+              ref={
+                notificationPanelRef
+              }
               className="relative"
             >
               <button
                 type="button"
                 aria-label="Notifications"
-                aria-expanded={notificationOpen}
-                onClick={() =>
-                  setNotificationOpen(
-                    (current) => !current
-                  )
+                aria-expanded={
+                  notificationOpen
                 }
+                onClick={() => {
+                  setNotificationOpen(
+                    (current) =>
+                      !current
+                  );
+
+                  setProfileOpen(false);
+                }}
                 className={`relative inline-flex h-10 w-10 items-center justify-center rounded-xl border transition ${
                   notificationOpen
                     ? "border-blue-300 bg-blue-50 text-blue-700"
@@ -881,7 +1719,7 @@ export default function FacultyDashboardPageClient() {
                 <BellIcon />
 
                 {unreadCount > 0 && (
-                  <span className="absolute -right-1.5 -top-1.5 flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold leading-none text-white ring-2 ring-white">
+                  <span className="absolute -right-1.5 -top-1.5 flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white ring-2 ring-white">
                     {unreadCount > 99
                       ? "99+"
                       : unreadCount}
@@ -898,7 +1736,8 @@ export default function FacultyDashboardPageClient() {
                       </h2>
 
                       <p className="text-xs text-slate-500">
-                        {unreadCount > 0
+                        {unreadCount >
+                        0
                           ? `${unreadCount} unread`
                           : "You're all caught up"}
                       </p>
@@ -906,21 +1745,30 @@ export default function FacultyDashboardPageClient() {
 
                     <button
                       type="button"
-                      onClick={clearAllNotifications}
-                      disabled={unreadCount === 0}
-                      className="text-xs font-semibold text-blue-700 transition hover:text-blue-800 disabled:cursor-not-allowed disabled:text-slate-400"
+                      onClick={
+                        clearAllNotifications
+                      }
+                      disabled={
+                        unreadCount === 0
+                      }
+                      className="text-xs font-semibold text-blue-700 hover:text-blue-800 disabled:text-slate-400"
                     >
                       Mark all read
                     </button>
                   </div>
 
                   <div className="max-h-[460px] overflow-y-auto">
-                    {notifications.length > 0 ? (
+                    {notifications.length >
+                    0 ? (
                       notifications.map(
-                        (notification) => (
+                        (
+                          notification
+                        ) => (
                           <button
                             type="button"
-                            key={notification.id}
+                            key={
+                              notification.id
+                            }
                             onClick={() =>
                               markNotificationRead(
                                 notification
@@ -948,11 +1796,15 @@ export default function FacultyDashboardPageClient() {
                                     : "font-semibold"
                                 }`}
                               >
-                                {notification.title}
+                                {
+                                  notification.title
+                                }
                               </div>
 
-                              <p className="mt-1 line-clamp-3 text-sm leading-5 text-slate-600">
-                                {notification.message}
+                              <p className="mt-1 text-sm leading-5 text-slate-600">
+                                {
+                                  notification.message
+                                }
                               </p>
 
                               <div className="mt-1.5 text-xs font-medium text-slate-400">
@@ -975,8 +1827,9 @@ export default function FacultyDashboardPageClient() {
                         </p>
 
                         <p className="mt-1 text-xs text-slate-500">
-                          New faculty-choice updates will
-                          appear here.
+                          New academic
+                          updates will appear
+                          here.
                         </p>
                       </div>
                     )}
@@ -985,221 +1838,1360 @@ export default function FacultyDashboardPageClient() {
               )}
             </div>
 
-            <a
-              href="/faculty/course-choice"
-              className="inline-flex h-10 items-center justify-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+            <div
+              ref={profilePanelRef}
+              className="relative"
             >
-              Open Course Choice
-            </a>
+              <button
+                type="button"
+                onClick={() => {
+                  setProfileOpen(
+                    (current) =>
+                      !current
+                  );
 
-            <button
-              type="button"
-              onClick={logout}
-              className="inline-flex h-10 items-center justify-center rounded-xl bg-red-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
-            >
-              Logout
-            </button>
+                  setNotificationOpen(
+                    false
+                  );
+                }}
+                className="flex h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white pl-1.5 pr-2.5 text-slate-700 transition hover:bg-slate-50"
+              >
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 text-xs font-bold uppercase text-white">
+                  {facultyInitial}
+                </span>
+
+                <span className="hidden max-w-36 truncate text-sm font-semibold lg:block">
+                  {facultyFullName}
+                </span>
+
+                <ChevronIcon />
+              </button>
+
+              {profileOpen && (
+                <div className="absolute right-0 top-12 z-50 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                  <div className="border-b border-slate-100 px-4 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-sm font-black uppercase text-white">
+                        {facultyInitial}
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-slate-950">
+                          {facultyFullName}
+                        </div>
+
+                        <div className="truncate text-xs text-slate-500">
+                          {designation ||
+                            departmentCode ||
+                            "Faculty"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-2">
+                    <a
+                      href="#weekly-routine"
+                      onClick={() =>
+                        setProfileOpen(
+                          false
+                        )
+                      }
+                      className="block rounded-lg px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      My Weekly Routine
+                    </a>
+
+                    {activeTermName && (
+                      <a
+                        href={`/api/faculty/my-approved-assignment/export?termName=${encodeURIComponent(
+                          activeTermName
+                        )}`}
+                        className="block rounded-lg px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Export My Schedule
+                      </a>
+                    )}
+
+                    {activeTermName && (
+                      <a
+                        href={`/api/faculty/my-load-sheet/export?termName=${encodeURIComponent(
+                          activeTermName
+                        )}`}
+                        className="block rounded-lg px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Export Load Sheet
+                      </a>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={logout}
+                      className="mt-1 block w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-red-600 hover:bg-red-50"
+                    >
+                      Logout
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </header>
 
       <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6">
         {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
             {error}
           </div>
         )}
 
-        {dashboard ? (
+        {loading &&
+        !dashboard ? (
           <>
-            {dashboard.policy?.canActNow && (
-              <div className="flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="font-semibold text-emerald-950">
-                    Your faculty choice turn is active
+            <div className="animate-pulse rounded-3xl bg-slate-900 p-6 sm:p-8">
+              <div className="h-3 w-28 rounded bg-slate-700" />
+              <div className="mt-5 h-9 w-64 rounded bg-slate-700" />
+              <div className="mt-3 h-4 w-80 max-w-full rounded bg-slate-800" />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+            </div>
+          </>
+        ) : dashboard ? (
+          <>
+            <section className="overflow-hidden rounded-3xl bg-slate-950 text-white shadow-xl">
+              <div className="relative p-6 sm:p-8">
+                <div className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full bg-blue-500/20 blur-3xl" />
+
+                <div className="pointer-events-none absolute -bottom-28 left-1/3 h-64 w-64 rounded-full bg-violet-500/10 blur-3xl" />
+
+                <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+                  <div className="max-w-3xl">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-200">
+                        {
+                          semesterContext.eyebrow
+                        }
+                      </span>
+
+                      {assignmentReady && (
+                        <span className="rounded-full bg-emerald-400/15 px-3 py-1 text-xs font-semibold text-emerald-200">
+                          ✓{" "}
+                          {
+                            assignmentStatusText
+                          }
+                        </span>
+                      )}
+
+                      {choiceIsOpen && (
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${badgeClasses(
+                            dashboard
+                              .policy
+                              ?.windowStatus ||
+                              ""
+                          )}`}
+                        >
+                          Faculty Choice{" "}
+                          {
+                            dashboard
+                              .policy
+                              ?.windowStatus
+                          }
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-5 text-sm font-semibold uppercase tracking-[0.18em] text-blue-300">
+                      FALL 2026
+                    </div>
+
+                    <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">
+                      {
+                        semesterContext.title
+                      }
+                    </h1>
+
+                    <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
+                      {
+                        semesterContext.subtitle
+                      }
+                    </p>
+
+                    <div className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-300">
+                      <span>
+                        Semester start:{" "}
+                        <strong className="text-white">
+                          1 September
+                          2026
+                        </strong>
+                      </span>
+
+                      <span>
+                        Today:{" "}
+                        <strong className="text-white">
+                          {formatDisplayDate(
+                            now
+                          )}
+                        </strong>
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="mt-0.5 text-sm text-emerald-700">
-                    You can currently select and submit
-                    courses.
-                  </div>
-                </div>
-
-                <a
-                  href="/faculty/course-choice"
-                  className="inline-flex shrink-0 items-center justify-center rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                >
-                  Choose Courses
-                </a>
-              </div>
-            )}
-
-            <section>
-              <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-                    Faculty & Session
-                  </h2>
-                </div>
-
-                {loading && (
-                  <div className="text-xs font-medium text-slate-400">
-                    Loading…
-                  </div>
-                )}
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <InfoBox
-                  label="Faculty"
-                  value={`${dashboard.teacher?.teacherCode || "-"} - ${
-                    dashboard.teacher?.fullName || "-"
-                  }`}
-                />
-
-                <InfoBox
-                  label="Department"
-                  value={`${dashboard.teacher?.departmentCode || "-"} | ${
-                    dashboard.teacher?.departmentName || "-"
-                  }`}
-                />
-
-                <InfoBox
-                  label="Seniority Position"
-                  value={
-                    dashboard.teacher?.seniorityLevel
-                      ? `Seniority ${dashboard.teacher.seniorityLevel}`
-                      : "-"
-                  }
-                />
-
-                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="text-sm text-slate-500">
-                    Choice Window
-                  </div>
-
-                  <div className="mt-2">
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${badgeClasses(
-                        dashboard.policy
-                          ?.windowStatus || ""
-                      )}`}
+                  <div className="flex flex-wrap gap-2">
+                    <a
+                      href="#weekly-routine"
+                      className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-slate-100"
                     >
-                      {dashboard.policy
-                        ?.windowStatus || "-"}
-                    </span>
+                      View Weekly Routine
+                    </a>
+
+                    {choiceIsOpen ? (
+                      <a
+                        href="/faculty/course-choice"
+                        className="inline-flex items-center justify-center rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/15"
+                      >
+                        {dashboard
+                          .policy
+                          ?.canActNow
+                          ? "Open Course Choice"
+                          : "View Course Choice"}
+                      </a>
+                    ) : (
+                      <a
+                        href="/faculty/course-choice"
+                        className="inline-flex items-center justify-center rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/15"
+                      >
+                        View Final Choices
+                      </a>
+                    )}
                   </div>
                 </div>
 
-                <InfoBox
-                  label="Your Turn Status"
-                  value={
-                    dashboard.policy?.canActNow
-                      ? "Active editor"
-                      : "View only"
-                  }
-                  emphasis={
-                    Boolean(
-                      dashboard.policy?.canActNow
-                    )
-                  }
-                />
+                <div className="relative mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">
+                      Assignment
+                    </div>
 
-                <InfoBox
-                  label="Current Active Faculty"
-                  value={
-                    dashboard.activeTurn
-                      ? `${dashboard.activeTurn.teacherCode} - ${dashboard.activeTurn.fullName}`
-                      : "-"
-                  }
-                />
+                    <div className="mt-1 text-sm font-semibold text-white">
+                      {assignmentReady
+                        ? "Finalized"
+                        : "Preparing"}
+                    </div>
+                  </div>
 
-                <InfoBox
-                  label="Session Remaining"
-                  value={`${dashboard.session?.remainingMinutes ?? 0} minute(s)`}
-                />
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">
+                      Routine
+                    </div>
 
-                <InfoBox
-                  label="Visible Offering Pool"
-                  value={`${dashboard.visibleOfferingPool?.visibleOfferingCount ?? 0} section(s)`}
-                />
+                    <div className="mt-1 text-sm font-semibold text-white">
+                      {scheduleRows.length >
+                      0
+                        ? "Available"
+                        : "Not available"}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">
+                      Faculty
+                    </div>
+
+                    <div className="mt-1 text-sm font-semibold text-white">
+                      {facultyInitial} ·{" "}
+                      {departmentCode ||
+                        "Faculty"}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">
+                      Choice Session
+                    </div>
+
+                    <div className="mt-1 text-sm font-semibold text-white">
+                      {choiceIsOpen
+                        ? sessionRemainingText ||
+                          "Open"
+                        : "Completed"}
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
 
             <section>
               <div className="mb-3">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-                  Credit Load
+                <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  Semester Overview
                 </h2>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <InfoBox
-                  label="Credit Rule"
-                  value={`Min ${numberText(
-                    dashboard.policy?.creditPolicy
-                      ?.minCredits
-                  )} | Max ${numberText(
-                    dashboard.policy?.creditPolicy
-                      ?.maxCredits
-                  )}`}
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <MetricCard
+                  label="Teaching Load"
+                  value={`${totalCredits} cr`}
+                  helper={
+                    maxCredits === null
+                      ? "Current assigned load"
+                      : `Maximum ${maxCredits} credits`
+                  }
+                  icon={
+                    <BookIcon />
+                  }
+                  emphasis
                 />
 
-                <InfoBox
-                  label="Coordinator Pre-assigned Credits"
-                  value={String(preassignedCredits)}
+                <MetricCard
+                  label="Assigned Courses"
+                  value={String(
+                    courseSummaries.length
+                  )}
+                  helper="This semester"
+                  icon={
+                    <BookIcon />
+                  }
                 />
 
-                <InfoBox
-                  label="Faculty Choice Credits"
-                  value={String(facultyChoiceCredits)}
+                <MetricCard
+                  label="Teaching Days"
+                  value={String(
+                    teachingDays.length
+                  )}
+                  helper="Days per week"
+                  icon={
+                    <CalendarIcon />
+                  }
                 />
 
-                <InfoBox
-                  label="Remaining Choice Capacity"
+                <MetricCard
+                  label={
+                    semesterStarted
+                      ? "Next Class"
+                      : "First Class"
+                  }
                   value={
-                    remainingChoiceCapacity === null
-                      ? "-"
-                      : String(
-                          remainingChoiceCapacity
-                        )
+                    nextOccurrence
+                      ? nextOccurrence
+                          .row
+                          .courseCode
+                      : "No class"
+                  }
+                  helper={
+                    nextOccurrence
+                      ? `${formatShortDate(
+                          nextOccurrence.start
+                        )} · ${formatClock(
+                          nextOccurrence.start
+                        )}`
+                      : "No scheduled meeting found"
+                  }
+                  icon={
+                    <ClockIcon />
                   }
                 />
               </div>
             </section>
 
-            {activeTermName &&
-              renderSheetCard(
-                "Approved Assigned Schedule",
-                "Authoritative schedule assigned by coordinator/admin.",
-                "Export Approved Schedule Excel",
-                `/api/faculty/my-approved-assignment/export?termName=${encodeURIComponent(
-                  activeTermName
-                )}`,
-                approvedSheet
-              )}
+            <section className="grid gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,0.75fr)]">
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-950">
+                      {semesterStarted
+                        ? `Today's Classes · ${todayLabel}`
+                        : "Semester Preparation"}
+                    </h2>
 
-            {activeTermName &&
-            !hasApprovedAssignedRows
-              ? renderSheetCard(
-                  "Your Finalized Chosen Course List",
-                  "No approved assignment is available yet, so your finalized chosen list is shown as reference.",
-                  "Export Finalized Choice Excel",
-                  `/api/faculty/my-load-sheet/export?termName=${encodeURIComponent(
-                    activeTermName
-                  )}`,
-                  choiceSheet
-                )
-              : null}
+                    <p className="mt-1 text-sm text-slate-500">
+                      {semesterStarted
+                        ? formatDisplayDate(
+                            now
+                          )
+                        : "Your first teaching week begins from 1 September 2026."}
+                    </p>
+                  </div>
+
+                  {semesterStarted &&
+                    todayRows.length >
+                      0 && (
+                      <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+                        {
+                          todayRows.length
+                        }{" "}
+                        class
+                        {todayRows.length ===
+                        1
+                          ? ""
+                          : "es"}{" "}
+                        today
+                      </span>
+                    )}
+                </div>
+
+                <div className="p-5">
+                  {semesterStarted ? (
+                    todayRows.length >
+                    0 ? (
+                      <div className="space-y-3">
+                        {todayRows.map(
+                          (
+                            row,
+                            index
+                          ) => (
+                            <div
+                              key={`${row.courseCode}-${row.section}-${row.timeText}-${index}`}
+                              className="group flex flex-col gap-4 rounded-2xl border border-slate-200 p-4 transition hover:border-blue-200 hover:bg-blue-50/30 sm:flex-row sm:items-center"
+                            >
+                              <div className="flex w-full shrink-0 items-center gap-3 sm:w-36">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 group-hover:bg-blue-100 group-hover:text-blue-700">
+                                  <ClockIcon />
+                                </div>
+
+                                <div>
+                                  <div className="text-sm font-bold text-slate-950">
+                                    {
+                                      row.timeText
+                                    }
+                                  </div>
+
+                                  <div className="text-xs text-slate-500">
+                                    {
+                                      row.roomText
+                                    }
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-bold text-slate-950">
+                                    {
+                                      row.courseCode
+                                    }
+                                  </span>
+
+                                  <span className="text-sm text-slate-500">
+                                    Sec{" "}
+                                    {
+                                      row.section
+                                    }
+                                  </span>
+
+                                  <span
+                                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${categoryBadgeClasses(
+                                      row.category
+                                    )}`}
+                                  >
+                                    {
+                                      row.category
+                                    }
+                                  </span>
+                                </div>
+
+                                <div className="mt-1 truncate text-sm text-slate-600">
+                                  {
+                                    row.courseTitle
+                                  }
+                                </div>
+
+                                {row.batchCodes
+                                  ?.length >
+                                  0 && (
+                                  <div className="mt-2 text-xs text-slate-500">
+                                    Batch:{" "}
+                                    {row.batchCodes.join(
+                                      ", "
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl bg-slate-50 px-5 py-10 text-center">
+                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-sm">
+                          <CalendarIcon />
+                        </div>
+
+                        <div className="mt-4 font-semibold text-slate-800">
+                          No classes today
+                        </div>
+
+                        <p className="mt-1 text-sm text-slate-500">
+                          Your next
+                          scheduled class
+                          appears beside this
+                          panel.
+                        </p>
+                      </div>
+                    )
+                  ) : (
+                    <div className="grid gap-4 sm:grid-cols-3">
+                      <div className="rounded-2xl bg-emerald-50 p-4">
+                        <div className="text-sm font-semibold text-emerald-800">
+                          ✓ Assignment
+                        </div>
+
+                        <div className="mt-2 text-sm text-emerald-700">
+                          {assignmentReady
+                            ? "Your faculty assignment is ready."
+                            : "Assignment preparation is ongoing."}
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl bg-blue-50 p-4">
+                        <div className="text-sm font-semibold text-blue-800">
+                          ✓ Routine
+                        </div>
+
+                        <div className="mt-2 text-sm text-blue-700">
+                          {scheduleRows.length >
+                          0
+                            ? "Your weekly routine is available."
+                            : "Routine is being prepared."}
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl bg-violet-50 p-4">
+                        <div className="text-sm font-semibold text-violet-800">
+                          Semester Start
+                        </div>
+
+                        <div className="mt-2 text-sm text-violet-700">
+                          Tuesday, 1
+                          September
+                          2026
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  {semesterStarted
+                    ? "Next Class"
+                    : "First Scheduled Class"}
+                </div>
+
+                {nextOccurrence ? (
+                  <div className="mt-4">
+                    <div className="text-2xl font-black tracking-tight text-slate-950">
+                      {
+                        nextOccurrence
+                          .row
+                          .courseCode
+                      }
+                    </div>
+
+                    <div className="mt-1 text-sm font-medium text-slate-600">
+                      {
+                        nextOccurrence
+                          .row
+                          .courseTitle
+                      }
+                    </div>
+
+                    <div className="mt-5 space-y-3">
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 text-slate-400">
+                          <CalendarIcon />
+                        </div>
+
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">
+                            {formatShortDate(
+                              nextOccurrence.start
+                            )}
+                          </div>
+
+                          <div className="text-xs text-slate-500">
+                            Section{" "}
+                            {
+                              nextOccurrence
+                                .row
+                                .section
+                            }
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 text-slate-400">
+                          <ClockIcon />
+                        </div>
+
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">
+                            {
+                              nextOccurrence
+                                .row
+                                .timeText
+                            }
+                          </div>
+
+                          <div className="text-xs text-slate-500">
+                            {
+                              nextOccurrence
+                                .row
+                                .roomText
+                            }
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 rounded-xl bg-blue-50 px-4 py-3">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-blue-600">
+                        Starts in
+                      </div>
+
+                      <div className="mt-1 text-lg font-bold text-blue-950">
+                        {countdownText(
+                          nextOccurrence.start,
+                          now
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-5 rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                    No scheduled
+                    class found.
+                  </div>
+                )}
+              </aside>
+            </section>
+
+            <section
+              id="weekly-routine"
+              className="scroll-mt-24 rounded-2xl border border-slate-200 bg-white shadow-sm"
+            >
+              <div className="border-b border-slate-100 px-5 py-5">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-950">
+                      My Weekly Routine
+                    </h2>
+
+                    <p className="mt-1 text-sm text-slate-500">
+                      Select a teaching
+                      day to view your
+                      scheduled classes.
+                    </p>
+                  </div>
+
+                  <div className="flex max-w-full gap-2 overflow-x-auto pb-1">
+                    {teachingDays.map(
+                      (day) => (
+                        <button
+                          type="button"
+                          key={day}
+                          onClick={() =>
+                            setSelectedDay(
+                              day
+                            )
+                          }
+                          className={`shrink-0 rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                            selectedDay ===
+                            day
+                              ? "bg-slate-950 text-white shadow-sm"
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                          }`}
+                        >
+                          {day.slice(
+                            0,
+                            3
+                          )}
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5">
+                {teachingDays.length >
+                0 ? (
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {filteredDayRows.map(
+                      (
+                        row,
+                        index
+                      ) => (
+                        <div
+                          key={`${selectedDay}-${row.courseCode}-${row.section}-${row.timeText}-${index}`}
+                          className="rounded-2xl border border-slate-200 p-4 transition hover:border-blue-200 hover:shadow-sm"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="font-bold text-slate-950">
+                                {
+                                  row.courseCode
+                                }
+                              </div>
+
+                              <div className="mt-1 text-xs font-medium text-slate-500">
+                                Section{" "}
+                                {
+                                  row.section
+                                }
+                              </div>
+                            </div>
+
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${categoryBadgeClasses(
+                                row.category
+                              )}`}
+                            >
+                              {
+                                row.category
+                              }
+                            </span>
+                          </div>
+
+                          <div className="mt-3 line-clamp-2 min-h-10 text-sm text-slate-600">
+                            {
+                              row.courseTitle
+                            }
+                          </div>
+
+                          <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+                            <div className="rounded-xl bg-slate-50 px-3 py-2">
+                              <div className="text-[11px] uppercase tracking-wide text-slate-400">
+                                Time
+                              </div>
+
+                              <div className="mt-1 font-semibold text-slate-800">
+                                {
+                                  row.timeText
+                                }
+                              </div>
+                            </div>
+
+                            <div className="rounded-xl bg-slate-50 px-3 py-2">
+                              <div className="text-[11px] uppercase tracking-wide text-slate-400">
+                                Room
+                              </div>
+
+                              <div className="mt-1 font-semibold text-slate-800">
+                                {
+                                  row.roomText
+                                }
+                              </div>
+                            </div>
+                          </div>
+
+                          {row.batchCodes
+                            ?.length >
+                            0 && (
+                            <div className="mt-3 text-xs text-slate-500">
+                              Batch:{" "}
+                              {row.batchCodes.join(
+                                ", "
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl bg-slate-50 px-5 py-10 text-center text-sm text-slate-500">
+                    No weekly routine
+                    is currently
+                    available.
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-100 px-5 py-5">
+                <h2 className="text-lg font-semibold text-slate-950">
+                  My Courses
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Your assigned courses
+                  for the current
+                  semester.
+                </p>
+              </div>
+
+              <div className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-3">
+                {courseSummaries.map(
+                  (course) => (
+                    <article
+                      key={
+                        course.key
+                      }
+                      className="rounded-2xl border border-slate-200 p-4 transition hover:border-blue-200 hover:shadow-sm"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-lg font-black tracking-tight text-slate-950">
+                            {
+                              course.courseCode
+                            }
+                          </div>
+
+                          <div className="mt-1 text-xs font-medium text-slate-500">
+                            Section{" "}
+                            {
+                              course.section
+                            }{" "}
+                            ·{" "}
+                            {
+                              course.credit
+                            }{" "}
+                            cr
+                          </div>
+                        </div>
+
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${categoryBadgeClasses(
+                            course.category
+                          )}`}
+                        >
+                          {
+                            course.category
+                          }
+                        </span>
+                      </div>
+
+                      <div className="mt-3 text-sm font-medium leading-5 text-slate-700">
+                        {
+                          course.courseTitle
+                        }
+                      </div>
+
+                      <div className="mt-4 space-y-2">
+                        {course.meetings.map(
+                          (
+                            meeting,
+                            index
+                          ) => {
+                            const day =
+                              normalizeDay(
+                                meeting.dayOfWeek
+                              );
+
+                            if (
+                              !day
+                            ) {
+                              return null;
+                            }
+
+                            return (
+                              <div
+                                key={`${meeting.dayOfWeek}-${meeting.timeText}-${index}`}
+                                className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 text-xs"
+                              >
+                                <span className="font-semibold text-slate-700">
+                                  {
+                                    day
+                                  }
+                                </span>
+
+                                <span className="text-right text-slate-500">
+                                  {
+                                    meeting.timeText
+                                  }{" "}
+                                  ·{" "}
+                                  {
+                                    meeting.roomText
+                                  }
+                                </span>
+                              </div>
+                            );
+                          }
+                        )}
+                      </div>
+
+                      {course.batchCodes
+                        .length >
+                        0 && (
+                        <div className="mt-3 text-xs text-slate-500">
+                          Batch:{" "}
+                          {course.batchCodes.join(
+                            ", "
+                          )}
+                        </div>
+                      )}
+                    </article>
+                  )
+                )}
+
+                {courseSummaries.length ===
+                  0 && (
+                  <div className="md:col-span-2 xl:col-span-3">
+                    <div className="rounded-2xl bg-slate-50 px-5 py-10 text-center text-sm text-slate-500">
+                      No assigned
+                      courses found.
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-950">
+                      Teaching Load
+                    </h2>
+
+                    <p className="mt-1 text-sm text-slate-500">
+                      Finalized load
+                      against your
+                      configured credit
+                      policy.
+                    </p>
+                  </div>
+
+                  <div className="text-left sm:text-right">
+                    <div className="text-2xl font-black text-slate-950">
+                      {
+                        totalCredits
+                      }
+                      {maxCredits !==
+                        null && (
+                        <span className="text-base font-medium text-slate-400">
+                          {" "}
+                          /{" "}
+                          {
+                            maxCredits
+                          }
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-xs text-slate-500">
+                      credits
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-5 h-3 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-blue-600 transition-all duration-500"
+                    style={{
+                      width: `${loadProgress}%`,
+                    }}
+                  />
+                </div>
+
+                <div className="mt-3 flex flex-wrap justify-between gap-3 text-xs text-slate-500">
+                  <span>
+                    Min{" "}
+                    {numberText(
+                      minCredits
+                    )}
+                  </span>
+
+                  <span>
+                    Current{" "}
+                    {
+                      totalCredits
+                    }
+                  </span>
+
+                  <span>
+                    Max{" "}
+                    {numberText(
+                      maxCredits
+                    )}
+                  </span>
+                </div>
+
+                <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl bg-blue-50 p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-blue-600">
+                      Theory
+                    </div>
+
+                    <div className="mt-2 text-2xl font-black text-blue-950">
+                      {
+                        theoryCredits
+                      }
+                    </div>
+
+                    <div className="text-xs text-blue-700">
+                      credits
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-violet-50 p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-violet-600">
+                      Lab
+                    </div>
+
+                    <div className="mt-2 text-2xl font-black text-violet-950">
+                      {
+                        labCredits
+                      }
+                    </div>
+
+                    <div className="text-xs text-violet-700">
+                      credits
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h2 className="text-base font-semibold text-slate-950">
+                  Quick Actions
+                </h2>
+
+                <div className="mt-4 space-y-2">
+                  <a
+                    href="#weekly-routine"
+                    className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                  >
+                    My Weekly Routine
+                    <span>→</span>
+                  </a>
+
+                  {activeTermName && (
+                    <a
+                      href={`/api/faculty/my-approved-assignment/export?termName=${encodeURIComponent(
+                        activeTermName
+                      )}`}
+                      className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                    >
+                      Export Schedule
+                      <span>↓</span>
+                    </a>
+                  )}
+
+                  {activeTermName && (
+                    <a
+                      href={`/api/faculty/my-load-sheet/export?termName=${encodeURIComponent(
+                        activeTermName
+                      )}`}
+                      className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                    >
+                      Export Load Sheet
+                      <span>↓</span>
+                    </a>
+                  )}
+
+                  <a
+                    href="/faculty/course-choice"
+                    className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                  >
+                    {choiceIsOpen
+                      ? "Course Choice"
+                      : "View Final Choices"}
+                    <span>→</span>
+                  </a>
+                </div>
+              </aside>
+            </section>
+
+            <details className="group rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-5">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-950">
+                    Faculty & Academic
+                    Details
+                  </h2>
+
+                  <p className="mt-1 text-sm text-slate-500">
+                    Profile, credit
+                    distribution and
+                    detailed schedule.
+                  </p>
+                </div>
+
+                <span className="transition group-open:rotate-180">
+                  <ChevronIcon />
+                </span>
+              </summary>
+
+              <div className="border-t border-slate-100 p-5">
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-2xl bg-slate-50 p-4">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">
+                      Faculty
+                    </div>
+
+                    <div className="mt-1 font-semibold text-slate-950">
+                      {
+                        facultyFullName
+                      }
+                    </div>
+
+                    <div className="mt-1 text-xs text-slate-500">
+                      Initial:{" "}
+                      {
+                        facultyInitial
+                      }
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-slate-50 p-4">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">
+                      Department
+                    </div>
+
+                    <div className="mt-1 font-semibold text-slate-950">
+                      {departmentCode ||
+                        "-"}
+                    </div>
+
+                    <div className="mt-1 text-xs text-slate-500">
+                      {dashboard
+                        .teacher
+                        ?.departmentName ||
+                        "-"}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-slate-50 p-4">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">
+                      Designation
+                    </div>
+
+                    <div className="mt-1 font-semibold text-slate-950">
+                      {designation ||
+                        "-"}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-slate-50 p-4">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">
+                      Seniority
+                    </div>
+
+                    <div className="mt-1 font-semibold text-slate-950">
+                      {dashboard
+                        .teacher
+                        ?.seniorityLevel
+                        ? `Position ${dashboard.teacher.seniorityLevel}`
+                        : "-"}
+                    </div>
+                  </div>
+                </div>
+
+                {(effectiveSheet
+                  ?.programTallies
+                  ?.length || 0) >
+                  0 && (
+                  <div className="mt-7">
+                    <h3 className="text-base font-semibold text-slate-950">
+                      Program-wise Credit
+                      Distribution
+                    </h3>
+
+                    <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-50 text-slate-600">
+                          <tr>
+                            <th className="border-b px-4 py-3 text-left font-semibold">
+                              Program
+                            </th>
+
+                            <th className="border-b px-4 py-3 text-left font-semibold">
+                              Theory
+                            </th>
+
+                            <th className="border-b px-4 py-3 text-left font-semibold">
+                              Lab
+                            </th>
+
+                            <th className="border-b px-4 py-3 text-left font-semibold">
+                              Total
+                            </th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {(
+                            effectiveSheet?.programTallies ||
+                            []
+                          ).map(
+                            (
+                              item
+                            ) => (
+                              <tr
+                                key={
+                                  item.programCode
+                                }
+                              >
+                                <td className="border-b border-slate-100 px-4 py-3 font-medium">
+                                  {
+                                    item.programCode
+                                  }
+                                </td>
+
+                                <td className="border-b border-slate-100 px-4 py-3">
+                                  {
+                                    item.theoryCredits
+                                  }
+                                </td>
+
+                                <td className="border-b border-slate-100 px-4 py-3">
+                                  {
+                                    item.labCredits
+                                  }
+                                </td>
+
+                                <td className="border-b border-slate-100 px-4 py-3 font-semibold">
+                                  {
+                                    item.totalCredits
+                                  }
+                                </td>
+                              </tr>
+                            )
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-7">
+                  <h3 className="text-base font-semibold text-slate-950">
+                    Detailed Schedule
+                  </h3>
+
+                  <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-slate-50 text-slate-600">
+                        <tr>
+                          <th className="border-b px-4 py-3 text-left font-semibold">
+                            Course
+                          </th>
+
+                          <th className="border-b px-4 py-3 text-left font-semibold">
+                            Section
+                          </th>
+
+                          <th className="border-b px-4 py-3 text-left font-semibold">
+                            Credit
+                          </th>
+
+                          <th className="border-b px-4 py-3 text-left font-semibold">
+                            Day
+                          </th>
+
+                          <th className="border-b px-4 py-3 text-left font-semibold">
+                            Time
+                          </th>
+
+                          <th className="border-b px-4 py-3 text-left font-semibold">
+                            Room
+                          </th>
+
+                          <th className="border-b px-4 py-3 text-left font-semibold">
+                            Type
+                          </th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {scheduleRows.map(
+                          (
+                            row,
+                            index
+                          ) => (
+                            <tr
+                              key={`${row.courseCode}-${row.section}-${row.dayOfWeek}-${row.timeText}-${index}`}
+                              className="hover:bg-slate-50"
+                            >
+                              <td className="border-b border-slate-100 px-4 py-3 font-semibold text-slate-950">
+                                {
+                                  row.courseCode
+                                }
+                              </td>
+
+                              <td className="border-b border-slate-100 px-4 py-3">
+                                {
+                                  row.section
+                                }
+                              </td>
+
+                              <td className="border-b border-slate-100 px-4 py-3">
+                                {
+                                  row.credit
+                                }
+                              </td>
+
+                              <td className="border-b border-slate-100 px-4 py-3">
+                                {
+                                  row.dayOfWeek
+                                }
+                              </td>
+
+                              <td className="border-b border-slate-100 px-4 py-3">
+                                {
+                                  row.timeText
+                                }
+                              </td>
+
+                              <td className="border-b border-slate-100 px-4 py-3">
+                                {
+                                  row.roomText
+                                }
+                              </td>
+
+                              <td className="border-b border-slate-100 px-4 py-3">
+                                <span
+                                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${categoryBadgeClasses(
+                                    row.category
+                                  )}`}
+                                >
+                                  {
+                                    row.category
+                                  }
+                                </span>
+                              </td>
+                            </tr>
+                          )
+                        )}
+
+                        {scheduleRows.length ===
+                          0 && (
+                          <tr>
+                            <td
+                              colSpan={
+                                7
+                              }
+                              className="px-4 py-8 text-center text-slate-500"
+                            >
+                              No detailed
+                              schedule rows
+                              found.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </details>
           </>
-        ) : !loading ? (
-          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-12 text-center text-slate-500 shadow-sm">
-            No faculty-visible semester is currently
-            opened by coordinator/admin.
-          </div>
         ) : (
           <div className="rounded-2xl border border-slate-200 bg-white px-5 py-12 text-center text-slate-500 shadow-sm">
-            Loading faculty dashboard…
+            No faculty-visible semester is
+            currently opened by
+            coordinator/admin.
           </div>
         )}
       </div>

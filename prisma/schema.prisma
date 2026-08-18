@@ -926,3 +926,23 @@ model faculty_password_reset_tokens {
   @@index([user_id, created_at], map: "ix_faculty_password_reset_tokens_user_created")
   @@index([user_id, used_at, expires_at], map: "ix_faculty_password_reset_tokens_unused")
 }
+
+model faculty_teaching_notes {
+  id                Int      @id @default(autoincrement())
+  teacher_id        Int
+  academic_term_id  Int
+  offered_course_id Int?
+  note_date         DateTime @db.Date
+  note_type         String   @default("CLASS_NOTE") @db.VarChar(30)
+  title             String?  @db.VarChar(200)
+  note_text         String   @db.Text
+  is_completed      Boolean  @default(false)
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([teacher_id], map: "ix_faculty_teaching_notes_teacher_id")
+  @@index([academic_term_id], map: "ix_faculty_teaching_notes_term_id")
+  @@index([offered_course_id], map: "ix_faculty_teaching_notes_offered_course_id")
+  @@index([note_date], map: "ix_faculty_teaching_notes_note_date")
+  @@index([teacher_id, academic_term_id, note_date], map: "ix_faculty_teaching_notes_teacher_term_date")
+}
