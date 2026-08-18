@@ -168,7 +168,20 @@ const navGroups: NavGroup[] = [
   },
   {
     title: "Public View",
-    items: [{ href: "/schedule", label: "Public Student Routine" }],
+    items: [
+      {
+        href: "/admin/public-schedule-control",
+        label: "Public Schedule Control",
+      },
+      {
+        href: "/schedule",
+        label: "Public Student Routine",
+      },
+      {
+        href: "/faculty-schedule",
+        label: "Public Faculty Routine",
+      },
+    ],
   },
   {
     title: "System",
