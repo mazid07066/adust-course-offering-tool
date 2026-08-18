@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { requireFacultyApi } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 
@@ -10,7 +11,9 @@ type ProgramTallyRow = {
 };
 
 type ScheduleRow = {
+  offeredCourseId: number;
   courseCode: string;
+  coOfferedCourseCodes: string[];
   courseTitle: string;
   section: string;
   credit: number;
@@ -129,11 +132,84 @@ export async function GET(req: NextRequest) {
       orderBy: [{ id: "asc" }],
     });
 
+    /*
+     * Co-offered display metadata.
+     *
+     * Faculty assignments remain attached to the PRIMARY offered course.
+     * This lookup only adds display codes for:
+     *
+     * 1. linked SECONDARY offered courses, and
+     * 2. manually registered co-offer codes.
+     *
+     * No assignment, credit, room, slot, faculty-choice, or
+     * primary/secondary business rule is changed here.
+     */
+    const assignedCourseIds = Array.from(
+      new Set(
+        assignedRows
+          .map((row) => row.offered_course_id)
+          .filter((id): id is number => Number.isInteger(id))
+      )
+    );
+
+    const coOfferCodeRows =
+      assignedCourseIds.length > 0
+        ? await prisma.$queryRaw<
+            Array<{
+              primaryOfferedCourseId: number;
+              courseCode: string;
+            }>
+          >(
+            Prisma.sql`
+              SELECT
+                secondary.primary_offered_course_id
+                  AS "primaryOfferedCourseId",
+                mc.course_code
+                  AS "courseCode"
+              FROM offered_courses secondary
+              INNER JOIN master_courses mc
+                ON mc.id = secondary.master_course_id
+              WHERE secondary.primary_offered_course_id
+                IN (${Prisma.join(assignedCourseIds)})
+
+              UNION
+
+              SELECT
+                manual.offered_course_id
+                  AS "primaryOfferedCourseId",
+                manual.manual_course_code
+                  AS "courseCode"
+              FROM offered_course_manual_cooffers manual
+              WHERE manual.offered_course_id
+                IN (${Prisma.join(assignedCourseIds)})
+            `
+          )
+        : [];
+
+    const coOfferCodesByPrimary =
+      new Map<number, string[]>();
+
+    for (const row of coOfferCodeRows) {
+      const existing =
+        coOfferCodesByPrimary.get(
+          row.primaryOfferedCourseId
+        ) || [];
+
+      existing.push(row.courseCode);
+
+      coOfferCodesByPrimary.set(
+        row.primaryOfferedCourseId,
+        uniqueStrings(existing)
+      );
+    }
+
     const mergedMap = new Map<
       string,
       {
+        offeredCourseId: number;
         programCode: string;
         courseCode: string;
+        coOfferedCourseCodes: string[];
         courseTitle: string;
         section: string;
         credit: number;
@@ -150,6 +226,15 @@ export async function GET(req: NextRequest) {
     for (const row of assignedRows) {
       const course = row.offered_courses;
       const master = course.master_courses;
+
+      const coOfferedCourseCodes = uniqueStrings(
+        coOfferCodesByPrimary.get(course.id) || []
+      ).filter(
+        (code) =>
+          code.trim().toUpperCase() !==
+          master.course_code.trim().toUpperCase()
+      );
+
       const credit = Number(master.credit || 0);
       const category: "THEORY" | "LAB" | "PROJECT" = isProjectLikeCourse(
         master.course_title,
@@ -178,8 +263,10 @@ export async function GET(req: NextRequest) {
 
       if (!mergedMap.has(signature)) {
         mergedMap.set(signature, {
+          offeredCourseId: course.id,
           programCode: master.program.short_name,
           courseCode: master.course_code,
+          coOfferedCourseCodes,
           courseTitle: master.course_title,
           section: course.section,
           credit,
@@ -189,6 +276,12 @@ export async function GET(req: NextRequest) {
         });
       } else {
         const current = mergedMap.get(signature)!;
+
+        current.coOfferedCourseCodes = uniqueStrings([
+          ...current.coOfferedCourseCodes,
+          ...coOfferedCourseCodes,
+        ]);
+
         current.batchCodes = uniqueStrings([...current.batchCodes, ...batchCodes]);
 
         const slotSignatureSet = new Set(
@@ -230,7 +323,9 @@ export async function GET(req: NextRequest) {
 
       for (const slot of item.slots) {
         scheduleRows.push({
+          offeredCourseId: item.offeredCourseId,
           courseCode: item.courseCode,
+          coOfferedCourseCodes: item.coOfferedCourseCodes,
           courseTitle: item.courseTitle,
           section: item.section,
           credit: item.credit,

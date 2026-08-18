@@ -63,7 +63,7 @@ export default function LoginPage() {
         "FACULTY"
       ) {
         router.push(
-          "/faculty/course-choice"
+          "/faculty/dashboard"
         );
 
         return;

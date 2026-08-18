@@ -7,6 +7,8 @@ import {
   useState,
 } from "react";
 
+import FacultyTeachingPlanner from "./FacultyTeachingPlanner";
+
 type NotificationItem = {
   id: number;
   event_type: string;
@@ -67,7 +69,9 @@ type DashboardResponse = {
 };
 
 type ScheduleRow = {
+  offeredCourseId?: number | null;
   courseCode: string;
+  coOfferedCourseCodes?: string[];
   courseTitle: string;
   section: string;
   credit: number;
@@ -180,6 +184,24 @@ function numberText(
   return value === null || value === undefined
     ? "-"
     : String(value);
+}
+
+function combinedCourseCodes(
+  primaryCode: string,
+  coOfferedCourseCodes?: string[]
+) {
+  const codes = Array.from(
+    new Set(
+      [
+        primaryCode,
+        ...(coOfferedCourseCodes || []),
+      ]
+        .map((code) => String(code || "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  return codes.join(" / ");
 }
 
 function normalizeDay(value: string) {
@@ -609,7 +631,7 @@ function getNextOccurrence(
 function uniqueCourseKey(
   row: ScheduleRow
 ) {
-  return `${row.courseCode}::${row.section}`;
+  return `${combinedCourseCodes(row.courseCode, row.coOfferedCourseCodes)}::${row.section}`;
 }
 
 function categoryBadgeClasses(
@@ -2179,9 +2201,19 @@ export default function FacultyDashboardPageClient() {
                   }
                   value={
                     nextOccurrence
-                      ? nextOccurrence
-                          .row
-                          .courseCode
+                      ? combinedCourseCodes(
+                          combinedCourseCodes(
+                          combinedCourseCodes(
+                          combinedCourseCodes(
+                          nextOccurrence.row.courseCode,
+                          nextOccurrence.row.coOfferedCourseCodes
+                        ),
+                          nextOccurrence.row.coOfferedCourseCodes
+                        ),
+                          nextOccurrence.row.coOfferedCourseCodes
+                        ),
+                          nextOccurrence.row.coOfferedCourseCodes
+                        )
                       : "No class"
                   }
                   helper={
@@ -2247,7 +2279,7 @@ export default function FacultyDashboardPageClient() {
                             index
                           ) => (
                             <div
-                              key={`${row.courseCode}-${row.section}-${row.timeText}-${index}`}
+                              key={`${combinedCourseCodes(row.courseCode, row.coOfferedCourseCodes)}-${row.section}-${row.timeText}-${index}`}
                               className="group flex flex-col gap-4 rounded-2xl border border-slate-200 p-4 transition hover:border-blue-200 hover:bg-blue-50/30 sm:flex-row sm:items-center"
                             >
                               <div className="flex w-full shrink-0 items-center gap-3 sm:w-36">
@@ -2389,9 +2421,19 @@ export default function FacultyDashboardPageClient() {
                   <div className="mt-4">
                     <div className="text-2xl font-black tracking-tight text-slate-950">
                       {
-                        nextOccurrence
-                          .row
-                          .courseCode
+                        combinedCourseCodes(
+                          combinedCourseCodes(
+                          combinedCourseCodes(
+                          combinedCourseCodes(
+                          nextOccurrence.row.courseCode,
+                          nextOccurrence.row.coOfferedCourseCodes
+                        ),
+                          nextOccurrence.row.coOfferedCourseCodes
+                        ),
+                          nextOccurrence.row.coOfferedCourseCodes
+                        ),
+                          nextOccurrence.row.coOfferedCourseCodes
+                        )
                       }
                     </div>
 
@@ -2474,6 +2516,8 @@ export default function FacultyDashboardPageClient() {
               </aside>
             </section>
 
+            <FacultyTeachingPlanner />
+
             <section
               id="weekly-routine"
               className="scroll-mt-24 rounded-2xl border border-slate-200 bg-white shadow-sm"
@@ -2531,7 +2575,7 @@ export default function FacultyDashboardPageClient() {
                         index
                       ) => (
                         <div
-                          key={`${selectedDay}-${row.courseCode}-${row.section}-${row.timeText}-${index}`}
+                          key={`${selectedDay}-${combinedCourseCodes(row.courseCode, row.coOfferedCourseCodes)}-${row.section}-${row.timeText}-${index}`}
                           className="rounded-2xl border border-slate-200 p-4 transition hover:border-blue-200 hover:shadow-sm"
                         >
                           <div className="flex items-start justify-between gap-3">
@@ -3111,7 +3155,7 @@ export default function FacultyDashboardPageClient() {
                             index
                           ) => (
                             <tr
-                              key={`${row.courseCode}-${row.section}-${row.dayOfWeek}-${row.timeText}-${index}`}
+                              key={`${combinedCourseCodes(row.courseCode, row.coOfferedCourseCodes)}-${row.section}-${row.dayOfWeek}-${row.timeText}-${index}`}
                               className="hover:bg-slate-50"
                             >
                               <td className="border-b border-slate-100 px-4 py-3 font-semibold text-slate-950">
