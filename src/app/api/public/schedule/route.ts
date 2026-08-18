@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getPublicScheduleSettings } from "@/lib/public-schedule-settings";
 import {
   compareDayTime,
   REPORT_VISIBLE_OFFERING_STATUSES,
@@ -286,48 +287,60 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
 
-    const termName = normalizeUpper(searchParams.get("termName"));
     const programCode = normalizeUpper(searchParams.get("programCode"));
     const batchCode = normalizeUpper(searchParams.get("batchCode"));
     const dayOfWeek = normalizeUpper(searchParams.get("dayOfWeek"));
 
-    if (!termName) {
-      const terms = await prisma.offerings.findMany({
-        where: {
-          status: {
-            in: REPORT_VISIBLE_OFFERING_STATUSES,
-          },
-          programs: {
-            short_name: {
-              in: PUBLIC_PROGRAMS,
-            },
-          },
-        },
-        select: {
-          academic_terms: {
-            select: {
-              name: true,
-            },
-          },
-        },
-        distinct: ["academic_term_id"],
-      });
+    /*
+     * IMPORTANT:
+     *
+     * Public users are not allowed to choose the academic term.
+     * The only authoritative public semester comes from the
+     * admin-controlled PUBLIC_SCHEDULE_TERM_ID setting.
+     *
+     * Any termName query parameter is intentionally ignored.
+     */
+    const publicSettings = await getPublicScheduleSettings();
 
-      return NextResponse.json({
-        success: true,
-        terms: uniqueStrings(terms.map((item) => item.academic_terms.name)).sort(),
-        filters: {
-          programs: PUBLIC_PROGRAMS,
-          batches: [],
-          days: [],
+    if (!publicSettings.enabled) {
+      return NextResponse.json(
+        {
+          error:
+            "The official class schedule is not currently published.",
+          publicScheduleEnabled: false,
+          terms: [],
+          filters: {
+            programs: PUBLIC_PROGRAMS,
+            batches: [],
+            days: [],
+          },
+          rows: [],
         },
-        rows: [],
-      });
+        { status: 403 }
+      );
     }
 
-    const term = await prisma.academic_terms.findFirst({
+    if (!publicSettings.academicTermId) {
+      return NextResponse.json(
+        {
+          error:
+            "The public schedule has not been assigned to an academic term.",
+          publicScheduleEnabled: false,
+          terms: [],
+          filters: {
+            programs: PUBLIC_PROGRAMS,
+            batches: [],
+            days: [],
+          },
+          rows: [],
+        },
+        { status: 503 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findUnique({
       where: {
-        name: termName,
+        id: publicSettings.academicTermId,
       },
       select: {
         id: true,
@@ -337,9 +350,46 @@ export async function GET(req: NextRequest) {
 
     if (!term) {
       return NextResponse.json(
-        { error: "Academic term not found." },
-        { status: 404 }
+        {
+          error:
+            "The configured public academic term no longer exists.",
+          publicScheduleEnabled: false,
+          terms: [],
+          filters: {
+            programs: PUBLIC_PROGRAMS,
+            batches: [],
+            days: [],
+          },
+          rows: [],
+        },
+        { status: 503 }
       );
+    }
+
+    /*
+     * The page currently performs a lightweight first request to discover
+     * its term list. Return exactly ONE term: the administrator-released
+     * public semester.
+     */
+    const bootstrapRequest =
+      !searchParams.has("termName") &&
+      !programCode &&
+      !batchCode &&
+      !dayOfWeek;
+
+    if (bootstrapRequest) {
+      return NextResponse.json({
+        success: true,
+        publicScheduleEnabled: true,
+        termName: term.name,
+        terms: [term.name],
+        filters: {
+          programs: PUBLIC_PROGRAMS,
+          batches: [],
+          days: [],
+        },
+        rows: [],
+      });
     }
 
     const rowsBeforeBatchFilter = await buildRows({

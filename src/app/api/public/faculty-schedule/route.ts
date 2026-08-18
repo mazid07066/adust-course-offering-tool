@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getPublicScheduleSettings } from "@/lib/public-schedule-settings";
 
 type FacultyDetail = {
   id: number;
@@ -104,38 +105,51 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
 
-    const termName = normalize(searchParams.get("termName"));
     const teacherIdRaw = searchParams.get("teacherId");
     const teacherId = teacherIdRaw ? Number(teacherIdRaw) : 0;
     const dayOfWeek = normalize(searchParams.get("dayOfWeek"));
 
-    if (!termName) {
-      const terms = await prisma.offerings.findMany({
-        where: {
-          status: "CONFIRMED",
-        },
-        select: {
-          academic_terms: {
-            select: {
-              name: true,
-            },
-          },
-        },
-        distinct: ["academic_term_id"],
-      });
+    /*
+     * The public academic semester is controlled exclusively by Admin.
+     *
+     * termName from the URL is intentionally ignored so previous terms
+     * cannot be exposed by manually changing query parameters.
+     */
+    const publicSettings = await getPublicScheduleSettings();
 
-      return NextResponse.json({
-        success: true,
-        terms: uniqueStrings(terms.map((item) => item.academic_terms.name)),
-        facultyOptions: [],
-        dayOptions: [],
-        rows: [],
-      });
+    if (!publicSettings.enabled) {
+      return NextResponse.json(
+        {
+          error:
+            "The official faculty schedule is not currently published.",
+          publicScheduleEnabled: false,
+          terms: [],
+          facultyOptions: [],
+          dayOptions: [],
+          rows: [],
+        },
+        { status: 403 }
+      );
     }
 
-    const term = await prisma.academic_terms.findFirst({
+    if (!publicSettings.academicTermId) {
+      return NextResponse.json(
+        {
+          error:
+            "The public schedule has not been assigned to an academic term.",
+          publicScheduleEnabled: false,
+          terms: [],
+          facultyOptions: [],
+          dayOptions: [],
+          rows: [],
+        },
+        { status: 503 }
+      );
+    }
+
+    const term = await prisma.academic_terms.findUnique({
       where: {
-        name: termName,
+        id: publicSettings.academicTermId,
       },
       select: {
         id: true,
@@ -145,9 +159,38 @@ export async function GET(req: NextRequest) {
 
     if (!term) {
       return NextResponse.json(
-        { error: "Academic term not found." },
-        { status: 404 }
+        {
+          error:
+            "The configured public academic term no longer exists.",
+          publicScheduleEnabled: false,
+          terms: [],
+          facultyOptions: [],
+          dayOptions: [],
+          rows: [],
+        },
+        { status: 503 }
       );
+    }
+
+    /*
+     * Existing page bootstrap call expects a term list.
+     * Expose only the single administrator-released semester.
+     */
+    const bootstrapRequest =
+      !searchParams.has("termName") &&
+      !teacherId &&
+      !dayOfWeek;
+
+    if (bootstrapRequest) {
+      return NextResponse.json({
+        success: true,
+        publicScheduleEnabled: true,
+        termName: term.name,
+        terms: [term.name],
+        facultyOptions: [],
+        dayOptions: [],
+        rows: [],
+      });
     }
 
     const offeredCourses = await prisma.offered_courses.findMany({
