@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import UniFlowLogo from "@/components/uniflow-logo";
+import UniFlowBuildCredit from "@/components/uniflow-build-credit";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -241,10 +242,12 @@ export default function LoginPage() {
               <div className="h-px flex-1 bg-slate-200" />
             </div>
 
-            <p className="mt-6 text-center text-xs text-slate-400">
-              UniFlow Academic Planner ·
-              Secure Academic Workflow
-              Platform
+            <div className="mt-6">
+              <UniFlowBuildCredit />
+            </div>
+
+            <p className="mt-3 text-center text-[11px] text-slate-400">
+              Secure Academic Workflow Platform
             </p>
           </div>
         </section>

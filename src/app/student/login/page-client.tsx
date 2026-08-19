@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import UniFlowLogo from "@/components/uniflow-logo";
+import UniFlowBuildCredit from "@/components/uniflow-build-credit";
 
 export default function StudentLoginPageClient() {
   const searchParams =
@@ -166,6 +167,10 @@ export default function StudentLoginPageClient() {
           their academic identity and
           authorized student services
           through UniFlow.
+        </div>
+
+        <div className="mt-7 border-t border-slate-200 pt-5">
+          <UniFlowBuildCredit />
         </div>
       </div>
     </main>
