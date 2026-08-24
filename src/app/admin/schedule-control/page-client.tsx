@@ -150,6 +150,7 @@ export default function ScheduleControlPageClient() {
   const [conflicts, setConflicts] = useState<ConflictItem[]>([]);
   const [checkingConflicts, setCheckingConflicts] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [reopening, setReopening] = useState(false);
 
   const selectedOffering = useMemo(
     () => offerings.find((item) => String(item.id) === offeringId) || null,
@@ -453,6 +454,56 @@ export default function ScheduleControlPageClient() {
     }
   }
 
+  async function reopenOffering() {
+    if (!offeringId || selectedOffering?.status !== "CONFIRMED") return;
+
+    const ok = window.confirm(
+      "Reopen this confirmed offering for editing? Existing slots, rooms, batches and faculty assignments will be preserved."
+    );
+
+    if (!ok) return;
+
+    setReopening(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(
+        "/api/admin/schedule-control/reset-confirmed",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            offeringId: Number(offeringId),
+          }),
+        }
+      );
+
+      const json = await res.json();
+
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || "Failed to reopen offering.");
+      }
+
+      setConflicts([]);
+
+      await loadOfferings(termName);
+      await loadCourses();
+
+      setMessage(
+        `${json.message || "Offering reopened."} You can now update its slot, room or faculty assignment. Run the final conflict check and confirm it again afterward.`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to reopen offering."
+      );
+    } finally {
+      setReopening(false);
+    }
+  }
+
   async function confirmOffering() {
     if (!offeringId) return;
 
@@ -678,18 +729,27 @@ export default function ScheduleControlPageClient() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={confirmOffering}
-              disabled={!offeringId || confirming || selectedOffering?.status === "CONFIRMED"}
-              className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-            >
-              {confirming
-                ? "Confirming..."
-                : selectedOffering?.status === "CONFIRMED"
-                  ? "Already Confirmed"
-                  : "Confirm Offering"}
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              {selectedOffering?.status === "CONFIRMED" ? (
+                <button
+                  type="button"
+                  onClick={reopenOffering}
+                  disabled={!offeringId || reopening}
+                  className="rounded-xl bg-amber-500 px-5 py-3 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60"
+                >
+                  {reopening ? "Reopening..." : "Reopen for Editing"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={confirmOffering}
+                  disabled={!offeringId || confirming}
+                  className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  {confirming ? "Confirming..." : "Confirm Offering"}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="mt-5 overflow-x-auto rounded-2xl border">
