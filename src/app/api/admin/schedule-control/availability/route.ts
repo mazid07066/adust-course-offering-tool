@@ -72,6 +72,30 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const selectedCourse = await prisma.offered_courses.findUnique({
+      where: {
+        id: offeredCourseId,
+      },
+      select: {
+        offerings: {
+          select: {
+            academic_term_id: true,
+          },
+        },
+      },
+    });
+
+    if (!selectedCourse) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Offered course not found.",
+        },
+        { status: 404 }
+      );
+    }
+
+    const academicTermId = selectedCourse.offerings.academic_term_id;
     const sectionGroupCourseIds = await getSectionGroupCourseIds(offeredCourseId);
 
     const allRooms = await prisma.rooms.findMany({
@@ -92,6 +116,7 @@ export async function GET(request: NextRequest) {
         },
         offered_courses: {
           offerings: {
+            academic_term_id: academicTermId,
             status: {
               in: SCHEDULE_CONFLICT_STATUSES,
             },
@@ -160,6 +185,7 @@ export async function GET(request: NextRequest) {
         },
         offered_courses: {
           offerings: {
+            academic_term_id: academicTermId,
             status: {
               in: SCHEDULE_CONFLICT_STATUSES,
             },

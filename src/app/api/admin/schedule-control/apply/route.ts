@@ -70,6 +70,7 @@ async function assertOfferingEditable(offeredCourseId: number) {
 
 async function validateRoomAndBatch(params: {
   offeredCourseId: number;
+  academicTermId: number;
   slotId?: number;
   roomId: number;
   dayOfWeek: string;
@@ -107,6 +108,7 @@ async function validateRoomAndBatch(params: {
       },
       offered_courses: {
         offerings: {
+          academic_term_id: params.academicTermId,
           status: {
             in: SCHEDULE_CONFLICT_STATUSES,
           },
@@ -137,6 +139,7 @@ async function validateRoomAndBatch(params: {
       },
       offered_courses: {
         offerings: {
+          academic_term_id: params.academicTermId,
           status: {
             in: SCHEDULE_CONFLICT_STATUSES,
           },
@@ -162,6 +165,7 @@ async function validateRoomAndBatch(params: {
 
 async function validateFaculty(params: {
   offeredCourseId: number;
+  academicTermId: number;
   teacherId: number;
 }) {
   const sectionGroupCourseIds = await getSectionGroupCourseIds(params.offeredCourseId);
@@ -186,6 +190,7 @@ async function validateFaculty(params: {
       },
       offered_courses: {
         offerings: {
+          academic_term_id: params.academicTermId,
           status: {
             in: SCHEDULE_CONFLICT_STATUSES,
           },
@@ -253,6 +258,7 @@ export async function PATCH(request: NextRequest) {
 
       await validateRoomAndBatch({
         offeredCourseId,
+        academicTermId: course.offerings.academic_term_id,
         slotId: slotId || undefined,
         roomId,
         dayOfWeek,
@@ -332,6 +338,7 @@ export async function PATCH(request: NextRequest) {
 
       await validateFaculty({
         offeredCourseId,
+        academicTermId: course.offerings.academic_term_id,
         teacherId,
       });
 

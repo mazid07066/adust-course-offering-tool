@@ -369,9 +369,9 @@ export default function ScheduleControlPageClient() {
 
       if (!res.ok) throw new Error(json.error || "Failed to save slot.");
 
-      setMessage(json.message || "Slot saved.");
       await loadCourses();
       closeEditor();
+      await runConflictCheck();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save slot.");
     } finally {
@@ -408,9 +408,9 @@ export default function ScheduleControlPageClient() {
 
       if (!res.ok) throw new Error(json.error || "Failed to assign faculty.");
 
-      setMessage(json.message || "Faculty updated.");
       await loadCourses();
       closeEditor();
+      await runConflictCheck();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to assign faculty.");
     } finally {
