@@ -12,11 +12,7 @@ import {
   getFacultyLevelCreditPolicy,
 } from "@/lib/system-settings";
 import { getEligibleFacultyTurnQueue } from "@/lib/faculty-turn";
-
-const FACULTY_VISIBLE_OFFERING_STATUSES = [
-  "FACULTY_CHOICE_BUFFER",
-  "FACULTY_CHOICE_FINALIZED",
-];
+import { REPORT_VISIBLE_OFFERING_STATUSES } from "@/lib/course-schedule-policy";
 
 type VisibleOfferingPool = {
   activeTermName: string | null;
@@ -51,7 +47,7 @@ async function loadVisibleOfferingPool(
           offerings: {
             academic_term_id: term.id,
             status: {
-              in: FACULTY_VISIBLE_OFFERING_STATUSES,
+              in: REPORT_VISIBLE_OFFERING_STATUSES,
             },
           },
         },
@@ -67,7 +63,7 @@ async function loadVisibleOfferingPool(
     await prisma.offerings.findFirst({
       where: {
         status: {
-          in: FACULTY_VISIBLE_OFFERING_STATUSES,
+          in: REPORT_VISIBLE_OFFERING_STATUSES,
         },
       },
       orderBy: [
