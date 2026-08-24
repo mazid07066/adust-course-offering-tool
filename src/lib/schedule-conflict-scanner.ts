@@ -56,7 +56,10 @@ type OperationalGroup = {
     roomId: number;
     roomCode: string;
   }[];
-  batchCodes: string[];
+  batchMemberships: {
+    batchId: number;
+    batchCode: string;
+  }[];
   teacherCodes: string[];
 };
 
@@ -79,7 +82,7 @@ function unique(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort();
 }
 
-function intersection(left: string[], right: string[]) {
+function intersection<T>(left: T[], right: T[]) {
   const rightSet = new Set(right);
   return left.filter((item) => rightSet.has(item));
 }
@@ -214,13 +217,22 @@ export async function scanScheduleConflicts(options: {
   const groups: OperationalGroup[] = primaryCourses
     .filter((course) => course.offered_course_slots.length > 0)
     .map((course) => {
-      const primaryBatches = course.offered_course_batches.map(
-        (row) => row.batches.batch_code
-      );
-
-      const secondaryBatches = course.secondary_offered_courses.flatMap(
-        (secondary) =>
-          secondary.offered_course_batches.map((row) => row.batches.batch_code)
+      const batchMemberships = [
+        ...course.offered_course_batches.map((row) => ({
+          batchId: row.batch_id,
+          batchCode: row.batches.batch_code,
+        })),
+        ...course.secondary_offered_courses.flatMap((secondary) =>
+          secondary.offered_course_batches.map((row) => ({
+            batchId: row.batch_id,
+            batchCode: row.batches.batch_code,
+          }))
+        ),
+      ].filter(
+        (membership, index, allMemberships) =>
+          allMemberships.findIndex(
+            (candidate) => candidate.batchId === membership.batchId
+          ) === index
       );
 
       return {
@@ -241,7 +253,7 @@ export async function scanScheduleConflicts(options: {
           roomId: slot.room_id,
           roomCode: slot.rooms?.room_code || "-",
         })),
-        batchCodes: unique([...primaryBatches, ...secondaryBatches]),
+        batchMemberships,
         teacherCodes: unique(
           course.offered_course_teachers.map(
             (row) => row.teachers.teacher_code
@@ -277,7 +289,20 @@ export async function scanScheduleConflicts(options: {
           }
 
           const sameRoom = firstSlot.roomId === secondSlot.roomId;
-          const commonBatches = intersection(first.batchCodes, second.batchCodes);
+
+          const commonBatchIds = intersection(
+            first.batchMemberships.map((membership) => membership.batchId),
+            second.batchMemberships.map((membership) => membership.batchId)
+          );
+
+          const commonBatches = unique(
+            first.batchMemberships
+              .filter((membership) =>
+                commonBatchIds.includes(membership.batchId)
+              )
+              .map((membership) => membership.batchCode)
+          );
+
           const commonTeachers = intersection(
             first.teacherCodes,
             second.teacherCodes
