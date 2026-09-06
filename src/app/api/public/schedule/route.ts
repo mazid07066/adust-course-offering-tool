@@ -8,9 +8,9 @@ import {
 } from "@/lib/report-visible-statuses";
 
 const PUBLIC_PROGRAMS = [
-  "BSC-EEE-EVE-NEW",
-  "BSC-EEE-REG-NEW",
-  "BSC-RAE-REG-NEW",
+  "CANON-EEE-EVE-BSCEEE",
+  "CANON-EEE-REG-BSCEEE",
+  "CANON-RAE-REG-BSCRAE",
 ];
 
 type FacultyDetail = {

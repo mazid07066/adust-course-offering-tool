@@ -43,9 +43,9 @@ type ApiResponse = {
 };
 
 const PROGRAM_LABELS: Record<string, string> = {
-  "BSC-EEE-EVE-NEW": "B.Sc. in EEE (Evening/Diploma Holders)",
-  "BSC-EEE-REG-NEW": "B.Sc. in EEE (Regular)",
-  "BSC-RAE-REG-NEW": "B.Sc. in RAE",
+  "CANON-EEE-EVE-BSCEEE": "B.Sc. in EEE (Evening/Diploma Holders)",
+  "CANON-EEE-REG-BSCEEE": "B.Sc. in EEE (Regular)",
+  "CANON-RAE-REG-BSCRAE": "B.Sc. in RAE",
 };
 
 const DAY_ORDER: Record<string, number> = {
@@ -276,7 +276,7 @@ export default function PublicSchedulePageClient() {
           <div className="mt-4 grid gap-3 lg:grid-cols-3">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-sm font-bold text-slate-900">
-                BSC-EEE-EVE-NEW
+                CANON-EEE-EVE-BSCEEE
               </div>
               <div className="mt-1 text-sm text-slate-600">
                 B.Sc. in EEE (Evening/Diploma Holders)
@@ -285,7 +285,7 @@ export default function PublicSchedulePageClient() {
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-sm font-bold text-slate-900">
-                BSC-EEE-REG-NEW
+                CANON-EEE-REG-BSCEEE
               </div>
               <div className="mt-1 text-sm text-slate-600">
                 B.Sc. in EEE (Regular)
@@ -294,7 +294,7 @@ export default function PublicSchedulePageClient() {
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-sm font-bold text-slate-900">
-                BSC-RAE-REG-NEW
+                CANON-RAE-REG-BSCRAE
               </div>
               <div className="mt-1 text-sm text-slate-600">
                 B.Sc. in RAE
